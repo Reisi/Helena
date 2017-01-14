@@ -38,6 +38,7 @@ typedef struct
 {
     ms_AccelerationStruct acc;
     ms_RotationStruct rot;
+    bool isMoving;
 } ms_DataStruct;
 
 /* Exported constants --------------------------------------------------------*/

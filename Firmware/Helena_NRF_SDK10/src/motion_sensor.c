@@ -25,6 +25,8 @@ typedef int32_t q30_t;
 typedef int16_t q15_t;
 
 /* Private defines -----------------------------------------------------------*/
+#define MOVINGTHRESHOLD         (10*131)  // gyro moving threshold in degree per second times hardware units
+
 #define EXTENDED_ERROR_CHECK            /**< activate this flag to get internal error codes */
 
 /* Private macros ------------------------------------------------------------*/
@@ -140,30 +142,58 @@ static inline q15_t float_angle_to_q15(float32_t angle)
 
 static void normalizeAcceleration(const ms_RotationStruct* pRot, ms_AccelerationStruct* pAcc)
 {
-    arm_matrix_instance_f32 accIn, accOut, rot;
-    float32_t accInData[3], accOutData[3], rotData[9], pitch, roll;
+    //static float32_t lowpassyaw;
 
-    pitch = q15_angle_to_float(pRot->pitch);
-    roll = q15_angle_to_float(pRot->roll);
-    /*rotData[0] = cosf(roll);
-    rotData[1] = 0;
-    rotData[2] = sinf(roll);
-    rotData[4] = cosf(pitch);
-    rotData[7] = sinf(pitch);
-    rotData[3] = rotData[7] * rotData[2];
-    rotData[5] = -rotData[7] * rotData[0];
-    rotData[6] = -rotData[4] * rotData[2];
-    rotData[8] = rotData[4] * rotData[0];*/
+    arm_matrix_instance_f32 accIn, accOut, rot;
+    float32_t accInData[3], accOutData[3], rotData[9];
+    float32_t cospitch, sinpitch;
+    float32_t cosroll, sinroll;
+    //float32_t cosyaw, sinyaw;
+
+    //lowpassyaw = lowpassyaw - (lowpassyaw / 256.0f) + (q15_angle_to_float(pRot->yaw) / 256.0f);
+
+    cospitch = cosf(q15_angle_to_float(pRot->pitch));
+    sinpitch = sinf(q15_angle_to_float(pRot->pitch));
+    cosroll = cosf(q15_angle_to_float(pRot->roll));
+    sinroll = sinf(q15_angle_to_float(pRot->roll));
+    //cosyaw = cosf(q15_angle_to_float(pRot->yaw) - lowpassyaw);
+    //sinyaw = sinf(q15_angle_to_float(pRot->yaw) - lowpassyaw);
+
+    /*// rotation matrix for pitch compensation only
     rotData[0] = 1.0f;
     rotData[1] = 0.0f;
     rotData[2] = 0.0f;
     rotData[3] = 0.0f;
-    rotData[4] = cos(pitch);
-    rotData[5] = -sinf(pitch);
+    rotData[4] = cospitch;
+    rotData[5] = -sinpitch;
     rotData[6] = 0.0f;
-    rotData[7] = sinf(pitch);
-    rotData[8] = cosf(pitch);
+    rotData[7] = sinpitch;
+    rotData[8] = cospitch;
+    arm_mat_init_f32(&rot, 3, 3, rotData);*/
+
+    // rotation matrix for pitch and roll compensation
+    rotData[0] = cosroll;
+    rotData[1] = 0.0f;
+    rotData[2] = sinroll;
+    rotData[3] = sinpitch * sinroll;
+    rotData[4] = cospitch;
+    rotData[5] = -sinpitch * cosroll;
+    rotData[6] = -cospitch * sinroll;
+    rotData[7] = sinpitch;
+    rotData[8] = cospitch * cosroll;
     arm_mat_init_f32(&rot, 3, 3, rotData);
+
+    /*// rotation matrix for pitch, roll and yaw compensation
+    rotData[0] = cosroll * cosyaw;
+    rotData[1] = -cosroll * sinyaw;
+    rotData[2] = sinroll;
+    rotData[3] = sinpitch * sinroll * cosyaw + cospitch * sinyaw;
+    rotData[4] = -sinpitch * sinroll * sinyaw + cospitch * cosyaw;
+    rotData[5] = -sinpitch * cosroll;
+    rotData[6] = -cospitch * sinroll * cosyaw + sinpitch * cosyaw;
+    rotData[7] = cospitch * sinroll * sinyaw + sinpitch * cosyaw;
+    rotData[8] = cospitch * cosroll;
+    arm_mat_init_f32(&rot, 3, 3, rotData);*/
 
     accInData[0] = -pAcc->x;
     accInData[1] = pAcc->z;
@@ -177,6 +207,20 @@ static void normalizeAcceleration(const ms_RotationStruct* pRot, ms_Acceleration
     pAcc->x = accOutData[0];
     pAcc->y = accOutData[1];
     pAcc->z = accOutData[2];
+}
+
+static bool isHeadMoving(const short *pGyro)
+{
+    long rotation;
+
+    rotation = (long)pGyro[0] * pGyro[0];
+    rotation += (long)pGyro[1] * pGyro[1];
+    rotation += (long)pGyro[2] * pGyro[2];
+
+    if (rotation > ((long)MOVINGTHRESHOLD * MOVINGTHRESHOLD))
+        return true;
+    else
+        return false;
 }
 
 static void quatToEuler(const q30_t *pQuat, q15_t *pEuler)
@@ -249,7 +293,7 @@ uint32_t ms_Init()
     VERIFY_MPU_ERROR_CODE(mpu_set_lpf(20));
     VERIFY_MPU_ERROR_CODE(dmp_load_motion_driver_firmware());
     VERIFY_MPU_ERROR_CODE(dmp_set_orientation(inv_orientation_matrix_to_scalar(pBoardConfig->gyroOrientation)));
-    VERIFY_MPU_ERROR_CODE(dmp_enable_feature(DMP_FEATURE_6X_LP_QUAT | DMP_FEATURE_GYRO_CAL | DMP_FEATURE_SEND_RAW_ACCEL));
+    VERIFY_MPU_ERROR_CODE(dmp_enable_feature(DMP_FEATURE_6X_LP_QUAT | DMP_FEATURE_GYRO_CAL | DMP_FEATURE_SEND_CAL_GYRO | DMP_FEATURE_SEND_RAW_ACCEL | DMP_FEATURE_SEND_CAL_GYRO));
     VERIFY_MPU_ERROR_CODE(dmp_set_fifo_rate(100));
     VERIFY_MPU_ERROR_CODE(mpu_set_dmp_state(1));
     VERIFY_MPU_ERROR_CODE(mpu_set_sensors(0));
@@ -314,13 +358,15 @@ uint32_t ms_FetchData(ms_DataStruct* pData)
     pData->acc.y = accel[1];
     pData->acc.z = accel[2];
     normalizeAcceleration(&pData->rot, &pData->acc);
-    //static uint8_t cnt = 100;
-    //if (--cnt == 0)
-    //{
-    //    cnt = 100;
+    pData->isMoving = isHeadMoving(gyro);
+    /*static uint8_t cnt = 100;
+    if (--cnt == 0)
+    {
+        cnt = 100;
         //SEGGER_RTT_printf(0, "%d, %d, %d\r\n", (int32_t)(pData->rot.pitch*360)/(1<<15), (int32_t)(pData->rot.roll*360)/(1<<15), (int32_t)(pData->rot.yaw*360)/(1<<15));
-    //    SEGGER_RTT_printf(0, "%d, %d, %d\r\n", pData->acc.x, pData->acc.y, pData->acc.z);
-    //}
+        //SEGGER_RTT_printf(0, "%d, %d, %d\r\n", gyro[0], gyro[1], gyro[2]);
+        SEGGER_RTT_printf(0, "%d, %d, %d\r\n", pData->acc.x, pData->acc.y, pData->acc.z);
+    }*/
 
     return NRF_SUCCESS;
 }

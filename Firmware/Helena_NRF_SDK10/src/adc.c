@@ -29,12 +29,12 @@ static volatile uint16_t adc_Voltage;
 /* Private function prototypes -----------------------------------------------*/
 
 /* Private functions ---------------------------------------------------------*/
-void ADC_IRQHandler(void)
+/*void ADC_IRQHandler(void)
 {
     nrf_adc_conversion_event_clean();
     adc_Voltage = nrf_adc_result_get();
     nrf_adc_input_select(NRF_ADC_CONFIG_INPUT_DISABLED);
-}
+}*/
 
 static nrf_adc_config_input_t gpioToAin(uint32_t pin)
 {

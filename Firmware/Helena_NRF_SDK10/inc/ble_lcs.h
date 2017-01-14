@@ -134,6 +134,8 @@ typedef struct
     uint16_t pitch_present         : 1;
 } ble_lcs_lm_flags_t;
 
+#define BLE_LCS_LM_FLAGS_MASK           (0x00FF)
+
 /**@brief Light Measurement status flags structure. This contains the light status flags */
 typedef struct
 {
@@ -142,6 +144,8 @@ typedef struct
     uint8_t temperature : 1;
     uint8_t dutycycle   : 1;
 } ble_lcs_lm_status_flags_t;
+
+#define BLE_LCS_LM_STATUS_FLAGS_MASK    (0x0F)
 
 /**@brief Light Measurement characteristic structure. This structure contains
  *        all data for the Light Measurement characteristic */

@@ -194,7 +194,7 @@ static uint8_t lm_encode(const ble_lcs_lm_t * p_lcs_lm, const ble_lcs_lf_t * p_f
     {
         flags.raw.pitch_present = 0;
     }
-    len += uint16_encode(flags.encoded, &p_encoded_buffer[len]);
+    len += uint16_encode(flags.encoded & BLE_LCS_LM_FLAGS_MASK, &p_encoded_buffer[len]);
 
     // encode mode
     p_encoded_buffer[len++] = p_lcs_lm->mode.type;
@@ -208,17 +208,15 @@ static uint8_t lm_encode(const ble_lcs_lm_t * p_lcs_lm, const ble_lcs_lf_t * p_f
     // encode flood status
     if (flags.raw.flood_status_present)
     {
-        status_flags.encoded = 0;
         status_flags.raw = p_lcs_lm->flood_status;
-        p_encoded_buffer[len++] = status_flags.encoded;
+        p_encoded_buffer[len++] = status_flags.encoded & BLE_LCS_LM_STATUS_FLAGS_MASK;
     }
 
     // encode spot status
     if (flags.raw.spot_status_present)
     {
-        status_flags.encoded = 0;
-        status_flags.raw = p_lcs_lm->flood_status;
-        p_encoded_buffer[len++] = status_flags.encoded;
+        status_flags.raw = p_lcs_lm->spot_status;
+        p_encoded_buffer[len++] = status_flags.encoded & BLE_LCS_LM_STATUS_FLAGS_MASK;
     }
 
     // encode flood output power

@@ -71,7 +71,6 @@ LDFLAGS += \
 
 #source common to all targets
 SRC_FILES += \
-	./src/adc.c \
 	./src/ble_cgw.c \
 	./src/ble_hids_c.c \
 	./src/ble_lcs.c \

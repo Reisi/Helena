@@ -153,6 +153,12 @@ typedef struct
     int8_t pitch;           /**< pitch angle in ° */
 } btle_lightDataStruct;
 
+typedef enum
+{
+    BTLE_SCAN_MODE_LOW_POWER = 0,
+    BTLE_SCAN_MODE_LOW_LATENCY
+} btle_ScanModeEnum;
+
 /* Exported macros -----------------------------------------------------------*/
 
 /* Exported functions ------------------------------------------------------- */
@@ -163,6 +169,12 @@ typedef struct
  * @param[in]   event handler for btle events
  */
 void btle_Init(bool deleteBonds, btle_EventHandler pEvtHandler);
+
+/** @brief Function to set the scan mode
+ *
+ * @param[in] scanMode  new scanMode to use
+ */
+void btle_SetScanConfig(btle_ScanModeEnum newScanConfig);
 
 /** @brief Function for relaying comreloaded messages over the com gateway
  *         service to connected devices

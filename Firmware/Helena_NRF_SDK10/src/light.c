@@ -12,14 +12,8 @@
 #include "Helena_base.h"
 #include "light.h"
 #include "app_timer.h"
-#include "adc.h"
-//#include "inv_mpu.h"
-//#include "inv_mpu_dmp_motion_driver.h"
-//#include "nrf_delay.h"
 #include "power.h"
-//#include "debug.h"
 #include "i2c.h"
-//#include <math.h>
 
 /* Private defines -----------------------------------------------------------*/
 #define FLOOD               0
@@ -28,9 +22,9 @@
 #define TIMEBASE_ON         (APP_TIMER_TICKS(10,0))
 #define TIMEBASE_IDLE       (APP_TIMER_TICKS(1000,0))
 
-#define VOLTAGEMIN          6000
-#define VOLTAGEMAX          8500
-#define CURRENTMAX          MILLIAMPERE_IN_TARGETVALUE(2500)
+#define VOLTAGEMIN          6050    // minimum operation input voltage
+#define VOLTAGEMAX          8500    // maximum operation input voltage
+#define CURRENTMAX          MILLIAMPERE_IN_TARGETVALUE(3000)
 #define TEMPERATUREMAX      3480    // = 75 °C
 
 #define LUTSIZE             256     // size of look up table for pitch<->comp mapping, must be power of two
@@ -67,16 +61,6 @@ typedef struct
 
 #ifdef EXTENDED_ERROR_CHECK
 
-/*#define VERIFY_MPU_ERROR_CODE(err_code) \
-do                                      \
-{                                       \
-    if (err_code != 0)                  \
-    {                                   \
-        MPU_ERROR_HANDLER(err_code);    \
-        return NRF_ERROR_INTERNAL;      \
-    }                                   \
-} while(0)*/
-
 #define VERIFY_NRF_ERROR_CODE(err_code) \
 do                                      \
 {                                       \
@@ -88,15 +72,6 @@ do                                      \
 } while(0)
 
 #else
-
-/*#define VERIFY_MPU_ERROR_CODE(err_code) \
-do                                      \
-{                                       \
-    if (err_code != 0)                  \
-    {                                   \
-        return NRF_ERROR_INTERNAL;      \
-    }                                   \
-} while(0)*/
 
 #define VERIFY_NRF_ERROR_CODE(err_code) \
 do                                      \
@@ -110,9 +85,6 @@ do                                      \
 #endif
 
 /* Private variables ---------------------------------------------------------*/
-//static volatile uint8_t timebaseFlag;   /**< flags for message sending and timebase generation */
-//APP_TIMER_DEF(timebaseTimerId);         /**< timer for timebase */
-//static timebaseEnum timebase;           /**< actual timebase */
 static const compensationLUTStruct spotLUT =
 {
     .pitch =
@@ -299,12 +271,6 @@ static uint32_t readConverterData(light_StatusStruct* pStatus)
  */
 static q15_t limitPitch(q15_t pitch)
 {
-    //q15_t convertedPitch;
-
-    //if (pitch < 0)
-    //    pitch += (float32_t)M_TWOPI;
-    //pitch /= (float32_t)M_TWOPI;
-    //convertedPitch = pitch * (1<<15);
     // convert angles in 1. and 2. quadrant to (almost) 0
     if (pitch <= (1<<14))
         pitch = (1<<15) - 1;
@@ -430,6 +396,19 @@ static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t 
         else
             *pSpot = ((uint16_t)pMode->intensity << 8) / 100;
         break;
+    case LIGHT_MODEBOTH:
+        *pFlood = 0;
+        if (pMode->intensity >= 100)
+        {
+            *pSpot = 255;
+            *pFlood = 255;
+        }
+        else
+        {
+            *pSpot = ((uint16_t)pMode->intensity << 8) / 100;
+            *pFlood = *pSpot;
+        }
+        break;
     case LIGHT_MODEADAPTIVEFLOOD:
     {
         *pSpot = 0;
@@ -450,16 +429,6 @@ static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t 
         *pSpot = getTargetFromLUT(&spotLUT, limitPitch((q15_t)pitch_off), (q7_8_t)pMode->intensity << 8);
         *pFlood = 0;
     }   break;
-    /*    if (pitch > -0.289899)
-            *pFlood = 136;
-        else if (pitch < -1.38068)
-            *pFlood = 22;
-        else
-            *pFlood = (uint8_t)(32.0573993483 * powf(-pitch, -1.1670972743));
-        *pSpot = 0;
-        break;*/
-    //case LIGHT_MODEADAPTIVESPOT:
-    //    break;
     case LIGHT_MODEADAPTIVEBOTH:
     {
         q7_8_t intensityFlood, intensitySpot;
@@ -477,23 +446,6 @@ static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t 
             pitch_off += (1<<15);
         *pSpot = getTargetFromLUT(&spotLUT, limitPitch((q15_t)pitch_off), intensitySpot);
     }   break;
-
-    /*    if (pitch > 0)
-            *pFlood = 8;
-        else if (pitch > -0.2869439)
-            *pFlood = 8 - 128.945*pitch;
-        else if (pitch < -1.3183973975)
-            *pFlood = 8;
-        else
-            *pFlood = (uint8_t)(10.9412049589 * powf(-pitch, -1.1326890097));
-
-        if (pitch > -0.018798)
-            *pSpot = 204;
-        else if (pitch < -0.233807)
-            *pSpot = 1;
-        else
-            *pSpot = (uint8_t)(46.2825728975 * powf(-pitch, -0.4652256144) - 90);
-        break;*/
     default:
         *pFlood = 0;
         *pSpot = 0;
@@ -507,7 +459,7 @@ static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t 
  * @param[in/out]   pFlood  flood current
  * @param[in/out]   pSpot   spot current
  */
-static void applyLimiter(light_StatusStruct * pStatus, uint8_t *pFlood, uint8_t *pSpot)
+static void limiter(light_StatusStruct * pStatus, uint8_t *pFlood, uint8_t *pSpot)
 {
     uint8_t limit;
 
@@ -521,12 +473,15 @@ static void applyLimiter(light_StatusStruct * pStatus, uint8_t *pFlood, uint8_t 
     if (*pSpot > limit) {*pSpot = limit; pStatus->spot |= LIGHT_STATUS_OVERCURRENT;}
 
     // check input voltage limit
-    if (pStatus->inputVoltage < VOLTAGEMIN || pStatus->inputVoltage > VOLTAGEMAX)
+    if (pStatus->inputVoltage >= VOLTAGEMAX)                // voltage to high
         limit = 0;
-    else if (pStatus->inputVoltage >= (VOLTAGEMIN + 1024))
+    else if (pStatus->inputVoltage >= (VOLTAGEMIN + 1024 - 8))  // no limiting needed
         limit = 255;
-    else
-        limit = (pStatus->inputVoltage - VOLTAGEMIN) >> 2;
+    else if (pStatus->inputVoltage >= VOLTAGEMIN)           // limiting needed
+        limit = 2 + ((pStatus->inputVoltage - VOLTAGEMIN) >> 2);
+    else                                                    // voltage to low
+        limit = 2;
+
     if (*pFlood > limit) {*pFlood = limit; pStatus->flood |= LIGHT_STATUS_VOLTAGELIMIT;}
     if (*pSpot > limit) {*pSpot = limit; pStatus->spot |= LIGHT_STATUS_VOLTAGELIMIT;}
 
@@ -541,65 +496,14 @@ static void applyLimiter(light_StatusStruct * pStatus, uint8_t *pFlood, uint8_t 
     if (*pSpot > limit) {*pSpot = limit; pStatus->spot |= LIGHT_STATUS_TEMPERATURELIMIT;}
 }
 
-/** @brief helper function to calculate pitch out of quaternion data
- *
- * @param[in]   quat    quaternion data delivered by mpu driver
- * @return      pitch in rad
- */
-/*static float quatToPitch(const long *quat)
-{
-    long t1, t2, t3;
-    float pitch;
-
-    t1 = inv_q29_mult(quat[1], quat[2]) - inv_q29_mult(quat[0], quat[3]);
-    t2 = inv_q29_mult(quat[2], quat[2]) + inv_q29_mult(quat[0], quat[0]) - (1L<<30);
-    t3 = inv_q29_mult(quat[2], quat[3]) + inv_q29_mult(quat[0], quat[1]);
-    pitch = atan2f((float)t3, sqrtf((float)t1*t1 + (float)t2*t2));
-    t2 = inv_q29_mult(quat[3], quat[3]) + inv_q29_mult(quat[0], quat[0]) - (1L<<30);
-    if (t2 < 0)
-    {
-        if (pitch >= 0)
-            pitch = (float)M_PI - pitch;
-        else
-            pitch = -((float)M_PI) - pitch;
-    }
-    return pitch;
-}*/
-
-/** @brief mup initialization function
- *
- * @return  NRF_SUCCESS or an error
- */
-/*static uint32_t mpuInit()
-{
-    VERIFY_MPU_ERROR_CODE(mpu_init(NULL));
-    VERIFY_MPU_ERROR_CODE(mpu_set_sensors(INV_XYZ_GYRO | INV_XYZ_ACCEL));
-    VERIFY_MPU_ERROR_CODE(mpu_set_lpf(20));
-    VERIFY_MPU_ERROR_CODE(dmp_load_motion_driver_firmware());
-    VERIFY_MPU_ERROR_CODE(dmp_set_orientation(0b01010100));
-    VERIFY_MPU_ERROR_CODE(dmp_enable_feature(DMP_FEATURE_6X_LP_QUAT | DMP_FEATURE_GYRO_CAL));
-    VERIFY_MPU_ERROR_CODE(dmp_set_fifo_rate(100));
-    VERIFY_MPU_ERROR_CODE(mpu_set_dmp_state(1));
-    VERIFY_MPU_ERROR_CODE(mpu_set_sensors(0));
-    mpuEnabled = false;
-    return NRF_SUCCESS;
-}*/
-
 /* Public functions ----------------------------------------------------------*/
 uint32_t light_Init()
 {
     // create timer for timebase
     VERIFY_NRF_ERROR_CODE(app_timer_create(&updateTimerId, APP_TIMER_MODE_REPEATED, updateTimerHandler));
 
-    // initialize adc to be able to get input voltage
-    adc_Init();
-
     // initialize TWI interface
     VERIFY_NRF_ERROR_CODE(i2c_Init());
-
-    // wait a bit to give MPU6050 time to power up, then run initialization
-    //nrf_delay_ms(100);
-    //VERIFY_NRF_ERROR_CODE(mpuInit());
 
     // enable workaround for TWI lock up in tev2 ICs
     i2c_EnableAutoRecover(true);
@@ -678,116 +582,50 @@ uint32_t light_UpdateTargets(const light_ModeStruct* pMode, q15_t pitch, const l
 
 void light_Execute()
 {
+#define LOWPASSTHRESH   200     // threshold in mV, when low pass filter is bypassed
+
+    static uint32_t voltageFiltered;
+
     if (!updateFlag)
         return;
 
     updateFlag = false;
     pwr_ClearActiveFlag(1<<pwr_ACTIVELIGHT);
 
-    adc_StartConversion();                                          /**< start conversion for input voltage */
+    // check if input voltage value is up to date
+    pwr_VoltageStruct voltage;
+    if (pwr_GetInputVoltage(&voltage) == NRF_SUCCESS)   // if this fails, conversion is already in progress, no need to check
+    {
+        uint32_t timestamp;
+        (void)app_timer_cnt_get(&timestamp);
+        (void)app_timer_cnt_diff_compute(timestamp, voltage.timestamp, &timestamp);
+        if (timestamp > TIMEBASE_ON)                    // value to old, get new one
+            pwr_StartInputVoltageConversion();
+    }
 
-    APP_ERROR_CHECK(readConverterData(&lightStatus));               /**< read current converter status and data */
+    APP_ERROR_CHECK(readConverterData(&lightStatus));                        // read current converter status and data
 
-    while (adc_ConversionComplete() == adc_CONVERSIONONGOING);      /**< adc conversion should be done until now, if not wait. */
-    lightStatus.inputVoltage = RESULT_IN_MILLIVOLT(adc_GetVoltage());
+    while (pwr_GetInputVoltage(&voltage) != NRF_SUCCESS);                    // wait for conversion to be finished
+    if (voltageFiltered == 0)                                                // in case of filter is empty or
+        voltageFiltered = voltage.inputVoltage << 4;                         // use input directly
+    else if ((voltageFiltered >> 4) > (voltage.inputVoltage + LOWPASSTHRESH))// massive input voltage drop
+        voltageFiltered = (voltage.inputVoltage + LOWPASSTHRESH) << 4;       // bypass filter
+    else if ((voltageFiltered >> 4) < (voltage.inputVoltage - LOWPASSTHRESH))// massive input voltage increase
+        voltageFiltered = (voltage.inputVoltage - LOWPASSTHRESH) << 4;       // bypass filter
+    else                                                                     // otherwise use a low pass filter for input voltage
+        voltageFiltered = voltageFiltered - (voltageFiltered >> 4) + voltage.inputVoltage;
+    lightStatus.inputVoltage = voltageFiltered >> 4;
 
-    if (targets[FLOOD] == 0 && targets[SPOT] == 0)                               /**< if light is off, nothing more to do */
+    if (targets[FLOOD] == 0 && targets[SPOT] == 0)              // if light is off, nothing more to do
         return;
 
     uint8_t limitedTargets[2];
 
     limitedTargets[FLOOD] = targets[FLOOD];
     limitedTargets[SPOT] = targets[SPOT];
-    applyLimiter(&lightStatus, &limitedTargets[FLOOD], &limitedTargets[SPOT]);
+    limiter(&lightStatus, &limitedTargets[FLOOD], &limitedTargets[SPOT]);
 
     APP_ERROR_CHECK(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_TARGETSDL, 2, limitedTargets));
 }
 
-#ifdef NOTUSED
-uint32_t light_Execute(const light_ModeStruct* pMode, light_StatusStruct* pStatus)
-{
-    if (pMode == NULL || pStatus == NULL)
-        return NRF_ERROR_NULL;
-
-    //if (pMode->mode != LIGHT_MODEOFF && timebase == TIMEBASEOFF)
-    //    return NRF_ERROR_INVALID_STATE;
-
-    if (pMode->mode != LIGHT_MODEOFF && !moduleEnabled)
-        return NRF_ERROR_INVALID_STATE;
-
-    // check if light has to be turned on
-    //if (timebase == TIMEBASELONG && pMode->mode != LIGHT_MODEOFF)
-    if (!mpuEnabled && pMode->mode != LIGHT_MODEOFF)
-    {
-        //timebase = TIMEBASESHORT;
-        //VERIFY_NRF_ERROR_CODE(app_timer_stop(timebaseTimerId));
-        //VERIFY_NRF_ERROR_CODE(app_timer_start(timebaseTimerId, TICKSTIMEBASESHORT, NULL));
-        VERIFY_MPU_ERROR_CODE(mpu_set_sensors(INV_XYZ_GYRO | INV_XYZ_ACCEL));
-        mpuEnabled = true;
-    }
-
-    // check if light has to be turned off
-    //if (timebase == TIMEBASESHORT && pMode->mode == LIGHT_MODEOFF)
-    if (mpuEnabled && pMode->mode == LIGHT_MODEOFF)
-    {
-        uint8_t target[2] = {0,0};
-        //timebase = TIMEBASELONG;
-        //VERIFY_NRF_ERROR_CODE(app_timer_stop(timebaseTimerId));
-        //VERIFY_NRF_ERROR_CODE(app_timer_start(timebaseTimerId, TICKSTIMEBASELONG, NULL));
-        VERIFY_NRF_ERROR_CODE(mpu_set_sensors(0));
-        mpuEnabled = false;
-        VERIFY_NRF_ERROR_CODE(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_TARGETSDL, 2, target));
-    }
-
-    // cyclic checks (1Hz in off mode, 100Hz in on mode)
-    //if (timebaseFlag)
-    //{
-        enum targetId {FLOOD = 0, SPOT, CNT};
-
-        short gyro[3], accel[3], sensors;
-        long quat[4];
-        unsigned long timestamp;
-        unsigned char more;
-        static float32_t pitch;
-        uint8_t target[CNT];
-
-//        timebaseFlag = 0;                           /**< clear timebaseflag */
-//        pwr_ClearActiveFlag(1<<pwr_ACTIVELIGHT);    /**< and release anti sleep flag */
-        adc_StartConversion();                      /**< start conversion for input voltage */
-        VERIFY_NRF_ERROR_CODE(readConverterData(pStatus));/**< read current converter status and data */
-
-        //if (timebase == TIMEBASESHORT)              /**< read motion sensor data, if light is on */
-        if (mpuEnabled)
-        {
-            sensors = INV_WXYZ_QUAT;
-            do                                      /**< MPU is sampling data with 100Hz, too, but due to unsynchronized */
-            {                                       /**< clocks, data is read out until fifo is empty. */
-                int error = dmp_read_fifo(gyro, accel, quat, &timestamp, &sensors, &more);
-                if (error && error != -3)           /**< ignore unaligned data error (can happen if data is read, */
-                {                                   /**< while mpu is writing data into fifo */
-                    VERIFY_MPU_ERROR_CODE(error);
-                }
-            }
-            while (more != 0);
-            if (sensors != 0)                       /**< calculate pitch if data is available */
-                pitch = quatToPitch(quat);
-        }
-        else
-            pitch = -M_PI_2;
-
-        while (adc_ConversionComplete() == adc_CONVERSIONONGOING);  /**< adc conversion should be done until now, if not wait. */
-        pStatus->inputVoltage = RESULT_IN_MILLIVOLT(adc_GetVoltage());
-
-        if (pMode->mode == LIGHT_MODEOFF)                               /**< return if leds are off */
-            return NRF_SUCCESS;
-
-        calculateTarget(pMode, pitch, &target[FLOOD], &target[SPOT]);/**< now calculate target currents */
-
-        applyLimiter(pStatus, &target[FLOOD], &target[SPOT]);       /**< limit target values if necessary */
-
-        VERIFY_NRF_ERROR_CODE(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_TARGETSDL, 2, target)); /**< and finally write targets to driver */
-    //}
-    return NRF_SUCCESS;
-}
-#endif
 /**END OF FILE*****************************************************************/

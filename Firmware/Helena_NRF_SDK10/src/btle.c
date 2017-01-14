@@ -70,12 +70,12 @@ typedef struct
 #define MAX_CONN_PARAMS_UPDATE_COUNT    3
 
 #define ADV_INTERVAL_FAST               MSEC_TO_UNITS(40, UNIT_0_625_MS)
-#define ADV_INTERVAL_SLOW               MSEC_TO_UNITS(1024, UNIT_0_625_MS)
+#define ADV_INTERVAL_SLOW               MSEC_TO_UNITS(1280, UNIT_0_625_MS)
 #define ADV_TIMEOUT_IN_SECONDS          180
 
-#define SCAN_INTERVAL_FAST              MSEC_TO_UNITS(50, UNIT_0_625_MS)
-#define SCAN_WINDOW_FAST                MSEC_TO_UNITS(30, UNIT_0_625_MS)
-#define SCAN_TIMEOUT_FAST               30
+#define SCAN_INTERVAL_FAST              MSEC_TO_UNITS(22.5, UNIT_0_625_MS)
+#define SCAN_WINDOW_FAST                MSEC_TO_UNITS(11.25, UNIT_0_625_MS)
+#define SCAN_TIMEOUT_FAST               180
 #define SCAN_INTERVAL_SLOW              MSEC_TO_UNITS(1280, UNIT_0_625_MS)
 #define SCAN_WINDOW_SLOW                MSEC_TO_UNITS(11.25, UNIT_0_625_MS)
 #define SCAN_TIMEOUT_SLOW               0
@@ -97,6 +97,9 @@ static ble_db_discovery_t discDatabase; /**< database for service discovery */
 static ble_hids_c_t hidsGattcData;      /**< gatt client handles for the hid service */
 
 static btle_EventHandler pEventHandler; /**< ble event handler */
+
+static btle_ScanModeEnum scanConfig;    /**< actual requested scan mode configuration */
+static ble_scan_mode_t scanMode;        /**< actual Scan mode */
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -205,6 +208,7 @@ static void sysEvtDispatch(uint32_t sysEvt)
 {
     ble_advertising_on_sys_evt(sysEvt);
     fs_sys_event_handler(sysEvt);
+    com_OnSysEvt(sysEvt);
 #ifdef HELENA_DEBUG_FIELD_TESTING
     debug_OnSysEvent(sysEvt);
 #endif
@@ -723,6 +727,23 @@ static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
 
     switch (pScanEvt->ble_scan_event)
     {
+    case BLE_SCAN_EVT_IDLE:
+    case BLE_SCAN_EVT_PAUSE:
+        scanMode = BLE_SCAN_MODE_IDLE;
+        break;
+    case BLE_SCAN_EVT_FAST:
+    case BLE_SCAN_EVT_FAST_WHITELIST:
+        scanMode = BLE_SCAN_MODE_FAST;
+        break;
+    case BLE_SCAN_EVT_SLOW:
+    case BLE_SCAN_EVT_SLOW_WHITELIST:
+        scanMode = BLE_SCAN_MODE_SLOW;
+        if (scanConfig == BTLE_SCAN_MODE_LOW_LATENCY)
+        {
+            errCode = ble_scanning_start(BLE_SCAN_MODE_FAST);
+            APP_ERROR_CHECK(errCode);
+        }
+        break;
     case BLE_SCAN_EVT_ADV_REPORT_RECEIVED:
         // check if the device is advertising as hid device
         if (isHidDevice(pScanEvt->p_ble_adv_report) == NRF_SUCCESS)
@@ -826,6 +847,23 @@ void btle_Init(bool deleteBonds, btle_EventHandler pEvtHandler)
     discoveryInit();
     serviceCollectorInit();
     scanningInit();
+}
+
+void btle_SetScanConfig(btle_ScanModeEnum newScanConfig)
+{
+    uint32_t errCode;
+
+    scanConfig = newScanConfig;
+    if (scanConfig == BTLE_SCAN_MODE_LOW_LATENCY && scanMode == BLE_SCAN_MODE_SLOW)
+    {
+        errCode = ble_scanning_start(BLE_SCAN_MODE_FAST);
+        APP_ERROR_CHECK(errCode);
+    }
+    if (scanConfig == BTLE_SCAN_MODE_LOW_POWER && scanMode == BLE_SCAN_MODE_FAST)
+    {
+        errCode = ble_scanning_start(BLE_SCAN_MODE_SLOW);
+        APP_ERROR_CHECK(errCode);
+    }
 }
 
 uint32_t btle_ComGatewayCheck(const com_MessageStruct * pMessageIn)

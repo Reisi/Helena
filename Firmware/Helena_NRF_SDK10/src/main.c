@@ -20,14 +20,13 @@
 #include "light.h"
 #include "main.h"
 #include "power.h"
-#include "app_scheduler.h"
 #include "softdevice_handler.h"
-#include "ble_conn_state.h"
 #include "app_error.h"
 #include "fds.h"
 #include "motion_sensor.h"
 #include "custom_board.h"
 #include "nrf_delay.h"
+#include "nrf_gpio.h"
 
 /* Private defines -----------------------------------------------------------*/
 #define APP_TIMER_OP_QUEUE_SIZE 2           /**< Size of timer operation queues. */
@@ -41,24 +40,46 @@
 
 #define LIGHT_UPDATE_PERIOD_SHORT   (APP_TIMER_TICKS(10, APP_TIMER_PRESCALER))
 #define LIGHT_UPDATE_PERIOD_LONG    (APP_TIMER_TICKS(1000, APP_TIMER_PRESCALER))
+#define IDLE_TIMEOUT                (APP_TIMER_TICKS(180000, APP_TIMER_PRESCALER)/LIGHT_UPDATE_PERIOD_SHORT)
+
+#define MINIMUM_INPUT_VOLTAGE   6000
+#define SHUTDOWN_DELAY          (APP_TIMER_TICKS(1000, APP_TIMER_PRESCALER))
 
 /* Private typedef -----------------------------------------------------------*/
 typedef enum
 {
-    BUTTONMODE0 = 0, BUTTONMODE1, BUTTONMODE2, BUTTONMODE3,
-    BUTTONMODE4, BUTTONMODE5, BUTTONMODE6, BUTTONMODE7, BUTTONMODECOM
-} lightButtonModes;
+    HELENA_SHUTDOWN = 0, /**< complete shutdown, minimum power consumption, power cycle needed to leave */
+    HELENA_OFF,          /**< light and motion processing off, com and hmi working, ble working with low power scanning */
+    HELENA_IDLE,         /**< light off but data read out on a regular basis, motion processing on, com and hmi working, ble working with low latency scanning */
+    HELENA_ON            /**< light on and data read out on a regular basis, motion processing on, com and hmi working, ble working with low latency scanning */
+} helenaStateEnum;
 
 typedef enum
 {
-    COMMODEOFF = 0, COMMODEDIM, COMMODELOW, COMMODEFULL, COMMODECNT
-} lightComModes;
+    BUTTONMODE0 = 0,
+    BUTTONMODE1,
+    BUTTONMODE2,
+    BUTTONMODE3,
+    BUTTONMODE4,
+    BUTTONMODE5,
+    BUTTONMODE6,
+    BUTTONMODE7,
+    BUTTONMODECOM
+} lightButtonModesEnum;
+
+typedef enum
+{
+    COMMODEOFF = 0,
+    COMMODEDIM,
+    COMMODELOW,
+    COMMODEFULL,
+    COMMODECNT
+} lightComModesEnum;
 
 typedef struct
 {
-    lightButtonModes button;
-    lightButtonModes lastMode;
-    lightComModes com;
+    lightButtonModesEnum button;
+    lightComModesEnum com;
     uint32_t magicnumber;
     uint16_t crc;
 } lightStateStruct;
@@ -66,16 +87,16 @@ typedef struct
 typedef struct
 {
     uint8_t modeGroups;
-    uint8_t padding[3];
+    uint8_t padding[3];                     /**< padding needed, structure is stored in flash and needs to be word aligned */
     light_ModeStruct modes[BUTTONMODECOM];
 } buttonLightModeStruct;
 
 typedef struct
 {
-    bool isPeriphConnected;
-    bool isCentralConnected;
-    bool isModeConfigWritePending;
-    bool isGroupCountPending;
+    bool isPeriphConnected;                 /**< indicating if in a connection as peripheral */
+    bool isCentralConnected;                /**< indicating if in a connection as central */
+    bool isModeConfigWritePending;          /**< indicating if a mode configure write response is pending */
+    bool isGroupCountPending;               /**< indicating if a group configuration write response is pending */
 } btleStatusStruct;
 
 /* Private variables ---------------------------------------------------------*/
@@ -101,24 +122,239 @@ static buttonLightModeStruct buttonModes __attribute__ ((aligned (4))) =
         {LIGHT_MODEOFF, 0}
     }
 };
-static lightStateStruct lightState __attribute__((section(".noinit")));
-static btleStatusStruct btleStatus;
-APP_TIMER_DEF(lightUpdateTimerId);
-static uint32_t currentTimebase;
-static bool lightUpdateFlag;
-static hmi_ButtonEnum buttonInt, buttonVolUp, buttonVolDown;
+static lightStateStruct lightState __attribute__((section(".noinit"))); /**< actual light state */
+static btleStatusStruct btleStatus;                                     /**< actual ble status */
+APP_TIMER_DEF(mainTimerId);                                             /**< timer instance for main timer */
+static bool timeoutFlag;                                                /**< flag indication main timer timeout */
+static uint32_t idleTimeout;                                            /**< idle countdown */
+static hmi_ButtonEnum buttonInt, buttonVolUp, buttonVolDown;            /**< button states */
+static helenaStateEnum helenaState;                                     /**< helena power state */
 
 /* Private macros ------------------------------------------------------------*/
 #define COUNT_OF(x)             (sizeof(x)/sizeof(x[0]))
 
 /* Private functions ---------------------------------------------------------*/
+
+/** @brief event handler for incoming connection related ble events
+ */
+static void btleConnEvtHandler(btle_EventStruct * pEvt)
+{
+    switch (pEvt->subEvt.conn)
+    {
+    case BTLE_EVT_CONN_CENTRAL_CONNECTED:
+        btleStatus.isCentralConnected = true;
+        break;
+    case BTLE_EVT_CONN_CENTRAL_DISCONNECTED:
+        btleStatus.isCentralConnected = false;
+        break;
+    default:
+        break;
+    }
+}
+
+/** @brief event handler for incoming hid related ble events
+ */
+static void btleHidEvtHandler(btle_EventStruct * pEvt)
+{
+    switch (pEvt->subEvt.hid)
+    {
+    case BTLE_EVT_HID_VOL_UP_SHORT:
+        buttonVolUp = hmi_BUTTONSHORT;
+        break;
+    case BTLE_EVT_HID_VOL_UP_LONG:
+        buttonVolUp = hmi_BUTTONLONG;
+        break;
+    case BTLE_EVT_HID_VOL_DOWN_SHORT:
+        buttonVolDown = hmi_BUTTONSHORT;
+        break;
+    case BTLE_EVT_HID_VOL_DOWN_LONG:
+        buttonVolDown = hmi_BUTTONLONG;
+        break;
+    default:
+        break;
+    }
+}
+
+/** @brief function to update the actual button configuration to flash
+ *
+ * @note    the update is not stored immediately, when finished, the fds event
+ *          handler is called
+ */
+static uint32_t updateButtonModes()
+{
+    uint32_t errCode;
+    fds_find_token_t token;
+    fds_record_desc_t descriptor;
+    fds_record_chunk_t chunk;
+
+    fds_record_key_t key = {.type = FDSMODECONFIG, .instance = FDSINSTANCE};
+    errCode = fds_find(key.type, key.instance, &descriptor, &token);
+    if (errCode != NRF_SUCCESS)
+        return errCode;
+    chunk.p_data = &buttonModes;
+    chunk.length_words = SIZEOF_WORDS(buttonModes);
+    return fds_update(&descriptor, key, 1, &chunk);
+}
+
+/** @brief function to check if configuration is a valid power of 2
+ */
+static bool isGroupConfigValid(uint8_t groupConfig)
+{
+    for(uint_fast8_t i = 1; i <= BUTTONMODECOM; i <<= 1)
+    {
+        if (groupConfig == i)
+            return true;
+    }
+    return false;
+}
+
+/** @brief function to check if mode configuration is valid
+ *
+ * @note for now this function only checks if the mode number is valid, this may
+ *       be extended, when light module supports led configuration recognition.
+ */
+static bool isModeConfigValid(const light_ModeStruct * pMode)
+{
+    if (pMode->mode < LIGHT_MODECNT)
+        return true;
+    return false;
+}
+
+/** @brief event handler for incoming ble events related to the light control service
+ */
+static void btleLcscpEventHandler(btle_EventStruct * pEvt)
+{
+    btle_LcscpEventResponseStruct rsp;
+    uint32_t errCode;
+
+    memset(&rsp, 0, sizeof(btle_LcscpEventResponseStruct));
+    rsp.evt = pEvt->subEvt.lcscp;
+
+    switch (pEvt->subEvt.lcscp)
+    {
+    case BTLE_EVT_LCSCP_REQ_MODE_CNT:       // mode count request
+        rsp.retCode = BTLE_RET_SUCCESS;
+        rsp.responseParams.modeCnt = BUTTONMODECOM;
+        break;
+    case BTLE_EVT_LCSCP_REQ_GROUP_CNT:      // group count request
+        rsp.retCode = BTLE_RET_SUCCESS;
+        rsp.responseParams.groupCnt = buttonModes.modeGroups;
+        break;
+    case BTLE_EVT_LCSCP_REQ_MODE_CONFIG:    // mode configuration request
+    {
+        uint8_t start = pEvt->lcscpEventParams.modeConfigStart;
+        if (start >= BUTTONMODECOM)
+        {
+            rsp.retCode = BTLE_RET_INVALID;
+            break;
+        }
+        rsp.retCode = BTLE_RET_SUCCESS;
+        rsp.responseParams.modeList.pList = (btle_LightModeConfig*)&buttonModes.modes[start];
+        rsp.responseParams.modeList.listEntries = BUTTONMODECOM - start;
+        break;
+    }
+    case BTLE_EVT_LCSCP_SET_MODE:           // mode set request
+        if (pEvt->lcscpEventParams.modeToSet >= BUTTONMODECOM)
+            lightState.button = BUTTONMODECOM;
+        else
+            lightState.button = pEvt->lcscpEventParams.modeToSet;
+        rsp.retCode = BTLE_RET_SUCCESS;
+        break;
+    case BTLE_EVT_LCSCP_CONFIG_MODE:        // mode configuration request
+        for (uint_fast8_t i = 0; i < pEvt->lcscpEventParams.modeToConfig.listEntries; i++)
+        {
+            if (pEvt->lcscpEventParams.modeToConfig.modeNumber + i >= BUTTONMODECOM ||
+                !isModeConfigValid((light_ModeStruct*)&pEvt->lcscpEventParams.modeToConfig.pConfig[i]))
+                rsp.retCode = BTLE_RET_INVALID;
+        }
+        for (uint_fast8_t i = 0; i < pEvt->lcscpEventParams.modeToConfig.listEntries; i++)
+        {
+            buttonModes.modes[pEvt->lcscpEventParams.modeToConfig.modeNumber + i].mode = pEvt->lcscpEventParams.modeToConfig.pConfig[i].modeType;
+            buttonModes.modes[pEvt->lcscpEventParams.modeToConfig.modeNumber + i].intensity = pEvt->lcscpEventParams.modeToConfig.pConfig[i].intensity;
+        }
+        errCode = updateButtonModes();
+        if (errCode == NRF_SUCCESS)
+        {
+            btleStatus.isModeConfigWritePending = true;
+            return;
+        }
+        else
+            rsp.retCode = BTLE_RET_FAILED;
+        break;
+    case BTLE_EVT_LCSCP_CONFIG_GROUP:       // group configuration request
+        if (!isGroupConfigValid(pEvt->lcscpEventParams.groupConfig))
+            rsp.retCode = BTLE_RET_INVALID;
+        else
+        {
+            buttonModes.modeGroups = pEvt->lcscpEventParams.groupConfig;
+            errCode = updateButtonModes();
+            if (errCode == NRF_SUCCESS)
+            {
+                btleStatus.isGroupCountPending = true;
+                return;
+            }
+            else
+                rsp.retCode = BTLE_RET_FAILED;
+        }
+        break;
+    default:
+        rsp.retCode = BTLE_RET_NOT_SUPPORTED;
+        break;
+    }
+    // if this point is reached, send response immediately, otherwise it is not necessary or will be done later.
+    APP_ERROR_CHECK(btle_SendEventResponse(&rsp));
+}
+
+/** @brief event handler for incoming ble events
+ *
+ * @details this function relays the incoming events to the corresponding
+ *          event handlers
+ */
+static void btleEventHandler(btle_EventStruct * pEvt)
+{
+    switch (pEvt->evt)
+    {
+    case BTLE_EVT_CONNECTION:
+        btleConnEvtHandler(pEvt);
+        break;
+    case BTLE_EVT_HID:
+        btleHidEvtHandler(pEvt);
+        break;
+    case BTLE_EVT_LCS_CTRL_POINT:
+        btleLcscpEventHandler(pEvt);
+        break;
+    default:
+        break;
+    }
+}
+
+/** @brief event handler for incoming com messages
+ */
+static void lightMasterHandler(const cmh_LightMasterDataStruct * pMasterData)
+{
+    lightState.com = pMasterData->helmetBeam;
+}
+
+/** @brief main timer event handler
+ *
+ * @details this function just sets a flag, corresponding actions are done in main loop
+ */
 static void timerHandler(void* pContext)
 {
     (void)pContext;
 
-    lightUpdateFlag = true;
+    if (idleTimeout)
+    {
+        idleTimeout--;
+        timeoutFlag = true;
+    }
 }
 
+/** @brief fds event handler
+ *
+ * @details this function checks the results of file operations and sends the
+ *          appropriate event response to the ble modules light control service
+ */
 static void fdsEventHandler(ret_code_t errCode, fds_cmd_id_t cmd, fds_record_id_t recordId, fds_record_key_t recordKey)
 {
     // check only events of interest
@@ -162,23 +398,12 @@ static void fdsEventHandler(ret_code_t errCode, fds_cmd_id_t cmd, fds_record_id_
     }
 }
 
-static bool isGroupConfigValid(uint8_t groupConfig)
-{
-    for(uint_fast8_t i = 1; i <= BUTTONMODECOM; i <<= 1)
-    {
-        if (groupConfig == i)
-            return true;
-    }
-    return false;
-}
-
-static bool isModeConfigValid(const light_ModeStruct * pMode)
-{
-    if (pMode->mode < LIGHT_MODECNT)
-        return true;
-    return false;
-}
-
+/** @brief function to load the button mode configuration
+ *
+ * @details this function tries to load previous configuration out of flash memory,
+ *          if no configuration is stored yet or if configuration is not valid,
+ *          it loads and stores the default configuration
+ */
 static void loadButtonModeConfig()
 {
     uint32_t errCode;
@@ -242,31 +467,76 @@ static void loadButtonModeConfig()
     }
 }
 
-static uint32_t updateButtonModes()
+/** @brief function to change helena power state
+ */
+static uint32_t setHelenaState(helenaStateEnum newState)
 {
-    uint32_t errCode;
-    fds_find_token_t token;
-    fds_record_desc_t descriptor;
-    fds_record_chunk_t chunk;
+    if (helenaState == newState)
+        return NRF_SUCCESS;
 
-    fds_record_key_t key = {.type = FDSMODECONFIG, .instance = FDSINSTANCE};
-    errCode = fds_find(key.type, key.instance, &descriptor, &token);
-    if (errCode != NRF_SUCCESS)
-        return errCode;
-    chunk.p_data = &buttonModes;
-    chunk.length_words = SIZEOF_WORDS(buttonModes);
-    return fds_update(&descriptor, key, 1, &chunk);
+    switch (newState)
+    {
+    case HELENA_SHUTDOWN:
+        // shut down everything, there will be no return from this state, power cycle needed
+        if (helenaState >= HELENA_IDLE)
+        {
+            APP_ERROR_CHECK(light_Enable(false));
+            APP_ERROR_CHECK(ms_Enable(false));
+        }
+        hmi_SetLed(hmi_LEDBLUE, hmi_LEDOFF);
+        hmi_SetLed(hmi_LEDRED, hmi_LEDOFF);
+        APP_ERROR_CHECK(app_timer_stop(mainTimerId));
+        nrf_gpio_cfg_default(pBoardConfig->bdepRX); // default config for com pin and button
+        nrf_gpio_cfg_default(pBoardConfig->button); // to disable DETECT signal
+        APP_ERROR_CHECK(sd_power_system_off());
+        break;
+    case HELENA_OFF:
+        // shut down light and motion sensor
+        APP_ERROR_CHECK(light_Enable(false));
+        APP_ERROR_CHECK(ms_Enable(false));
+        btle_SetScanConfig(BTLE_SCAN_MODE_LOW_POWER);
+        (void)app_timer_stop(mainTimerId);
+        APP_ERROR_CHECK(app_timer_start(mainTimerId, LIGHT_UPDATE_PERIOD_LONG, NULL));  // used to keep timer running, otherwise RTC will be stopped.
+        break;
+    case HELENA_IDLE:
+        // if helena was on, nothing need to be changed, otherwise timer needs to be started
+        if (helenaState != HELENA_ON)
+        {
+            APP_ERROR_CHECK(light_Enable(true));
+            APP_ERROR_CHECK(ms_Enable(true));
+            btle_SetScanConfig(BTLE_SCAN_MODE_LOW_LATENCY);
+            (void)app_timer_stop(mainTimerId);
+            APP_ERROR_CHECK(app_timer_start(mainTimerId, LIGHT_UPDATE_PERIOD_SHORT, NULL));
+        }
+        timeoutFlag = true;
+        break;
+    case HELENA_ON:
+        // if helena was in idle mode, nothing has to be changed, otherwise everything needs to be started
+        if (helenaState != HELENA_IDLE)
+        {
+            APP_ERROR_CHECK(light_Enable(true));
+            APP_ERROR_CHECK(ms_Enable(true));
+            btle_SetScanConfig(BTLE_SCAN_MODE_LOW_LATENCY);
+            (void)app_timer_stop(mainTimerId);
+            APP_ERROR_CHECK(app_timer_start(mainTimerId, LIGHT_UPDATE_PERIOD_SHORT, NULL));
+        }
+        timeoutFlag = true;
+        break;
+    }
+
+    helenaState = newState;
+
+    return NRF_SUCCESS;
 }
 
-/**@brief Function for the Timer initialization.
- *
- * @details Initializes the timer module.
+/**@brief Function for initialization the main module.
  */
 static void mainInit(void)
 {
     uint32_t errCode;
 
-    errCode = app_timer_create(&lightUpdateTimerId, APP_TIMER_MODE_REPEATED, timerHandler);
+    // initialize timer
+    errCode = app_timer_create(&mainTimerId, APP_TIMER_MODE_REPEATED, timerHandler);
     APP_ERROR_CHECK(errCode);
 
     // initialize light state if content is not valid
@@ -274,12 +544,12 @@ static void mainInit(void)
         lightState.crc != crc16_compute((const uint8_t*)&lightState.magicnumber, sizeof(lightState.magicnumber), NULL))
     {
         lightState.button = BUTTONMODECOM;
-        lightState.lastMode = BUTTONMODECOM;
         lightState.com = COMMODEOFF;
         lightState.magicnumber = MAGICNUMBER;
         lightState.crc = crc16_compute((const uint8_t*)&lightState.magicnumber, sizeof(lightState.magicnumber), NULL);
     }
 
+    // register to fds module
     errCode = fds_register(fdsEventHandler);
     APP_ERROR_CHECK(errCode);
     errCode = fds_init();
@@ -287,257 +557,89 @@ static void mainInit(void)
 
     // load button mode configuration from flash
     loadButtonModeConfig();
+
+    // wait for led driver module to leave bootloader and start up
+    nrf_delay_ms(250);
+    APP_ERROR_CHECK(setHelenaState(HELENA_IDLE));
+    idleTimeout = IDLE_TIMEOUT;
 }
 
-static void lightMasterHandler(const cmh_LightMasterDataStruct * pMasterData)
+/** @brief function for handling button events
+ */
+static void buttonHandling(hmi_ButtonEnum internal, hmi_ButtonEnum volumeUp, hmi_ButtonEnum volumeDown)
 {
-    lightState.com = pMasterData->helmetBeam;
-}
-
-static void btleConnEvtHandler(btle_EventStruct * pEvt)
-{
-    switch (pEvt->subEvt.conn)
+    // ultra long press while off -> start searching for remote
+    if (lightState.button == BUTTONMODECOM && lightState.com == COMMODEOFF && internal == hmi_BUTTONULTRALONG)
     {
-    case BTLE_EVT_CONN_CENTRAL_CONNECTED:
-        btleStatus.isCentralConnected = true;
-        break;
-    case BTLE_EVT_CONN_CENTRAL_DISCONNECTED:
-        btleStatus.isCentralConnected = false;
-        break;
-    default:
-        break;
+        APP_ERROR_CHECK(btle_DeleteBonds());
+        APP_ERROR_CHECK(btle_SearchForRemote());
     }
-}
 
-static void btleHidEvtHandler(btle_EventStruct * pEvt)
-{
-    switch (pEvt->subEvt.hid)
+    // ultra long press or volume down button while light is in button mode and on -> turn off
+    if (lightState.button != BUTTONMODECOM && (volumeDown != hmi_BUTTONNOPRESS || internal == hmi_BUTTONULTRALONG))
     {
-    case BTLE_EVT_HID_VOL_UP_SHORT:
-        buttonVolUp = hmi_BUTTONSHORT;
-        break;
-    case BTLE_EVT_HID_VOL_UP_LONG:
-        buttonVolUp = hmi_BUTTONLONG;
-        break;
-    case BTLE_EVT_HID_VOL_DOWN_SHORT:
-        buttonVolDown = hmi_BUTTONSHORT;
-        break;
-    case BTLE_EVT_HID_VOL_DOWN_LONG:
-        buttonVolDown = hmi_BUTTONLONG;
-        break;
-    default:
-        break;
+        lightState.button = BUTTONMODECOM;
+        lightState.com = COMMODEOFF;
     }
-}
 
-static void btleLcscpEventHandler(btle_EventStruct * pEvt)
-{
-    btle_LcscpEventResponseStruct rsp;
-    uint32_t errCode;
-
-    memset(&rsp, 0, sizeof(btle_LcscpEventResponseStruct));
-    rsp.evt = pEvt->subEvt.lcscp;
-
-    switch (pEvt->subEvt.lcscp)
+    // short press -> increase to next state
+    if (internal == hmi_BUTTONSHORT || volumeUp == hmi_BUTTONSHORT)
     {
-    case BTLE_EVT_LCSCP_REQ_MODE_CNT:
-        rsp.retCode = BTLE_RET_SUCCESS;
-        rsp.responseParams.modeCnt = BUTTONMODECOM;
-        break;
-    case BTLE_EVT_LCSCP_REQ_GROUP_CNT:
-        rsp.retCode = BTLE_RET_SUCCESS;
-        rsp.responseParams.groupCnt = buttonModes.modeGroups;
-        break;
-    case BTLE_EVT_LCSCP_REQ_MODE_CONFIG:
-    {
-        uint8_t start = pEvt->lcscpEventParams.modeConfigStart;
-        if (start >= BUTTONMODECOM)
-        {
-            rsp.retCode = BTLE_RET_INVALID;
-            break;
-        }
-        rsp.retCode = BTLE_RET_SUCCESS;
-        rsp.responseParams.modeList.pList = (btle_LightModeConfig*)&buttonModes.modes[start];
-        rsp.responseParams.modeList.listEntries = BUTTONMODECOM - start;
-        break;
-    }
-    case BTLE_EVT_LCSCP_SET_MODE:
-        if (pEvt->lcscpEventParams.modeToSet >= BUTTONMODECOM)
-            lightState.button = BUTTONMODECOM;
+        if (lightState.button == BUTTONMODECOM)
+            lightState.button = BUTTONMODE0;
         else
         {
-            lightState.button = pEvt->lcscpEventParams.modeToSet;
-            lightState.lastMode = lightState.button;
-        }
-        rsp.retCode = BTLE_RET_SUCCESS;
-        break;
-    case BTLE_EVT_LCSCP_CONFIG_MODE:
-        for (uint_fast8_t i = 0; i < pEvt->lcscpEventParams.modeToConfig.listEntries; i++)
-        {
-            if (pEvt->lcscpEventParams.modeToConfig.modeNumber + i >= BUTTONMODECOM ||
-                !isModeConfigValid((light_ModeStruct*)&pEvt->lcscpEventParams.modeToConfig.pConfig[i]))
-                rsp.retCode = BTLE_RET_INVALID;
-        }
-        for (uint_fast8_t i = 0; i < pEvt->lcscpEventParams.modeToConfig.listEntries; i++)
-        {
-            buttonModes.modes[pEvt->lcscpEventParams.modeToConfig.modeNumber + i].mode = pEvt->lcscpEventParams.modeToConfig.pConfig[i].modeType;
-            buttonModes.modes[pEvt->lcscpEventParams.modeToConfig.modeNumber + i].intensity = pEvt->lcscpEventParams.modeToConfig.pConfig[i].intensity;
-        }
-        errCode = updateButtonModes();
-        if (errCode == NRF_SUCCESS)
-        {
-            btleStatus.isModeConfigWritePending = true;
-            return;
-        }
-        else
-            rsp.retCode = BTLE_RET_FAILED;
-        break;
-    case BTLE_EVT_LCSCP_CONFIG_GROUP:
-        if (!isGroupConfigValid(pEvt->lcscpEventParams.groupConfig))
-            rsp.retCode = BTLE_RET_INVALID;
-        else
-        {
-            buttonModes.modeGroups = pEvt->lcscpEventParams.groupConfig;
-            errCode = updateButtonModes();
-            if (errCode == NRF_SUCCESS)
+            uint_fast8_t modesPerGroup = BUTTONMODECOM / buttonModes.modeGroups;
+            do
             {
-                btleStatus.isGroupCountPending = true;
-                return;
-            }
-            else
-                rsp.retCode = BTLE_RET_FAILED;
+                if (++lightState.button % modesPerGroup == 0)
+                    lightState.button -= modesPerGroup;
+            } while (buttonModes.modes[lightState.button].mode == LIGHT_MODEOFF);
         }
-        break;
-    default:
-        rsp.retCode = BTLE_RET_NOT_SUPPORTED;
-        break;
     }
-    // if this point is reached, send response immediately, otherwise it is not necessary or will be done later.
-    APP_ERROR_CHECK(btle_SendEventResponse(&rsp));
+
+    // long press while light is not off -> increase to next group
+    if (lightState.button != BUTTONMODECOM && (internal == hmi_BUTTONLONG || volumeUp == hmi_BUTTONLONG))
+    {
+        uint_fast8_t modesPerGroup = BUTTONMODECOM / buttonModes.modeGroups;
+        do
+        {
+            lightState.button += modesPerGroup;
+            lightState.button %= BUTTONMODECOM;
+            for (uint_fast8_t i = 0; i < modesPerGroup; i++)
+            {
+                if (buttonModes.modes[lightState.button].mode == LIGHT_MODEOFF)
+                {
+                    if (++lightState.button % modesPerGroup == 0)
+                        lightState.button -= modesPerGroup;
+                }
+                else
+                    break;
+            }
+        } while (buttonModes.modes[lightState.button].mode == LIGHT_MODEOFF);
+    }
 }
 
-static void btleEventHandler(btle_EventStruct * pEvt)
+/** @brief function to handle the status led
+ */
+static void ledHandling(light_Status flood, light_Status spot, btleStatusStruct *pBtleData)
 {
-    switch (pEvt->evt)
-    {
-    case BTLE_EVT_CONNECTION:
-        btleConnEvtHandler(pEvt);
-        break;
-    case BTLE_EVT_HID:
-        btleHidEvtHandler(pEvt);
-        break;
-    case BTLE_EVT_LCS_CTRL_POINT:
-        btleLcscpEventHandler(pEvt);
-        break;
-    default:
-        break;
-    }
+    // mask out duty-cycle and overcurrent flags
+    flood &= LIGHT_STATUS_VOLTAGELIMIT | LIGHT_STATUS_TEMPERATURELIMIT;
+    spot &= LIGHT_STATUS_VOLTAGELIMIT | LIGHT_STATUS_TEMPERATURELIMIT;
 
-  /*  btle_LcscpEventResponseStruct rsp;
-    uint32_t errCode;
-
-    memset(&rsp, 0, sizeof(btle_LcscpEventResponseStruct));
-    rsp.evt = pEvt->evt;
-
-    switch (pEvt->evt)
-    {
-    case BTLE_EVT_PERIPH_CONNECTED:
-        btleStatus.isPeriphConnected = true;
-        return;
-    case BTLE_EVT_PERIPH_DISCONNECTED:
-        btleStatus.isPeriphConnected = false;
-        return;
-    case BTLE_EVT_CENTRAL_CONNECTED:
-        btleStatus.isCentralConnected = true;
-        return;
-    case BTLE_EVT_CENTRAL_DISCONNECTED:
-        btleStatus.isCentralConnected = false;
-        return;
-    case BTLE_EVT_VOL_UP_SHORT:
-        buttonVolUp = hmi_BUTTONSHORT;
-        return;
-    case BTLE_EVT_VOL_UP_LONG:
-        buttonVolUp = hmi_BUTTONLONG;
-        return;
-    case BTLE_EVT_VOL_DOWN_SHORT:
-        buttonVolDown = hmi_BUTTONSHORT;
-        return;
-    case BTLE_EVT_VOL_DOWN_LONG:
-        buttonVolDown = hmi_BUTTONLONG;
-        return;
-    case BTLE_EVT_REQ_MODE_CNT:
-        rsp.retCode = BTLE_RET_SUCCESS;
-        rsp.responseParams.modeCnt = BUTTONMODECOM;
-        break;
-    case BTLE_EVT_REQ_GROUP_CNT:
-        rsp.retCode = BTLE_RET_SUCCESS;
-        rsp.responseParams.groupCnt = buttonModes.modeGroups;
-        break;
-    case BTLE_EVT_REQ_MODE_CONFIG:
-    {
-        uint8_t start = pEvt->eventParams.modeConfigStart;
-        if (start >= BUTTONMODECOM)
-        {
-            rsp.retCode = BTLE_RET_INVALID;
-            break;
-        }
-        rsp.retCode = BTLE_RET_SUCCESS;
-        rsp.responseParams.modeList.pList = (btle_LightModeConfig*)&buttonModes.modes[start];
-        rsp.responseParams.modeList.listEntries = BUTTONMODECOM - start;
-        break;
-    }
-    case BTLE_EVT_SET_MODE:
-        if (pEvt->eventParams.modeToSet >= BUTTONMODECOM)
-            lightState.button = BUTTONMODECOM;
-        else
-        {
-            lightState.button = pEvt->eventParams.modeToSet;
-            lightState.lastMode = lightState.button;
-        }
-        rsp.retCode = BTLE_RET_SUCCESS;
-        break;
-    case BTLE_EVT_CONFIG_MODE:
-        if (pEvt->eventParams.modeToConfig.modeNumber >= BUTTONMODECOM ||
-            !isModeConfigValid((light_ModeStruct*)&pEvt->eventParams.modeToConfig.config))
-            rsp.retCode = BTLE_RET_INVALID;
-        else
-        {
-            buttonModes.modes[pEvt->eventParams.modeToConfig.modeNumber].mode = pEvt->eventParams.modeToConfig.config.modeType;
-            buttonModes.modes[pEvt->eventParams.modeToConfig.modeNumber].intensity = pEvt->eventParams.modeToConfig.config.intensity;
-            errCode = updateButtonModes();
-            if (errCode == NRF_SUCCESS)
-            {
-                btleStatus.isModeConfigWritePending = true;
-                return;
-            }
-            else
-                rsp.retCode = BTLE_RET_FAILED;
-        }
-        break;
-    case BTLE_EVT_CONFIG_GROUP:
-        if (!isGroupConfigValid(pEvt->eventParams.groupConfig))
-            rsp.retCode = BTLE_RET_INVALID;
-        else
-        {
-            buttonModes.modeGroups = pEvt->eventParams.groupConfig;
-            errCode = updateButtonModes();
-            if (errCode == NRF_SUCCESS)
-            {
-                btleStatus.isGroupCountPending = true;
-                return;
-            }
-            else
-                rsp.retCode = BTLE_RET_FAILED;
-        }
-        break;
-    default:
-        rsp.retCode = BTLE_RET_NOT_SUPPORTED;
-        break;
-    }
-    // if this point is reached, send response immediately, otherwise it is not necessary or will be done later.
-    APP_ERROR_CHECK(btle_SendEventResponse(&rsp));*/
+    if (flood | spot)
+        hmi_SetLed(hmi_LEDRED, hmi_LEDON);
+    else
+        hmi_SetLed(hmi_LEDRED, hmi_LEDOFF);
+    if (pBtleData->isCentralConnected)
+        hmi_SetLed(hmi_LEDBLUE, hmi_LEDON);
+    else
+        hmi_SetLed(hmi_LEDBLUE, hmi_LEDOFF);
 }
 
+/** @brief function to update the light information data for the com module
+ */
 static void updateLightMsgData(const light_StatusStruct * pStatus)
 {
     cmh_HelmetLightStruct helmetBeam;
@@ -562,6 +664,8 @@ static void updateLightMsgData(const light_StatusStruct * pStatus)
     (void)cmh_UpdateHelmetLight(&helmetBeam);
 }
 
+/** @brief function to update the light informations for the ble module
+ */
 static void updateLightBtleData(const light_ModeStruct* pLightMode, const light_StatusStruct * pStatus)
 {
     btle_lightDataStruct helmetBeam;
@@ -584,84 +688,6 @@ static void updateLightBtleData(const light_ModeStruct* pLightMode, const light_
    (void)btle_UpdateLightMeasurements(&helmetBeam);
 }
 
-static void buttonHandling(hmi_ButtonEnum internal, hmi_ButtonEnum volumeUp, hmi_ButtonEnum volumeDown)
-{
-    // ultra long press while off -> start searching for remote
-    if (lightState.button == BUTTONMODECOM && lightState.com == COMMODEOFF && internal == hmi_BUTTONULTRALONG)
-    {
-        APP_ERROR_CHECK(btle_DeleteBonds());
-        APP_ERROR_CHECK(btle_SearchForRemote());
-    }
-
-    // ultra long press or volume down button while light is in button mode and on -> turn off
-    if (lightState.button != BUTTONMODECOM && (volumeDown != hmi_BUTTONNOPRESS || internal == hmi_BUTTONULTRALONG))
-    {
-        lightState.button = BUTTONMODECOM;
-        lightState.com = COMMODEOFF;
-    }
-
-    // short press -> increase to next state
-    if (internal == hmi_BUTTONSHORT || volumeUp == hmi_BUTTONSHORT)
-    {
-        // use last mode if light was off an available
-        if (lightState.button == BUTTONMODECOM)
-        {
-            if (lightState.lastMode != BUTTONMODECOM)
-                lightState.button = lightState.lastMode;
-            else
-                lightState.button = BUTTONMODE0;
-        }
-        else
-        {
-            uint_fast8_t modesPerGroup = BUTTONMODECOM / buttonModes.modeGroups;
-            do
-            {
-                if (++lightState.button % modesPerGroup == 0)
-                    lightState.button -= modesPerGroup;
-            } while (buttonModes.modes[lightState.button].mode == LIGHT_MODEOFF);
-            lightState.lastMode = lightState.button;
-        }
-    }
-
-    // long press while light is not off -> increase to next group
-    if (lightState.button != BUTTONMODECOM && (internal == hmi_BUTTONLONG || volumeUp == hmi_BUTTONLONG))
-    {
-        uint_fast8_t modesPerGroup = BUTTONMODECOM / buttonModes.modeGroups;
-        do
-        {
-            lightState.button += modesPerGroup;
-            lightState.button %= BUTTONMODECOM;
-            for (uint_fast8_t i = 0; i < modesPerGroup; i++)
-            {
-                if (buttonModes.modes[lightState.button].mode == LIGHT_MODEOFF)
-                {
-                    if (++lightState.button % modesPerGroup == 0)
-                        lightState.button -= modesPerGroup;
-                }
-                else
-                    break;
-            }
-        } while (buttonModes.modes[lightState.button].mode == LIGHT_MODEOFF);
-        lightState.lastMode = lightState.button;
-    }
-}
-
-static void ledHandling(light_Status flood, light_Status spot, btleStatusStruct *pBtleData)
-{
-    // mask out duty-cycle and overcurrent flags
-    flood &= LIGHT_STATUS_VOLTAGELIMIT | LIGHT_STATUS_TEMPERATURELIMIT;
-    spot &= LIGHT_STATUS_VOLTAGELIMIT | LIGHT_STATUS_TEMPERATURELIMIT;
-
-    if (flood | spot)
-        hmi_SetLed(hmi_LEDRED, hmi_LEDON);
-    else
-        hmi_SetLed(hmi_LEDRED, hmi_LEDOFF);
-    if (pBtleData->isCentralConnected)
-        hmi_SetLed(hmi_LEDBLUE, hmi_LEDON);
-    else
-        hmi_SetLed(hmi_LEDBLUE, hmi_LEDOFF);
-}
-
 /**@brief Function for application main entry.
  */
 int main(void)
@@ -674,6 +700,7 @@ int main(void)
     APP_ERROR_CHECK(board_Init());
     hmi_Init();
     btle_Init(false, btleEventHandler);
+    pwr_Init();
     light_Init();
     ms_Init();
     com_Init();
@@ -682,16 +709,6 @@ int main(void)
     debug_FieldTestingInit();
 #endif
     mainInit();
-
-    sd_clock_hfclk_request();
-    currentTimebase = LIGHT_UPDATE_PERIOD_LONG;
-    errCode = app_timer_start(lightUpdateTimerId, currentTimebase, NULL);
-    APP_ERROR_CHECK(errCode);
-    do  // led driver need 250ms to start up, due to bootloader, so just try  again and again.
-    {
-        errCode = light_Enable(true);
-    } while (errCode == NRF_ERROR_INTERNAL);
-    APP_ERROR_CHECK(errCode);
 
     while (1)
     {
@@ -718,56 +735,78 @@ int main(void)
         else
             pLightMode = &buttonModes.modes[lightState.button];
 
-        // check if timebase has to be changed
-        if (pLightMode->mode == LIGHT_MODEOFF && currentTimebase != LIGHT_UPDATE_PERIOD_LONG)
+        // check if state has to be changed
+        if (pLightMode->mode == LIGHT_MODEOFF && helenaState == HELENA_ON)
         {
-            APP_ERROR_CHECK(app_timer_stop(lightUpdateTimerId));
-            lightUpdateFlag = true;
-            currentTimebase = LIGHT_UPDATE_PERIOD_LONG;
-            APP_ERROR_CHECK(app_timer_start(lightUpdateTimerId, currentTimebase, NULL));
-            APP_ERROR_CHECK(ms_Enable(false));
+            APP_ERROR_CHECK(setHelenaState(HELENA_IDLE));
+            idleTimeout = IDLE_TIMEOUT;
         }
-        else if (pLightMode->mode != LIGHT_MODEOFF && currentTimebase != LIGHT_UPDATE_PERIOD_SHORT)
+        if (pLightMode->mode != LIGHT_MODEOFF && helenaState != HELENA_ON)
         {
-            APP_ERROR_CHECK(app_timer_stop(lightUpdateTimerId));
-            lightUpdateFlag = true;
-            currentTimebase = LIGHT_UPDATE_PERIOD_SHORT;
-            APP_ERROR_CHECK(app_timer_start(lightUpdateTimerId, currentTimebase, NULL));
-            APP_ERROR_CHECK(ms_Enable(true));
+            APP_ERROR_CHECK(setHelenaState(HELENA_ON));
+            idleTimeout = IDLE_TIMEOUT;
+        }
+        if (idleTimeout == 0 && helenaState != HELENA_OFF)
+        {
+            APP_ERROR_CHECK(setHelenaState(HELENA_OFF));
+        }
+        if (helenaState != HELENA_OFF)
+        {
+            static pwr_VoltageStruct voltageLast;
+            pwr_VoltageStruct voltageNow;
+            errCode = pwr_GetInputVoltage(&voltageNow);
+            if (errCode == NRF_SUCCESS && voltageNow.timestamp != 0)
+            {                                                           // perform checks only if
+                if (voltageLast.timestamp != 0 &&                       // valid values are available and
+                    voltageLast.inputVoltage < MINIMUM_INPUT_VOLTAGE && // both value (actual and last stored)
+                    voltageNow.inputVoltage < MINIMUM_INPUT_VOLTAGE)    // are below threshold
+                {
+                    uint32_t timediff;
+                    (void)app_timer_cnt_diff_compute(voltageNow.timestamp, voltageLast.timestamp, &timediff);
+                    if (timediff > SHUTDOWN_DELAY)                      // shutdown helena if input voltage has been
+                        APP_ERROR_CHECK(setHelenaState(HELENA_SHUTDOWN));//below threshold for specific time period
+                }
+                                                                        // store actual values if
+                if (voltageNow.inputVoltage >= MINIMUM_INPUT_VOLTAGE || // input voltage is above threshold or
+                    voltageLast.timestamp == 0 ||                       // no valid values stored yet or
+                    voltageLast.inputVoltage >= MINIMUM_INPUT_VOLTAGE)  // last values was above threshold
+                    voltageLast = voltageNow;
+            }
         }
 
-        if (lightUpdateFlag)
+        // periodic timebase checks
+        if (timeoutFlag && (helenaState == HELENA_IDLE || helenaState == HELENA_ON))
         {
             ms_DataStruct msData;
 
-            lightUpdateFlag = false;
-            if (currentTimebase == LIGHT_UPDATE_PERIOD_SHORT)
+            // get motion sensor data
+            errCode = ms_FetchData(&msData);
+            if (errCode != NRF_ERROR_INVALID_DATA)
             {
-                errCode = ms_FetchData(&msData);
-                if (errCode == NRF_SUCCESS)
-                {
-                    errCode = light_UpdateTargets(pLightMode, msData.rot.pitch, &pLightStatus);
-                    APP_ERROR_CHECK(errCode);
-                }
-                else if (errCode != NRF_ERROR_INVALID_DATA)
-                {
-                    APP_ERROR_HANDLER(errCode);
-                }
+                APP_ERROR_CHECK(errCode);
+            }
 
-            }
-            else
-            {
-                APP_ERROR_CHECK(light_UpdateTargets(pLightMode, 24576, &pLightStatus));
-            }
+            // update light
+            errCode = light_UpdateTargets(pLightMode, msData.rot.pitch, &pLightStatus);
+            APP_ERROR_CHECK(errCode);
+
+            // set status leds
             ledHandling(pLightStatus->flood, pLightStatus->spot, &btleStatus);
+            // update com related message data
             updateLightMsgData(pLightStatus);
+            // update ble related message data
             updateLightBtleData(pLightMode, pLightStatus);
+
+            // reset idle timeout counter if necessary
+            if (pLightMode->mode != LIGHT_MODEOFF || msData.isMoving)
+                idleTimeout = IDLE_TIMEOUT;
+            if (msData.isMoving)
+                idleTimeout = IDLE_TIMEOUT;
         }
 
         light_Execute();
         debug_Execute();
         cmh_Execute();
-        //app_sched_execute();
         pwr_SleepManagement();
     }
 }

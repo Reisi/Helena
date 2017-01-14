@@ -37,6 +37,7 @@ void com_Init(void);
 const com_MessageStruct *com_Check(void);
 com_ErrorEnum com_Put(const com_MessageStruct*);
 void com_FlushFIFO(void);
+void com_OnSysEvt(uint32_t sysEvent);
 
 /*static inline void com_Enable()
 {

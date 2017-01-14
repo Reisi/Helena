@@ -49,7 +49,11 @@
         (BUILD_MONTH_IS_DEC) ? 12 : 0\
     )
 
-#define BUILD_DAY ((__DATE__[4] - '0') * 10 + (__DATE__[5] - '0'))
+#define BUILD_DAY \
+    ( \
+        (__DATE__[4] == ' ' ? (__DATE__[5] - '0') :     \
+        (__DATE__[4] - '0') * 10 + (__DATE__[5] - '0'))  \
+    )
 
 
 #define BUILD_HOUR ((__TIME__[0] - '0') * 10 + (__TIME__[1] - '0'))
