@@ -27,13 +27,17 @@ typedef int16_t q15_t;
 
 typedef enum
 {
-    LIGHT_MODEOFF = 0,           /**< light is off */
-    LIGHT_MODEFLOOD,             /**< flood active */
-    LIGHT_MODESPOT,              /**< spot active */
-    LIGHT_MODEBOTH,              /**< flood and spot active */
-    LIGHT_MODEADAPTIVEFLOOD,     /**< flood active, with pitch compensation */
-    LIGHT_MODEADAPTIVESPOT,      /**< spot active with pitch compensation */
-    LIGHT_MODEADAPTIVEBOTH,      /**< flood and spot active with pitch compensation */
+    LIGHT_MODEOFF = 0,          /**< light is off */
+    LIGHT_MODEFLOOD,            /**< flood active */
+    LIGHT_MODESPOT,             /**< spot active */
+    LIGHT_MODEFULL,             /**< flood and spot active */
+    LIGHT_MODEFLOODAPC,         /**< flood active, with pitch compensation */
+    LIGHT_MODESPOTAPC,          /**< spot active with pitch compensation */
+    LIGHT_MODEFULLAPC,          /**< flood and spot active with pitch compensation */
+    LIGHT_MODEFLOODCLONED,      /**< flood active, settings cloned to spot driver */
+    LIGHT_MODESPOTCLONED,       /**< spot active, settings cloned to flood driver */
+    LIGHT_MODEFLOODAPCCLONED,   /**< flood active, pitch compensated, settings cloned to spot driver */
+    LIGHT_MODESPOTAPCCLONED,    /**< spot active, pitch compensated, settings cloned to flood driver */
     LIGHT_MODECNT
 } light_ModeEnum;
 

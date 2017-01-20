@@ -1,0 +1,16 @@
+<macro name="Factory reset" icon="CLOSE">
+   <assert-service description="Ensure Nordic UART Service" instance-id="0" uuid="6e400001-b5a3-f393-e0a9-e50e24dcca9e">
+      <assert-characteristic description="Ensure TX Characteristic" instance-id="0" uuid="6e400003-b5a3-f393-e0a9-e50e24dcca9e">
+         <assert-cccd description="Ensure CCCD"/>
+         <property name="NOTIFY" requirement="MANDATORY"/>
+      </assert-characteristic>
+      <assert-characteristic description="Ensure RX Characteristic" instance-id="0" uuid="6e400002-b5a3-f393-e0a9-e50e24dcca9e">
+         <property name="WRITE" requirement="MANDATORY"/>
+      </assert-characteristic>
+   </assert-service>
+   <write-descriptor description="Enable notifications for 6e400003-b5a3-f393-e0a9-e50e24dcca9e" characteristic-instance-id="0" characteristic-uuid="6e400003-b5a3-f393-e0a9-e50e24dcca9e" service-instance-id="0" service-uuid="6e400001-b5a3-f393-e0a9-e50e24dcca9e" descriptor-instance-id="0" uuid="00002902-0000-1000-8000-00805f9b34fb" value="0100"/>
+   <write description="Write 0x636C656172206D656D to RX Characteristic" characteristic-instance-id="0" characteristic-uuid="6e400002-b5a3-f393-e0a9-e50e24dcca9e" service-instance-id="0" service-uuid="6e400001-b5a3-f393-e0a9-e50e24dcca9e" type="WRITE_REQUEST" value="636C656172206D656D"/>
+   <wait-for-notification description="Wait for notification to TX Characteristic" characteristic-instance-id="0" characteristic-uuid="6e400003-b5a3-f393-e0a9-e50e24dcca9e" service-instance-id="0" service-uuid="6e400001-b5a3-f393-e0a9-e50e24dcca9e">
+      <assert-value description="Assert value equals 0x646F6E652C206379636C6520706F7765720D0A" value="646F6E652C206379636C6520706F7765720D0A"/>
+   </wait-for-notification>
+</macro>

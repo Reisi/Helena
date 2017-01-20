@@ -14,6 +14,7 @@
 #include "app_timer.h"
 #include "power.h"
 #include "i2c.h"
+#include <stdlib.h>
 
 /* Private defines -----------------------------------------------------------*/
 #define FLOOD               0
@@ -383,20 +384,28 @@ static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t 
     switch (pMode->mode)
     {
     case LIGHT_MODEFLOOD:
+    case LIGHT_MODEFLOODCLONED:
         if (pMode->intensity >= 100)
             *pFlood = 255;
         else
             *pFlood = ((uint16_t)pMode->intensity << 8) / 100;
-        *pSpot = 0;
+        if (pMode->mode == LIGHT_MODEFLOODCLONED)
+            *pSpot = *pFlood;
+        else
+            *pSpot = 0;
         break;
     case LIGHT_MODESPOT:
-        *pFlood = 0;
+    case LIGHT_MODESPOTCLONED:
         if (pMode->intensity >= 100)
             *pSpot = 255;
         else
             *pSpot = ((uint16_t)pMode->intensity << 8) / 100;
+        if (pMode->mode == LIGHT_MODESPOTCLONED)
+            *pFlood = *pSpot;
+        else
+            *pFlood = 0;
         break;
-    case LIGHT_MODEBOTH:
+    case LIGHT_MODEFULL:
         *pFlood = 0;
         if (pMode->intensity >= 100)
         {
@@ -409,17 +418,22 @@ static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t 
             *pFlood = *pSpot;
         }
         break;
-    case LIGHT_MODEADAPTIVEFLOOD:
+    case LIGHT_MODEFLOODAPC:
+    case LIGHT_MODEFLOODAPCCLONED:
     {
-        *pSpot = 0;
         int32_t pitch_off = pitch + PITCHOFFSETFLOOD;
         if (pitch_off >= (1<<15))
             pitch_off -= (1<<15);
         else if (pitch_off < 0)
             pitch_off += (1<<15);
         *pFlood = getTargetFromLUT(&floodLUT, limitPitch((q15_t)pitch_off), (q7_8_t)pMode->intensity << 8);
+        if (pMode->mode == LIGHT_MODEFLOODAPCCLONED)
+            *pSpot = *pFlood;
+        else
+            *pSpot = 0;
     }   break;
-    case LIGHT_MODEADAPTIVESPOT:
+    case LIGHT_MODESPOTAPC:
+    case LIGHT_MODESPOTAPCCLONED:
     {
         int32_t pitch_off = pitch + PITCHOFFSETSPOT;
         if (pitch_off >= (1<<15))
@@ -427,9 +441,12 @@ static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t 
         else if (pitch_off < 0)
             pitch_off += (1<<15);
         *pSpot = getTargetFromLUT(&spotLUT, limitPitch((q15_t)pitch_off), (q7_8_t)pMode->intensity << 8);
-        *pFlood = 0;
+        if (pMode->mode == LIGHT_MODESPOTAPCCLONED)
+            *pFlood = *pSpot;
+        else
+            *pFlood = 0;
     }   break;
-    case LIGHT_MODEADAPTIVEBOTH:
+    case LIGHT_MODEFULLAPC:
     {
         q7_8_t intensityFlood, intensitySpot;
         getIntensitiesFromLUT(limitPitch(pitch), (q7_8_t)pMode->intensity << 8, &intensityFlood, &intensitySpot);
@@ -571,9 +588,13 @@ uint32_t light_UpdateTargets(const light_ModeStruct* pMode, q15_t pitch, const l
         calculateTarget(pMode, pitch, &targets[FLOOD], &targets[SPOT]);
 
     // clear error flags if leds are off
-    if (pMode->mode == LIGHT_MODEOFF || pMode->mode == LIGHT_MODESPOT || pMode->mode == LIGHT_MODEADAPTIVESPOT)
+    if (pMode->mode == LIGHT_MODEOFF ||
+        pMode->mode == LIGHT_MODESPOT || pMode->mode == LIGHT_MODESPOTAPC ||
+        pMode->mode == LIGHT_MODESPOTCLONED || pMode->mode == LIGHT_MODESPOTAPCCLONED)
         lightStatus.flood = 0;
-    if (pMode->mode == LIGHT_MODEOFF || pMode->mode == LIGHT_MODEFLOOD || pMode->mode == LIGHT_MODEADAPTIVEFLOOD)
+    if (pMode->mode == LIGHT_MODEOFF ||
+        pMode->mode == LIGHT_MODEFLOOD || pMode->mode == LIGHT_MODEFLOODAPC ||
+        pMode->mode == LIGHT_MODEFLOODCLONED || pMode->mode == LIGHT_MODEFLOODAPCCLONED)
         lightStatus.spot = 0;
     *ppStatus = &lightStatus;
 
@@ -582,7 +603,7 @@ uint32_t light_UpdateTargets(const light_ModeStruct* pMode, q15_t pitch, const l
 
 void light_Execute()
 {
-#define LOWPASSTHRESH   200     // threshold in mV, when low pass filter is bypassed
+#define LOWPASSTHRESH   100     // threshold in mV, when low pass filter is bypassed
 
     static uint32_t voltageFiltered;
 
@@ -606,7 +627,20 @@ void light_Execute()
     APP_ERROR_CHECK(readConverterData(&lightStatus));                        // read current converter status and data
 
     while (pwr_GetInputVoltage(&voltage) != NRF_SUCCESS);                    // wait for conversion to be finished
-    if (voltageFiltered == 0)                                                // in case of filter is empty or
+
+    int_fast16_t diff = (voltageFiltered >> 4) - (int_fast16_t)voltage.inputVoltage;
+    for (uint_fast8_t i = 0; i < 4 ; i++)
+    {
+        if (abs(diff) < (32 << i) || i == 3)
+        {
+            voltageFiltered -= (voltageFiltered >> (4 - i));
+            voltageFiltered += voltage.inputVoltage << i;
+            break;
+        }
+    }
+    lightStatus.inputVoltage = voltageFiltered >> 4;
+
+    /*if (voltageFiltered == 0)                                                // in case of filter is empty or
         voltageFiltered = voltage.inputVoltage << 4;                         // use input directly
     else if ((voltageFiltered >> 4) > (voltage.inputVoltage + LOWPASSTHRESH))// massive input voltage drop
         voltageFiltered = (voltage.inputVoltage + LOWPASSTHRESH) << 4;       // bypass filter
@@ -614,7 +648,7 @@ void light_Execute()
         voltageFiltered = (voltage.inputVoltage - LOWPASSTHRESH) << 4;       // bypass filter
     else                                                                     // otherwise use a low pass filter for input voltage
         voltageFiltered = voltageFiltered - (voltageFiltered >> 4) + voltage.inputVoltage;
-    lightStatus.inputVoltage = voltageFiltered >> 4;
+    lightStatus.inputVoltage = voltageFiltered >> 4;*/
 
     if (targets[FLOOD] == 0 && targets[SPOT] == 0)              // if light is off, nothing more to do
         return;

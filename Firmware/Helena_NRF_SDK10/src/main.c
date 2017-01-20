@@ -104,16 +104,16 @@ static const light_ModeStruct comModes[COMMODECNT] =
 {
     {LIGHT_MODEOFF, 0},
     {LIGHT_MODEFLOOD, 10},
-    {LIGHT_MODEADAPTIVEBOTH, 12},
-    {LIGHT_MODEADAPTIVEFLOOD, 75}
+    {LIGHT_MODEFULLAPC, 12},
+    {LIGHT_MODEFLOODAPC, 75}
 };
 static buttonLightModeStruct buttonModes __attribute__ ((aligned (4))) =
 {
     .modeGroups = 2,
     .modes =
     {
-        {LIGHT_MODEADAPTIVESPOT, 10},
-        {LIGHT_MODEADAPTIVESPOT, 30},
+        {LIGHT_MODESPOTAPC, 10},
+        {LIGHT_MODESPOTAPC, 30},
         {LIGHT_MODEOFF, 0},
         {LIGHT_MODEOFF, 0},
         {LIGHT_MODESPOT, 35},
@@ -669,6 +669,10 @@ static void updateLightMsgData(const light_StatusStruct * pStatus)
 static void updateLightBtleData(const light_ModeStruct* pLightMode, const light_StatusStruct * pStatus)
 {
     btle_lightDataStruct helmetBeam;
+    uint16_t powerFlood, powerSpot;
+
+    powerFlood = pStatus->currentFlood * LEDVOLTAGEFLOOD;
+    powerSpot = pStatus->currentSpot * LEDVOLTAGESPOT;
 
     helmetBeam.mode = pLightMode->mode;
     helmetBeam.intensity = pLightMode->intensity;
@@ -680,10 +684,14 @@ static void updateLightBtleData(const light_ModeStruct* pLightMode, const light_
     helmetBeam.statusSpot.inputVoltage = pStatus->spot & LIGHT_STATUS_VOLTAGELIMIT ? 1 : 0;
     helmetBeam.statusSpot.temperature = pStatus->spot & LIGHT_STATUS_TEMPERATURELIMIT ? 1 : 0;
     helmetBeam.statusSpot.dutyCycleLimit = pStatus->spot & LIGHT_STATUS_DUTYCYCLELIMIT ? 1 : 0;
-    helmetBeam.powerFlood = pStatus->currentFlood * LEDVOLTAGEFLOOD;
-    helmetBeam.powerSpot = pStatus->currentSpot * LEDVOLTAGESPOT;
     helmetBeam.temperature = pStatus->temperature / 10 - 273;
     helmetBeam.inputVoltage = pStatus->inputVoltage;
+    helmetBeam.powerFlood = powerFlood;
+    helmetBeam.powerSpot = powerSpot;
+    if (pLightMode->mode == LIGHT_MODEFLOODAPCCLONED || pLightMode->mode == LIGHT_MODEFLOODCLONED)
+        helmetBeam.powerFlood += powerSpot;
+    if (pLightMode->mode == LIGHT_MODESPOTAPCCLONED || pLightMode->mode == LIGHT_MODESPOTCLONED)
+        helmetBeam.powerSpot += powerFlood;
 
    (void)btle_UpdateLightMeasurements(&helmetBeam);
 }

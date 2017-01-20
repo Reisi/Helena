@@ -1,0 +1,19 @@
+<macro name="Spot" icon="SETTINGS">
+   <assert-service description="Ensure 4f770101-ed7d-11e4-840e-0002a5d5c51b service" instance-id="0" uuid="4f770101-ed7d-11e4-840e-0002a5d5c51b">
+      <assert-characteristic description="Ensure 4f770104-ed7d-11e4-840e-0002a5d5c51b characteristic" instance-id="0" uuid="4f770104-ed7d-11e4-840e-0002a5d5c51b">
+         <assert-cccd description="Ensure CCCD"/>
+         <property name="WRITE" requirement="MANDATORY"/>
+         <property name="INDICATE" requirement="MANDATORY"/>
+      </assert-characteristic>
+   </assert-service>
+   <write-descriptor description="Enable indications for 4f770104-ed7d-11e4-840e-0002a5d5c51b" characteristic-instance-id="0" characteristic-uuid="4f770104-ed7d-11e4-840e-0002a5d5c51b" service-instance-id="0" service-uuid="4f770101-ed7d-11e4-840e-0002a5d5c51b" descriptor-instance-id="0" uuid="00002902-0000-1000-8000-00805f9b34fb" value="0200"/>
+   <write description="Write 0x0602 to 4f770104-ed7d-11e4-840e-0002a5d5c51b" characteristic-instance-id="0" characteristic-uuid="4f770104-ed7d-11e4-840e-0002a5d5c51b" service-instance-id="0" service-uuid="4f770101-ed7d-11e4-840e-0002a5d5c51b" type="WRITE_REQUEST" value="0602"/>
+   <wait-for-indication description="Wait for indication to 4f770104-ed7d-11e4-840e-0002a5d5c51b" characteristic-instance-id="0" characteristic-uuid="4f770104-ed7d-11e4-840e-0002a5d5c51b" service-instance-id="0" service-uuid="4f770101-ed7d-11e4-840e-0002a5d5c51b">
+      <assert-value description="Assert value equals 0x200601" value="200601"/>
+   </wait-for-indication>
+   <write description="Write 0x0500050A051E000000000223025000000000 to 4f770104-ed7d-11e4-840e-0002a5d5c51b" characteristic-instance-id="0" characteristic-uuid="4f770104-ed7d-11e4-840e-0002a5d5c51b" service-instance-id="0" service-uuid="4f770101-ed7d-11e4-840e-0002a5d5c51b" type="WRITE_REQUEST" value="0500050A051E000000000223025000000000"/>
+   <wait-for-indication description="Wait for indication to 4f770104-ed7d-11e4-840e-0002a5d5c51b" characteristic-instance-id="0" characteristic-uuid="4f770104-ed7d-11e4-840e-0002a5d5c51b" service-instance-id="0" service-uuid="4f770101-ed7d-11e4-840e-0002a5d5c51b">
+      <assert-value description="Assert value equals 0x200501" value="200501"/>
+   </wait-for-indication>
+   <write-descriptor description="Disable notifications and indications for 4f770104-ed7d-11e4-840e-0002a5d5c51b" characteristic-instance-id="0" characteristic-uuid="4f770104-ed7d-11e4-840e-0002a5d5c51b" service-instance-id="0" service-uuid="4f770101-ed7d-11e4-840e-0002a5d5c51b" descriptor-instance-id="0" uuid="00002902-0000-1000-8000-00805f9b34fb" value="0000"/>
+</macro>

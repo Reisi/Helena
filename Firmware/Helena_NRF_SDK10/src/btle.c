@@ -913,7 +913,8 @@ uint32_t btle_UpdateLightMeasurements(const btle_lightDataStruct * pData)
         notifyData.mode.intensity = pData->intensity;
     }
     if (pData->mode == BTLE_LIGHT_MODE_FLOOD || pData->mode == BTLE_LIGHT_MODE_FLOOD_AND_SPOT ||
-        pData->mode == BTLE_LIGHT_MODE_FLOOD_PITCH_COMPENSATED || pData->mode == BTLE_LIGHT_MODE_FLOOD_AND_SPOT_PITCH_COMPENSATED)
+        pData->mode == BTLE_LIGHT_MODE_FLOOD_PITCH_COMPENSATED || pData->mode == BTLE_LIGHT_MODE_FLOOD_AND_SPOT_PITCH_COMPENSATED ||
+        pData->mode == BTLE_LIGHT_MODE_FLOOD_CLONED || pData->mode == BTLE_LIGHT_MODE_FLOOD_PITCH_COMPENSATED_CLONED)
     {
         notifyData.flags.flood_power_present = 1;
         notifyData.flags.flood_status_present = 1;
@@ -922,7 +923,8 @@ uint32_t btle_UpdateLightMeasurements(const btle_lightDataStruct * pData)
         notifyData.flood_status = statusFlags.out;
     }
     if (pData->mode == BTLE_LIGHT_MODE_SPOT || pData->mode == BTLE_LIGHT_MODE_FLOOD_AND_SPOT ||
-        pData->mode == BTLE_LIGHT_MODE_SPOT_PITCH_COMPENSATED || pData->mode == BTLE_LIGHT_MODE_FLOOD_AND_SPOT_PITCH_COMPENSATED)
+        pData->mode == BTLE_LIGHT_MODE_SPOT_PITCH_COMPENSATED || pData->mode == BTLE_LIGHT_MODE_FLOOD_AND_SPOT_PITCH_COMPENSATED ||
+        pData->mode == BTLE_LIGHT_MODE_SPOT_CLONED || pData->mode == BTLE_LIGHT_MODE_SPOT_PITCH_COMPENSATED_CLONED)
     {
         notifyData.flags.spot_power_present = 1;
         notifyData.flags.spot_status_present = 1;
@@ -941,6 +943,7 @@ uint32_t btle_UpdateLightMeasurements(const btle_lightDataStruct * pData)
         notifyData.input_voltage = pData->inputVoltage;;
     }
     if (pData->mode == BTLE_LIGHT_MODE_FLOOD_PITCH_COMPENSATED || pData->mode == BTLE_LIGHT_MODE_SPOT_PITCH_COMPENSATED ||
+        pData->mode == BTLE_LIGHT_MODE_FLOOD_PITCH_COMPENSATED_CLONED || pData->mode == BTLE_LIGHT_MODE_SPOT_PITCH_COMPENSATED_CLONED ||
         pData->mode == BTLE_LIGHT_MODE_FLOOD_AND_SPOT_PITCH_COMPENSATED)
     {
         notifyData.flags.pitch_present = 1;
