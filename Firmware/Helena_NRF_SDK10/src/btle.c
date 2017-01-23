@@ -425,7 +425,16 @@ static void connParamsInit(void)
  */
 static void cgwDataHandler(ble_cgw_t * pCgw, com_MessageStruct * pMessageRx)
 {
-    com_Put(pMessageRx);
+    SEGGER_RTT_printf(0, "%02x-%02x-%02x-%02x-%02x-%02x-%02x-%02x-%02x\r\n", pMessageRx->Identifier,
+                                                                             pMessageRx->Control,
+                                                                             pMessageRx->Data[0],
+                                                                             pMessageRx->Data[1],
+                                                                             pMessageRx->Data[2],
+                                                                             pMessageRx->Data[3],
+                                                                             pMessageRx->Data[4],
+                                                                             pMessageRx->Data[5],
+                                                                             pMessageRx->Data[6]);
+    APP_ERROR_CHECK(com_Put(pMessageRx));
 }
 
 /** @brief Event handler for the light control service
@@ -495,16 +504,21 @@ static void servicesInit(void)
     uint_fast8_t i = 0;
     versionString[i++] = VERSION_MAJOR + '0';
     versionString[i++] = '.';
-    versionString[i++] = VERSION_MINOR + '0';
+    if (VERSION_MINOR < 10)
+        versionString[i++] = VERSION_MINOR + '0';
+    else
+        versionString[i++] = VERSION_MINOR - 10 + 'A';
     versionString[i++] = '.';
-    versionString[i++] = VERSION_PATCH + '0';
+    if (VERSION_PATCH < 10)
+        versionString[i++] = VERSION_PATCH + '0';
+    else
+        versionString[i++] = VERSION_PATCH - 10 + 'A';
     versionString[i++] = '-';
     strcpy(&versionString[i], VERSION_LEVEL);
     i = strlen(versionString);
     versionString[i++] = '-';
     itoa(VERSION_BUILD, &versionString[i], 10);
     memset(&disInit, 0, sizeof(ble_dis_init_t));
-    ble_srv_ascii_to_utf8(&disInit.manufact_name_str, MANUFACTURER_NAME);
     ble_srv_ascii_to_utf8(&disInit.fw_rev_str, versionString);
     ble_srv_ascii_to_utf8(&disInit.hw_rev_str, (char*)pBoardConfig->hwRevStr);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&disInit.dis_attr_md.read_perm);

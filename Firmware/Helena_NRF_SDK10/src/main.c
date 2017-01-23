@@ -727,7 +727,7 @@ int main(void)
         // communication check
         pMessageIn = com_Check();
         if (pMessageIn != NULL) {
-            (void)btle_ComGatewayCheck(pMessageIn);
+            APP_ERROR_CHECK(btle_ComGatewayCheck(pMessageIn));
             cmh_ComMessageCheck(pMessageIn);
         }
 

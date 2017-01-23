@@ -155,7 +155,8 @@ static void com_Receive()
             com_RX.DataByte <<= 1;
         if ((com_RX.BitCounter & 0x07) == 0x07)
             com_ReceiveBuffer[com_RXBuffer][com_RX.BitCounter>>3] = com_RX.DataByte;
-        com_RX.BitCounter++;
+        if (com_RX.BitCounter < 144)
+            com_RX.BitCounter++;
     }
     else if (com_Input && (com_RX.StuffCounter == 5))
     {

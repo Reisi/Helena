@@ -604,7 +604,7 @@ uint32_t light_UpdateTargets(const light_ModeStruct* pMode, q15_t pitch, const l
 void light_Execute()
 {
 #define LOWPASSTHRESH   100     // threshold in mV, when low pass filter is bypassed
-
+#define sign(x)     (x < 0 ? -1 : 1)
     static uint32_t voltageFiltered;
 
     if (!updateFlag)
@@ -634,7 +634,7 @@ void light_Execute()
         if (abs(diff) < (32 << i) || i == 3)
         {
             voltageFiltered -= (voltageFiltered >> (4 - i));
-            voltageFiltered += voltage.inputVoltage << i;
+            voltageFiltered += (voltage.inputVoltage + sign(diff) * ((int16_t)16 << i)) << i;
             break;
         }
     }
