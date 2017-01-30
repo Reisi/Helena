@@ -28,6 +28,8 @@
 #define HELENABASE_RA_STATUSSDR_L        0x06
 #define HELENABASE_RA_TEMPERATURE_H      0x07
 #define HELENABASE_RA_TEMPERATURE_L      0x08
+#define HELENABASE_RA_DUTYCYCLELEFT      0x09
+#define HELENABASE_RA_DUTYCYCLERIGHT     0x0A
 
 
 #define HELENABASE_CRA_SLEEP_OFFSET      4
@@ -49,6 +51,7 @@
 #define HELENABASE_ADCRATE_8S            9
 
 #define HELENABASE_ST_STATUS_OFFSET      1
+#define HELENABASE_DC_MAX                254
 
 /* Exported macros -----------------------------------------------------------*/
 #define REGISTERVALUE_IN_MILLIAMPERE(x)  (((uint32_t)x * 212) >> 8)

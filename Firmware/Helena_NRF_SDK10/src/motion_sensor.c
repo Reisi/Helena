@@ -291,6 +291,7 @@ uint32_t ms_Init()
     VERIFY_MPU_ERROR_CODE(mpu_init(NULL));
     VERIFY_MPU_ERROR_CODE(mpu_set_sensors(INV_XYZ_GYRO | INV_XYZ_ACCEL));
     VERIFY_MPU_ERROR_CODE(mpu_set_lpf(20));
+    VERIFY_MPU_ERROR_CODE(mpu_set_accel_fsr(8));
     VERIFY_MPU_ERROR_CODE(dmp_load_motion_driver_firmware());
     VERIFY_MPU_ERROR_CODE(dmp_set_orientation(inv_orientation_matrix_to_scalar(pBoardConfig->gyroOrientation)));
     VERIFY_MPU_ERROR_CODE(dmp_enable_feature(DMP_FEATURE_6X_LP_QUAT | DMP_FEATURE_GYRO_CAL | DMP_FEATURE_SEND_CAL_GYRO | DMP_FEATURE_SEND_RAW_ACCEL | DMP_FEATURE_SEND_CAL_GYRO));

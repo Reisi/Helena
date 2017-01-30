@@ -56,7 +56,9 @@ typedef enum
     BTLE_EVT_LCSCP_REQ_MODE_CONFIG,
     BTLE_EVT_LCSCP_SET_MODE,
     BTLE_EVT_LCSCP_CONFIG_MODE,
-    BTLE_EVT_LCSCP_CONFIG_GROUP
+    BTLE_EVT_LCSCP_CONFIG_GROUP,
+    BTLE_EVT_LCSCP_REQ_LED_CONFIG,
+    BTLE_EVT_LCSCP_CHECK_LED_CONFIG
 } btle_LcsCtrlPtEventEnum;
 
 /**< available light modes for btle module */
@@ -128,6 +130,11 @@ typedef struct
             btle_LightModeConfig * pList;
             uint8_t listEntries;
         } modeList;                     /**< response parameter for event type BTLE_EVT_REQ_MODE_CONFIG */
+        struct
+        {
+            uint8_t floodCnt;
+            uint8_t spotCnt;
+        } ledConfig;                    /**< response parameter for event type BTLE_EVT_LCSCP_REQ_LED_CONFIG and BTLE_EVT_LCSCP_CHECK_LED_CONFIG */
     } responseParams;
 } btle_LcscpEventResponseStruct;
 
@@ -157,6 +164,13 @@ typedef struct
     int8_t pitch;           /**< pitch angle in ° */
 } btle_lightDataStruct;
 
+typedef struct
+{
+    uint8_t floodSupported : 1;
+    uint8_t spotSupported  : 1;
+    uint8_t pitchSupported : 1;
+} btle_LightFeatureStruct;
+
 typedef enum
 {
     BTLE_SCAN_MODE_LOW_POWER = 0,
@@ -166,13 +180,18 @@ typedef enum
 /* Exported macros -----------------------------------------------------------*/
 
 /* Exported functions ------------------------------------------------------- */
+/** @brief Function to initialize the ble stack
+ */
+void btle_StackInit(void);
+
 /** @brief Function to initialize the btle module
  *
  * @param[in]   deleteBonds true to erase all bond information at
  *              initialization
+ * @param[in]   pFeature supported features
  * @param[in]   event handler for btle events
  */
-void btle_Init(bool deleteBonds, btle_EventHandler pEvtHandler);
+void btle_Init(bool deleteBonds, btle_LightFeatureStruct* pFeature, btle_EventHandler pEvtHandler);
 
 /** @brief Function to set the scan mode
  *

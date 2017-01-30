@@ -27,6 +27,20 @@ typedef int16_t q15_t;
 
 typedef enum
 {
+    LIGHT_DRIVERREV10 = 0,      /**< led driver firmware revision 1.0 */
+    LIGHT_DRIVERREV11,          /**< rev 1.1, added support for dutycyle readback */
+    LIGHT_DRIVERREVUNKNOWN
+} light_DriverRevisionEnum;
+
+typedef struct
+{
+    uint8_t floodCount;
+    uint8_t spotCount;
+    light_DriverRevisionEnum rev;
+} light_DriverConfigStruct;
+
+typedef enum
+{
     LIGHT_MODEOFF = 0,          /**< light is off */
     LIGHT_MODEFLOOD,            /**< flood active */
     LIGHT_MODESPOT,             /**< spot active */
@@ -66,9 +80,10 @@ typedef struct
 /* Exported functions ------------------------------------------------------- */
 /** @brief initialization function
  *
+ * @param[out]  pLedConfig  LED Configuration
  * @return      NRF_SUCCESS or an error code
  */
-uint32_t light_Init(void);
+uint32_t light_Init(light_DriverConfigStruct * pLedConfig);
 
 /** @brief function to enable / disable light functionality
  *
@@ -94,6 +109,13 @@ uint32_t light_UpdateTargets(const light_ModeStruct* pMode, q15_t pitch, const l
  * @note        call this function in the main loop!
  */
 void light_Execute(void);
+
+/** @brief Function to check the led configuration
+ *
+ * @param[out]  pLedConfig configuration of leds
+ * @return      NRF_SUCCESS or an error code
+ */
+uint32_t light_CheckLedConfig(light_DriverConfigStruct* pLedConfig);
 
 #endif /*_LIGHT_H_*/
 

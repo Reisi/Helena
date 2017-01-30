@@ -138,9 +138,9 @@ static uint32_t lcs_ctrlpt_decode(uint8_t             * p_rcvd_val,
     switch (p_write_val->opcode)
     {
         case BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNT:
-            break;
-
         case BLE_LCS_CTRLPT_OP_CODE_REQ_GRP_CNFG:
+        case BLE_LCS_CTRLPT_OP_CODE_REQ_LED_CNFG:
+        case BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG:
             break;
 
         case BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNFG:
@@ -210,6 +210,11 @@ static int ctrlpt_rsp_encode(ble_lcs_ctrlpt_t      * p_lcs_ctrlpt,
                     p_data[len++] = p_ctrlpt_rsp->params.mode_config_list.p_list[i].intensity;
                 }
                 break;
+            case BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG:
+            case BLE_LCS_CTRLPT_OP_CODE_REQ_LED_CNFG:
+                p_data[len++] = p_ctrlpt_rsp->params.led_config.cnt_flood;
+                p_data[len++] = p_ctrlpt_rsp->params.led_config.cnt_spot;
+                break;
 
             default:
                 // No implementation needed.
@@ -256,6 +261,17 @@ static bool is_feature_supported(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_lcs_ctrlpt
 
         case BLE_LCS_CTRLPT_OP_CODE_CNFG_GROUP:
             if (p_lcs_ctrlpt->supported_features.mode_grouping_supported == 1)
+            {
+                supported = true;
+            }
+            break;
+
+        case BLE_LCS_CTRLPT_OP_CODE_REQ_LED_CNFG:
+            supported = true;
+            break;
+
+        case BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG:
+            if (p_lcs_ctrlpt->supported_features.led_config_check_supported == 1)
             {
                 supported = true;
             }
@@ -371,6 +387,18 @@ static void on_ctrlpt_write(ble_lcs_ctrlpt_t       * p_lcs_ctrlpt,
 
             case BLE_LCS_CTRLPT_OP_CODE_CNFG_GROUP:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_CNFG_GROUP;
+                evt.p_params = &rcvd_ctrlpt.params;
+                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                break;
+
+            case BLE_LCS_CTRLPT_OP_CODE_REQ_LED_CNFG:
+                evt.evt_type = BLE_LCS_CTRLPT_EVT_REQ_LED_CNFG;
+                evt.p_params = &rcvd_ctrlpt.params;
+                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                break;
+
+            case BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG:
+                evt.evt_type = BLE_LCS_CTRLPT_EVT_CHK_LED_CNFG;
                 evt.p_params = &rcvd_ctrlpt.params;
                 p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;
