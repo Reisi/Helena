@@ -80,12 +80,13 @@ typedef struct
 /**@brief Light feature structure. This contains the supported features */
 typedef struct
 {
-    uint8_t flood_supported         : 1;
-    uint8_t spot_supported          : 1;
-    uint8_t pitch_comp_supported    : 1;
-    uint8_t mode_change_supported   : 1;
-    uint8_t mode_config_supported   : 1;
-    uint8_t mode_grouping_supported : 1;
+    uint8_t flood_supported            : 1;
+    uint8_t spot_supported             : 1;
+    uint8_t pitch_comp_supported       : 1;
+    uint8_t mode_change_supported      : 1;
+    uint8_t mode_config_supported      : 1;
+    uint8_t mode_grouping_supported    : 1;
+    uint8_t led_config_check_supported : 1;
 } ble_lcs_lf_t;
 
 // include control point header here, because its using feature and light mode structures

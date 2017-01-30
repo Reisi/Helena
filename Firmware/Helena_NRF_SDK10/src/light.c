@@ -14,6 +14,8 @@
 #include "app_timer.h"
 #include "power.h"
 #include "i2c.h"
+#include "fds.h"
+#include "nrf_delay.h"
 #include <stdlib.h>
 
 /* Private defines -----------------------------------------------------------*/
@@ -32,6 +34,11 @@
 #define CROSSINGSIZE        16      // size of look up table for crossing between spot and flood, must be power of two
 #define PITCHOFFSETSPOT     (155)//((float32_t)0.0296706)
 #define PITCHOFFSETFLOOD    (-155)//((float32_t)-0.0296706)
+
+#define FDSDRVCONFIG        0x073D      /**< number identifying led configuration fds data */
+#define FDSINSTANCE         0x7167      /**< number identifying fds data for light module */
+
+#define LIGHT_LEDCONFIG_UNKNOWN         UINT8_MAX
 
 /* Private typedef -----------------------------------------------------------*/
 typedef enum
@@ -209,6 +216,7 @@ static light_StatusStruct lightStatus;  /**< current light status informations *
 static uint8_t targets[2];              /**< current target values */
 static volatile bool updateFlag;        /**< flags indication if status has to be updated */
 APP_TIMER_DEF(updateTimerId);           /**< timer for timebase */
+static light_DriverConfigStruct drvConfig;
 
 /* Private functions ---------------------------------------------------------*/
 /** @brief handler for timebase timer event
@@ -381,6 +389,34 @@ static void getIntensitiesFromLUT(q15_t pitch, q7_8_t intensity, q7_8_t* pIntens
  */
 static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t *pFlood, uint8_t *pSpot)
 {
+    q15_t pitchSpot;
+    q15_t pitchFlood;
+    int32_t pitchCalc;
+
+    // if spot and flood leds are present, add pitch offset due to tilted optics
+    /*if (drvConfig.floodCount != 0 && drvConfig.spotCount != 0)
+    {
+        pitchCalc = pitch + PITCHOFFSETFLOOD;
+        if (pitchCalc >= (1<<15))
+            pitchCalc -= (1<<15);
+        else if (pitchCalc < 0)
+            pitchCalc += (1<<15);
+        pitchFlood = (q15_t)pitchCalc;
+        pitchCalc = pitch + PITCHOFFSETSPOT;
+        if (pitchCalc >= (1<<15))
+            pitchCalc -= (1<<15);
+        else if (pitchCalc < 0)
+            pitchCalc += (1<<15);
+        pitchSpot = (q15_t)pitchCalc;
+    }
+    else*/
+    {
+        pitchFlood = pitch;
+        pitchSpot = pitch;
+    }
+    pitchFlood = limitPitch(pitchFlood);
+    pitchSpot = limitPitch(pitchSpot);
+
     switch (pMode->mode)
     {
     case LIGHT_MODEFLOOD:
@@ -420,48 +456,26 @@ static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t 
         break;
     case LIGHT_MODEFLOODAPC:
     case LIGHT_MODEFLOODAPCCLONED:
-    {
-        int32_t pitch_off = pitch + PITCHOFFSETFLOOD;
-        if (pitch_off >= (1<<15))
-            pitch_off -= (1<<15);
-        else if (pitch_off < 0)
-            pitch_off += (1<<15);
-        *pFlood = getTargetFromLUT(&floodLUT, limitPitch((q15_t)pitch_off), (q7_8_t)pMode->intensity << 8);
+        *pFlood = getTargetFromLUT(&floodLUT, pitchFlood, (q7_8_t)pMode->intensity << 8);
         if (pMode->mode == LIGHT_MODEFLOODAPCCLONED)
             *pSpot = *pFlood;
         else
             *pSpot = 0;
-    }   break;
+        break;
     case LIGHT_MODESPOTAPC:
     case LIGHT_MODESPOTAPCCLONED:
-    {
-        int32_t pitch_off = pitch + PITCHOFFSETSPOT;
-        if (pitch_off >= (1<<15))
-            pitch_off -= (1<<15);
-        else if (pitch_off < 0)
-            pitch_off += (1<<15);
-        *pSpot = getTargetFromLUT(&spotLUT, limitPitch((q15_t)pitch_off), (q7_8_t)pMode->intensity << 8);
+        *pSpot = getTargetFromLUT(&spotLUT, pitchSpot, (q7_8_t)pMode->intensity << 8);
         if (pMode->mode == LIGHT_MODESPOTAPCCLONED)
             *pFlood = *pSpot;
         else
             *pFlood = 0;
-    }   break;
+        break;
     case LIGHT_MODEFULLAPC:
     {
         q7_8_t intensityFlood, intensitySpot;
         getIntensitiesFromLUT(limitPitch(pitch), (q7_8_t)pMode->intensity << 8, &intensityFlood, &intensitySpot);
-        int32_t pitch_off = pitch + PITCHOFFSETFLOOD;
-        if (pitch_off >= (1<<15))
-            pitch_off -= (1<<15);
-        else if (pitch_off < 0)
-            pitch_off += (1<<15);
-        *pFlood = getTargetFromLUT(&floodLUT, limitPitch((q15_t)pitch_off), intensityFlood);
-        pitch_off = pitch + PITCHOFFSETSPOT;
-        if (pitch_off >= (1<<15))
-            pitch_off -= (1<<15);
-        else if (pitch_off < 0)
-            pitch_off += (1<<15);
-        *pSpot = getTargetFromLUT(&spotLUT, limitPitch((q15_t)pitch_off), intensitySpot);
+        *pFlood = getTargetFromLUT(&floodLUT, pitchFlood, intensityFlood);
+        *pSpot = getTargetFromLUT(&spotLUT, pitchSpot, intensitySpot);
     }   break;
     default:
         *pFlood = 0;
@@ -513,8 +527,134 @@ static void limiter(light_StatusStruct * pStatus, uint8_t *pFlood, uint8_t *pSpo
     if (*pSpot > limit) {*pSpot = limit; pStatus->spot |= LIGHT_STATUS_TEMPERATURELIMIT;}
 }
 
+/** @brief fds event handler
+ *
+ * @details this function checks the results of file operations and sends the
+ *          appropriate event response to the ble modules light control service
+ */
+static void fdsEventHandler(ret_code_t errCode, fds_cmd_id_t cmd, fds_record_id_t recordId, fds_record_key_t recordKey)
+{
+    // check only events of interest
+    if (recordKey.instance == FDSINSTANCE && recordKey.type == FDSDRVCONFIG)
+    {
+        // check if this is an event related to update or write operations
+        if (cmd == FDS_CMD_UPDATE || cmd == FDS_CMD_WRITE)
+        {
+            // run garbage collection if necessary
+            if (errCode == NRF_ERROR_NO_MEM)
+            {
+                errCode = fds_gc();
+                if (errCode != NRF_ERROR_BUSY)
+                {
+                    APP_ERROR_CHECK(errCode);
+                }
+            }
+        }
+        else
+            APP_ERROR_CHECK(errCode);
+    }
+}
+
+static void validateLedConfig(light_DriverConfigStruct* pLedConfig)
+{
+    // if both driver led counts are not known, use default setup
+    if (pLedConfig->floodCount == LIGHT_LEDCONFIG_UNKNOWN && pLedConfig->spotCount == LIGHT_LEDCONFIG_UNKNOWN)
+    {
+        pLedConfig->floodCount = 2;
+        pLedConfig->spotCount = 1;
+    }
+    // if only one driver is used, assume that there are two leds connected
+    else if (pLedConfig->floodCount == LIGHT_LEDCONFIG_UNKNOWN && pLedConfig->spotCount == 0)
+        pLedConfig->floodCount = 2;
+    else if (pLedConfig->floodCount == 0 && pLedConfig->spotCount == LIGHT_LEDCONFIG_UNKNOWN)
+        pLedConfig->spotCount = 2;
+}
+
+static void readLedConfig()
+{
+    uint32_t errCode;
+
+    fds_find_token_t token;
+    fds_record_desc_t descriptor;
+    fds_record_key_t key = {.type = FDSDRVCONFIG, .instance = FDSINSTANCE};
+    light_DriverConfigStruct* pConfig;
+
+    drvConfig.floodCount = LIGHT_LEDCONFIG_UNKNOWN;
+    drvConfig.spotCount = LIGHT_LEDCONFIG_UNKNOWN;
+
+    errCode = fds_find(key.type, key.instance, &descriptor, &token);
+    if (errCode == NRF_SUCCESS)
+    {
+        fds_record_t record;
+        errCode = fds_open(&descriptor, &record);
+        if (errCode == NRF_SUCCESS)
+        {
+            pConfig = (light_DriverConfigStruct*)record.p_data;
+            drvConfig.floodCount = pConfig->floodCount;
+            drvConfig.spotCount = pConfig->spotCount;
+        }
+        else
+            APP_ERROR_HANDLER(errCode);
+    }
+    else
+    {
+        if (errCode != NRF_ERROR_NOT_FOUND)
+            APP_ERROR_HANDLER(errCode);
+    }
+
+    // set default values if led count isn't known
+    validateLedConfig(&drvConfig);
+}
+
+static void writeLedConfig()
+{
+    uint32_t errCode;
+    fds_find_token_t token;
+    fds_record_desc_t descriptor;
+    fds_record_chunk_t chunk;
+
+    fds_record_key_t key = {.type = FDSDRVCONFIG, .instance = FDSINSTANCE};
+    chunk.p_data = &drvConfig;
+    chunk.length_words = SIZEOF_WORDS(drvConfig);
+    errCode = fds_find(key.type, key.instance, &descriptor, &token);
+    if (errCode == NRF_SUCCESS)
+    {
+        APP_ERROR_CHECK(fds_update(&descriptor, key, 1, &chunk));
+    }
+    else if (errCode == NRF_ERROR_NOT_FOUND)
+    {
+        APP_ERROR_CHECK(fds_write(&descriptor, key, 1, &chunk));
+    }
+    else
+        APP_ERROR_HANDLER(errCode);
+}
+
+static light_DriverRevisionEnum driverRevCheck()
+{
+    uint32_t errCode;
+    uint8_t buffer[4];
+
+    // read first two registers to have compare values
+    errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 2, &buffer[0]);
+    if(errCode != NRF_SUCCESS)
+    {
+        APP_ERROR_HANDLER(errCode);
+        return LIGHT_DRIVERREVUNKNOWN;
+    }
+    // now read duty cycle registers, on rev 1.0 drivers this will result in a read operation of reg 0 and 1
+    errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 2, &buffer[2]);
+    if(errCode != NRF_SUCCESS)
+    {
+        APP_ERROR_HANDLER(errCode);
+        return LIGHT_DRIVERREVUNKNOWN;
+    }
+    if (buffer[0] == buffer[2] && buffer[1] == buffer[3])
+        return LIGHT_DRIVERREV10;
+    return LIGHT_DRIVERREV11;
+}
+
 /* Public functions ----------------------------------------------------------*/
-uint32_t light_Init()
+uint32_t light_Init(light_DriverConfigStruct * pLedConfig)
 {
     // create timer for timebase
     VERIFY_NRF_ERROR_CODE(app_timer_create(&updateTimerId, APP_TIMER_MODE_REPEATED, updateTimerHandler));
@@ -526,6 +666,17 @@ uint32_t light_Init()
     i2c_EnableAutoRecover(true);
 
     lightState = STATEOFF;
+
+    // check driver revision;
+    drvConfig.rev = driverRevCheck();
+
+    // register to fds module
+    VERIFY_NRF_ERROR_CODE(fds_register(fdsEventHandler));
+    VERIFY_NRF_ERROR_CODE(fds_init());
+
+    // read led configuration
+    readLedConfig();
+    *pLedConfig = drvConfig;
 
     return NRF_SUCCESS;
 }
@@ -660,6 +811,74 @@ void light_Execute()
     limiter(&lightStatus, &limitedTargets[FLOOD], &limitedTargets[SPOT]);
 
     APP_ERROR_CHECK(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_TARGETSDL, 2, limitedTargets));
+}
+
+uint32_t light_CheckLedConfig(light_DriverConfigStruct* pLedConfig)
+{
+    uint8_t buffer[3];
+    stateEnum oldState;
+    uint32_t errCode;
+
+    if (lightState == STATEON)
+        return NRF_ERROR_INVALID_STATE;
+
+    // save old state and reset old configuration
+    oldState = lightState;
+    drvConfig.floodCount = LIGHT_LEDCONFIG_UNKNOWN;
+    drvConfig.spotCount = LIGHT_LEDCONFIG_UNKNOWN;
+
+    // turn on led driver with 2*2/3 output current
+    buffer[0] = (HELENABASE_SLEEP_DISABLE<<HELENABASE_CRA_SLEEP_OFFSET) | (HELENABASE_ADCRATE_1S<<HELENABASE_CRA_ADCRATE_OFFSET);
+    buffer[1] = 171;
+    buffer[2] = 171;
+    VERIFY_NRF_ERROR_CODE(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 3, buffer));
+
+    // now wait for ~100ms
+    nrf_delay_ms(100);
+
+    // read Converter Data
+    errCode = readConverterData(&lightStatus);
+    if (errCode == NRF_SUCCESS)
+    {
+        // check if current is available, if not there is no led connected
+        if (lightStatus.currentFlood < 500)
+            drvConfig.floodCount = 0;
+        if (lightStatus.currentSpot < 500)
+            drvConfig.spotCount = 0;
+
+        // read duty cycle registers
+        if (drvConfig.rev == LIGHT_DRIVERREV11)
+        {
+            errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_DUTYCYCLELEFT, 2, buffer);
+            if(errCode == NRF_SUCCESS)
+            {
+                if (drvConfig.floodCount)
+                    drvConfig.floodCount = buffer[0] < (HELENABASE_DC_MAX * 0.75) ? 1 : 2;
+                if (drvConfig.spotCount)
+                    drvConfig.spotCount = buffer[1] < (HELENABASE_DC_MAX * 0.75) ? 1 : 2;
+            }
+        }
+    }
+
+    // set default values if led count isn't known
+    validateLedConfig(&drvConfig);
+
+    pLedConfig->floodCount = drvConfig.floodCount;
+    pLedConfig->spotCount = drvConfig.spotCount;
+
+    // save new state
+    writeLedConfig();
+
+    // turn of driver
+    if (oldState == STATEOFF)
+        buffer[0] = (HELENABASE_SLEEP_DISABLE<<HELENABASE_CRA_SLEEP_OFFSET) | (HELENABASE_ADCRATE_1S<<HELENABASE_CRA_ADCRATE_OFFSET);
+    else
+        buffer[0] = (HELENABASE_SLEEP_ENABLE<<HELENABASE_CRA_SLEEP_OFFSET) | (HELENABASE_ADCRATE_1S<<HELENABASE_CRA_ADCRATE_OFFSET);
+    buffer[1] = 0;
+    buffer[2] = 0;
+    VERIFY_NRF_ERROR_CODE(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 3, buffer));
+
+    return errCode;
 }
 
 /**END OF FILE*****************************************************************/

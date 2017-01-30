@@ -43,7 +43,9 @@ typedef enum
     BLE_LCS_CTRLPT_EVT_REQ_MODE_CNFG,   /**< Operator to request a list of mode configurations */
     BLE_LCS_CTRLPT_EVT_SET_MODE,        /**< Operator to set a specific mode */
     BLE_LCS_CTRLPT_EVT_CNFG_MODE,       /**< Operator to configure a specific mode */
-    BLE_LCS_CTRLPT_EVT_CNFG_GROUP       /**< Operator to configure grouping */
+    BLE_LCS_CTRLPT_EVT_CNFG_GROUP,      /**< Operator to configure grouping */
+    BLE_LCS_CTRLPT_EVT_REQ_LED_CNFG,    /**< Operator to request current led configuration */
+    BLE_LCS_CTRLPT_EVT_CHK_LED_CNFG     /**< Operator to start the check procedure for led configuration */
 } ble_lcs_ctrlpt_evt_type_t;
 
 /**@brief Light Control Control Point mode configuration structure */
@@ -79,6 +81,8 @@ typedef enum
     BLE_LCS_CTRLPT_OP_CODE_SET_MODE      = 4,
     BLE_LCS_CTRLPT_OP_CODE_CNFG_MODE     = 5,
     BLE_LCS_CTRLPT_OP_CODE_CNFG_GROUP    = 6,
+    BLE_LCS_CTRLPT_OP_CODE_REQ_LED_CNFG  = 7,
+    BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG  = 8,
     BLE_LCS_CTRLPT_OP_CODE_RESPONSE      = 32
 } ble_lcs_ctrlpt_op_code_t;
 
@@ -107,12 +111,19 @@ typedef struct
     uint8_t                num_of_entries;
 } ble_lcs_ctrlpt_rsp_param_mode_config_t;
 
+typedef struct
+{
+    uint8_t cnt_flood;
+    uint8_t cnt_spot;
+} ble_lcs_ctrlpt_rsp_param_led_config_t;
+
 /**@brief Light Control Control Point response parameter values */
 typedef union
 {
     uint8_t                                mode_cnt;
     uint8_t                                group_config;
     ble_lcs_ctrlpt_rsp_param_mode_config_t mode_config_list;
+    ble_lcs_ctrlpt_rsp_param_led_config_t  led_config;
 } ble_lcs_ctrlpt_rsp_params_t;
 
 /**@brief Light Control Control Point Response parameter structure */

@@ -35,8 +35,7 @@
 #define FDSMODECONFIG           0x600D      /**< number identifying mode configuration fds data */
 #define FDSINSTANCE             0xCAFE      /**< number identifying fds data for main main module */
 
-#define LEDVOLTAGEFLOOD         6
-#define LEDVOLTAGESPOT          3
+#define LEDVOLTAGE              3
 
 #define LIGHT_UPDATE_PERIOD_SHORT   (APP_TIMER_TICKS(10, APP_TIMER_PRESCALER))
 #define LIGHT_UPDATE_PERIOD_LONG    (APP_TIMER_TICKS(1000, APP_TIMER_PRESCALER))
@@ -97,6 +96,7 @@ typedef struct
     bool isCentralConnected;                /**< indicating if in a connection as central */
     bool isModeConfigWritePending;          /**< indicating if a mode configure write response is pending */
     bool isGroupCountPending;               /**< indicating if a group configuration write response is pending */
+    bool isLedConfigCheckPending;           /**< indication if a led check procedure was requested */
 } btleStatusStruct;
 
 /* Private variables ---------------------------------------------------------*/
@@ -129,6 +129,7 @@ static bool timeoutFlag;                                                /**< fla
 static uint32_t idleTimeout;                                            /**< idle countdown */
 static hmi_ButtonEnum buttonInt, buttonVolUp, buttonVolDown;            /**< button states */
 static helenaStateEnum helenaState;                                     /**< helena power state */
+static light_DriverConfigStruct ledConfiguration;
 
 /* Private macros ------------------------------------------------------------*/
 #define COUNT_OF(x)             (sizeof(x)/sizeof(x[0]))
@@ -297,8 +298,18 @@ static void btleLcscpEventHandler(btle_EventStruct * pEvt)
                 rsp.retCode = BTLE_RET_FAILED;
         }
         break;
+    case BTLE_EVT_LCSCP_REQ_LED_CONFIG:
+        rsp.retCode = BTLE_RET_SUCCESS;
+        rsp.responseParams.ledConfig.floodCnt = ledConfiguration.floodCount;
+        rsp.responseParams.ledConfig.spotCnt = ledConfiguration.spotCount;
+        break;
+    case BTLE_EVT_LCSCP_CHECK_LED_CONFIG:
+        if (helenaState != HELENA_ON)
+            btleStatus.isLedConfigCheckPending = true;
+        else
+            rsp.retCode = BTLE_RET_INVALID;
+        return;
     default:
-        rsp.retCode = BTLE_RET_NOT_SUPPORTED;
         break;
     }
     // if this point is reached, send response immediately, otherwise it is not necessary or will be done later.
@@ -558,8 +569,6 @@ static void mainInit(void)
     // load button mode configuration from flash
     loadButtonModeConfig();
 
-    // wait for led driver module to leave bootloader and start up
-    nrf_delay_ms(250);
     APP_ERROR_CHECK(setHelenaState(HELENA_IDLE));
     idleTimeout = IDLE_TIMEOUT;
 }
@@ -671,8 +680,8 @@ static void updateLightBtleData(const light_ModeStruct* pLightMode, const light_
     btle_lightDataStruct helmetBeam;
     uint16_t powerFlood, powerSpot;
 
-    powerFlood = pStatus->currentFlood * LEDVOLTAGEFLOOD;
-    powerSpot = pStatus->currentSpot * LEDVOLTAGESPOT;
+    powerFlood = pStatus->currentFlood * LEDVOLTAGE * ledConfiguration.floodCount;
+    powerSpot = pStatus->currentSpot * LEDVOLTAGE * ledConfiguration.spotCount;
 
     helmetBeam.mode = pLightMode->mode;
     helmetBeam.intensity = pLightMode->intensity;
@@ -701,16 +710,23 @@ static void updateLightBtleData(const light_ModeStruct* pLightMode, const light_
 int main(void)
 {
     uint32_t errCode;
+    btle_LightFeatureStruct features;
 
     // Initialize
     APP_TIMER_INIT(APP_TIMER_PRESCALER, APP_TIMER_OP_QUEUE_SIZE, false);
+    btle_StackInit();
     debug_Init();
     APP_ERROR_CHECK(board_Init());
     hmi_Init();
-    btle_Init(false, btleEventHandler);
     pwr_Init();
-    light_Init();
+    // wait for led driver module to leave bootloader and start up
+    nrf_delay_ms(250);
+    light_Init(&ledConfiguration);
     ms_Init();
+    features.pitchSupported = 1;
+    features.floodSupported = ledConfiguration.floodCount ? 1 : 0;
+    features.spotSupported = ledConfiguration.spotCount ? 1 : 0;
+    btle_Init(false, &features, btleEventHandler);
     com_Init();
     cmh_Init(&lightMasterHandler);
 #if defined HELENA_DEBUG_FIELD_TESTING
@@ -727,7 +743,7 @@ int main(void)
         // communication check
         pMessageIn = com_Check();
         if (pMessageIn != NULL) {
-            APP_ERROR_CHECK(btle_ComGatewayCheck(pMessageIn));
+            (void)btle_ComGatewayCheck(pMessageIn);
             cmh_ComMessageCheck(pMessageIn);
         }
 
@@ -780,6 +796,22 @@ int main(void)
                     voltageLast.inputVoltage >= MINIMUM_INPUT_VOLTAGE)  // last values was above threshold
                     voltageLast = voltageNow;
             }
+        }
+
+        // check if led config check is pending
+        if (btleStatus.isLedConfigCheckPending)
+        {
+            btle_LcscpEventResponseStruct rsp;
+
+            btleStatus.isLedConfigCheckPending = false;
+            rsp.evt = BTLE_EVT_LCSCP_CHECK_LED_CONFIG;
+            if (light_CheckLedConfig(&ledConfiguration) == NRF_SUCCESS)
+                rsp.retCode = BTLE_RET_SUCCESS;
+            else
+                rsp.retCode = BTLE_RET_FAILED;
+            rsp.responseParams.ledConfig.floodCnt = ledConfiguration.floodCount;
+            rsp.responseParams.ledConfig.spotCnt = ledConfiguration.spotCount;
+            APP_ERROR_CHECK(btle_SendEventResponse(&rsp));
         }
 
         // periodic timebase checks

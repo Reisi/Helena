@@ -1,0 +1,13 @@
+<macro name="Error log" icon="MESSAGE">
+   <assert-service description="Ensure Nordic UART Service" instance-id="0" uuid="6e400001-b5a3-f393-e0a9-e50e24dcca9e">
+      <assert-characteristic description="Ensure TX Characteristic" instance-id="0" uuid="6e400003-b5a3-f393-e0a9-e50e24dcca9e">
+         <assert-cccd description="Ensure CCCD"/>
+         <property name="NOTIFY" requirement="MANDATORY"/>
+      </assert-characteristic>
+      <assert-characteristic description="Ensure RX Characteristic" instance-id="0" uuid="6e400002-b5a3-f393-e0a9-e50e24dcca9e">
+         <property name="WRITE" requirement="MANDATORY"/>
+      </assert-characteristic>
+   </assert-service>
+   <write-descriptor description="Enable notifications for 6e400003-b5a3-f393-e0a9-e50e24dcca9e" characteristic-instance-id="0" characteristic-uuid="6e400003-b5a3-f393-e0a9-e50e24dcca9e" service-instance-id="0" service-uuid="6e400001-b5a3-f393-e0a9-e50e24dcca9e" descriptor-instance-id="0" uuid="00002902-0000-1000-8000-00805f9b34fb" value="0100"/>
+   <write description="Write 0x676574206572726F72206C6F67 to RX Characteristic" characteristic-instance-id="0" characteristic-uuid="6e400002-b5a3-f393-e0a9-e50e24dcca9e" service-instance-id="0" service-uuid="6e400001-b5a3-f393-e0a9-e50e24dcca9e" type="WRITE_REQUEST" value="676574206572726F72206C6F67"/>
+</macro>

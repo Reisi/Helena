@@ -214,42 +214,6 @@ static void sysEvtDispatch(uint32_t sysEvt)
 #endif
 }
 
-/** @brief Function for initialization of the ble stack
- */
-static void bleStackInit()
-{
-    uint32_t errCode;
-
-    // Initialize the SoftDevice handler module.
-    SOFTDEVICE_HANDLER_INIT(NRF_CLOCK_LFCLKSRC_RC_250_PPM_4000MS_CALIBRATION, NULL);
-
-    // Enable BLE stack.
-    ble_enable_params_t bleEnableParams;
-    memset(&bleEnableParams, 0, sizeof(ble_enable_params_t));
-    bleEnableParams.gatts_enable_params.attr_tab_size   = 0x400; //BLE_GATTS_ATTR_TAB_SIZE_DEFAULT;
-    bleEnableParams.gatts_enable_params.service_changed = true;
-    errCode = sd_ble_enable(&bleEnableParams);
-    APP_ERROR_CHECK(errCode);
-
-    // Register with the SoftDevice handler module for BLE events.
-    errCode = softdevice_ble_evt_handler_set(bleEvtDispatch);
-    APP_ERROR_CHECK(errCode);
-
-    // Register with the SoftDevice handler module for System events.
-    errCode = softdevice_sys_evt_handler_set(sysEvtDispatch);
-    APP_ERROR_CHECK(errCode);
-
-    // enable workaround for Rev 2 ics
-    ble_opt_t cpuBlockingEnabled;
-    cpuBlockingEnabled.common_opt.radio_cpu_mutex.enable = 1;
-    errCode = sd_ble_opt_set(BLE_COMMON_OPT_RADIO_CPU_MUTEX, &cpuBlockingEnabled);
-    APP_ERROR_CHECK(errCode);
-
-    // set maximum output power
-    errCode = sd_ble_gap_tx_power_set(4);
-    APP_ERROR_CHECK(errCode);
-}
-
 /**@brief Function for handling Peer Manager events.
  *
  * @param[in] p_evt  Peer Manager event.
@@ -425,15 +389,6 @@ static void connParamsInit(void)
  */
 static void cgwDataHandler(ble_cgw_t * pCgw, com_MessageStruct * pMessageRx)
 {
-    SEGGER_RTT_printf(0, "%02x-%02x-%02x-%02x-%02x-%02x-%02x-%02x-%02x\r\n", pMessageRx->Identifier,
-                                                                             pMessageRx->Control,
-                                                                             pMessageRx->Data[0],
-                                                                             pMessageRx->Data[1],
-                                                                             pMessageRx->Data[2],
-                                                                             pMessageRx->Data[3],
-                                                                             pMessageRx->Data[4],
-                                                                             pMessageRx->Data[5],
-                                                                             pMessageRx->Data[6]);
     APP_ERROR_CHECK(com_Put(pMessageRx));
 }
 
@@ -477,6 +432,14 @@ static void lcsCpEventHandler(ble_lcs_ctrlpt_t * pLcsCtrlpt,
         evt.lcscpEventParams.groupConfig = pEvt->p_params->group_config;
         pEventHandler(&evt);
         break;
+    case BLE_LCS_CTRLPT_EVT_REQ_LED_CNFG:
+        evt.subEvt.lcscp = BTLE_EVT_LCSCP_REQ_LED_CONFIG;
+        pEventHandler(&evt);
+        break;
+    case BLE_LCS_CTRLPT_EVT_CHK_LED_CNFG:
+        evt.subEvt.lcscp = BTLE_EVT_LCSCP_CHECK_LED_CONFIG;
+        pEventHandler(&evt);
+        break;
     default:
         break;
     }
@@ -494,7 +457,7 @@ static void lcsErrorHandler(uint32_t errCode)
 
 /**@brief Function for initializing services that will be used by the application.
  */
-static void servicesInit(void)
+static void servicesInit(btle_LightFeatureStruct* pFeature)
 {
     uint32_t errCode;
 
@@ -540,12 +503,13 @@ static void servicesInit(void)
     if (pEventHandler != NULL)                      // control point can not be
         lcsInit.cp_evt_handler = lcsCpEventHandler; // included without event handler
     lcsInit.error_handler = lcsErrorHandler;
-    lcsInit.features.flood_supported = 1;
-    lcsInit.features.spot_supported = 1;
-    lcsInit.features.pitch_comp_supported = 1;
+    lcsInit.features.flood_supported = pFeature->floodSupported;
+    lcsInit.features.spot_supported = pFeature->spotSupported;
+    lcsInit.features.pitch_comp_supported = pFeature->pitchSupported;
     lcsInit.features.mode_change_supported = 1;
     lcsInit.features.mode_config_supported = 1;
     lcsInit.features.mode_grouping_supported = 1;
+    lcsInit.features.led_config_check_supported = 1;
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lm_attr_md.cccd_write_perm);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lf_attr_md.read_perm);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lcp_attr_md.cccd_write_perm);
@@ -848,15 +812,48 @@ static void scanningInit()
 }
 
 /* Public functions ----------------------------------------------------------*/
-void btle_Init(bool deleteBonds, btle_EventHandler pEvtHandler)
+void btle_StackInit()
+{
+    uint32_t errCode;
+
+    // Initialize the SoftDevice handler module.
+    SOFTDEVICE_HANDLER_INIT(NRF_CLOCK_LFCLKSRC_RC_250_PPM_4000MS_CALIBRATION, NULL);
+
+    // Enable BLE stack.
+    ble_enable_params_t bleEnableParams;
+    memset(&bleEnableParams, 0, sizeof(ble_enable_params_t));
+    bleEnableParams.gatts_enable_params.attr_tab_size   = 0x400; //BLE_GATTS_ATTR_TAB_SIZE_DEFAULT;
+    bleEnableParams.gatts_enable_params.service_changed = true;
+    errCode = sd_ble_enable(&bleEnableParams);
+    APP_ERROR_CHECK(errCode);
+
+    // Register with the SoftDevice handler module for BLE events.
+    errCode = softdevice_ble_evt_handler_set(bleEvtDispatch);
+    APP_ERROR_CHECK(errCode);
+
+    // Register with the SoftDevice handler module for System events.
+    errCode = softdevice_sys_evt_handler_set(sysEvtDispatch);
+    APP_ERROR_CHECK(errCode);
+
+    // enable workaround for Rev 2 ics
+    ble_opt_t cpuBlockingEnabled;
+    cpuBlockingEnabled.common_opt.radio_cpu_mutex.enable = 1;
+    errCode = sd_ble_opt_set(BLE_COMMON_OPT_RADIO_CPU_MUTEX, &cpuBlockingEnabled);
+    APP_ERROR_CHECK(errCode);
+
+    // set maximum output power
+    errCode = sd_ble_gap_tx_power_set(4);
+    APP_ERROR_CHECK(errCode);
+}
+
+void btle_Init(bool deleteBonds, btle_LightFeatureStruct* pFeature, btle_EventHandler pEvtHandler)
 {
     pEventHandler = pEvtHandler;
 
-    bleStackInit();
     peerManagerInit(deleteBonds);
     gapParamsInit();
     connParamsInit();
-    servicesInit();
+    servicesInit(pFeature);
     advertisingInit();
     discoveryInit();
     serviceCollectorInit();
@@ -990,6 +987,11 @@ uint32_t btle_SendEventResponse(const btle_LcscpEventResponseStruct *pRsp)
     case BTLE_EVT_LCSCP_REQ_MODE_CONFIG:
         rsp.params.mode_config_list.p_list = (ble_lcs_light_mode_t*)pRsp->responseParams.modeList.pList;
         rsp.params.mode_config_list.num_of_entries = pRsp->responseParams.modeList.listEntries;
+        break;
+    case BTLE_EVT_LCSCP_REQ_LED_CONFIG:
+    case BTLE_EVT_LCSCP_CHECK_LED_CONFIG:
+        rsp.params.led_config.cnt_flood = pRsp->responseParams.ledConfig.floodCnt;
+        rsp.params.led_config.cnt_spot = pRsp->responseParams.ledConfig.spotCnt;
         break;
     default:
         break;
