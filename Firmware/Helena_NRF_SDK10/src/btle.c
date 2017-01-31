@@ -440,6 +440,14 @@ static void lcsCpEventHandler(ble_lcs_ctrlpt_t * pLcsCtrlpt,
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_CHECK_LED_CONFIG;
         pEventHandler(&evt);
         break;
+    case BLE_LCS_CTRLPT_EVT_REQ_SENS_OFF:
+        evt.subEvt.lcscp = BTLE_EVT_LCSCP_REQ_SENS_OFFSET;
+        pEventHandler(&evt);
+        break;
+    case BLE_LCS_CTRLPT_EVT_CALIB_SENS_OFF:
+        evt.subEvt.lcscp = BTLE_EVT_LCSCP_CALIB_SENS_OFFSET;
+        pEventHandler(&evt);
+        break;
     default:
         break;
     }
@@ -510,6 +518,7 @@ static void servicesInit(btle_LightFeatureStruct* pFeature)
     lcsInit.features.mode_config_supported = 1;
     lcsInit.features.mode_grouping_supported = 1;
     lcsInit.features.led_config_check_supported = 1;
+    lcsInit.features.sensor_calibration_supported = 1;
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lm_attr_md.cccd_write_perm);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lf_attr_md.read_perm);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lcp_attr_md.cccd_write_perm);
@@ -992,6 +1001,12 @@ uint32_t btle_SendEventResponse(const btle_LcscpEventResponseStruct *pRsp)
     case BTLE_EVT_LCSCP_CHECK_LED_CONFIG:
         rsp.params.led_config.cnt_flood = pRsp->responseParams.ledConfig.floodCnt;
         rsp.params.led_config.cnt_spot = pRsp->responseParams.ledConfig.spotCnt;
+        break;
+    case BTLE_EVT_LCSCP_REQ_SENS_OFFSET:
+    case BTLE_EVT_LCSCP_CALIB_SENS_OFFSET:
+        rsp.params.sens_offset.x = pRsp->responseParams.sensOffset.x;
+        rsp.params.sens_offset.y = pRsp->responseParams.sensOffset.y;
+        rsp.params.sens_offset.z = pRsp->responseParams.sensOffset.z;
         break;
     default:
         break;

@@ -80,8 +80,10 @@ static uint32_t light_feature_char_add(ble_lcs_t * p_lcs, const ble_lcs_init_t *
     union
     {
         ble_lcs_lf_t raw;
-        uint8_t      encoded;
+        uint16_t     encoded;
     } init_value = {.raw = p_lcs_init->features};
+    uint8_t init_value_encoded[2];
+    uint16_encode(init_value.encoded, init_value_encoded);
 
     memset(&char_md, 0, sizeof(ble_gatts_char_md_t));
     char_md.char_props.read   = 1;
@@ -105,10 +107,10 @@ static uint32_t light_feature_char_add(ble_lcs_t * p_lcs, const ble_lcs_init_t *
     memset(&attr_char_value, 0, sizeof(ble_gatts_attr_t));
     attr_char_value.p_uuid    = &ble_uuid;
     attr_char_value.p_attr_md = &attr_md;
-    attr_char_value.init_len  = 1;
+    attr_char_value.init_len  = sizeof(init_value_encoded);
     attr_char_value.init_offs = 0;
-    attr_char_value.max_len   = 1;
-    attr_char_value.p_value   = &init_value.encoded;
+    attr_char_value.max_len   = sizeof(init_value_encoded);
+    attr_char_value.p_value   = init_value_encoded;
 
     return sd_ble_gatts_characteristic_add(p_lcs->service_handle,
                                            &char_md,

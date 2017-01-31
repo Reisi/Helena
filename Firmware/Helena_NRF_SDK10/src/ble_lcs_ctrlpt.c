@@ -141,6 +141,8 @@ static uint32_t lcs_ctrlpt_decode(uint8_t             * p_rcvd_val,
         case BLE_LCS_CTRLPT_OP_CODE_REQ_GRP_CNFG:
         case BLE_LCS_CTRLPT_OP_CODE_REQ_LED_CNFG:
         case BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG:
+        case BLE_LCS_CTRLPT_OP_CODE_REQ_SENS_OFF:
+        case BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF:
             break;
 
         case BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNFG:
@@ -215,6 +217,12 @@ static int ctrlpt_rsp_encode(ble_lcs_ctrlpt_t      * p_lcs_ctrlpt,
                 p_data[len++] = p_ctrlpt_rsp->params.led_config.cnt_flood;
                 p_data[len++] = p_ctrlpt_rsp->params.led_config.cnt_spot;
                 break;
+            case BLE_LCS_CTRLPT_OP_CODE_REQ_SENS_OFF:
+            case BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF:
+                len += uint16_encode(p_ctrlpt_rsp->params.sens_offset.x, &p_data[len]);
+                len += uint16_encode(p_ctrlpt_rsp->params.sens_offset.y, &p_data[len]);
+                len += uint16_encode(p_ctrlpt_rsp->params.sens_offset.z, &p_data[len]);
+                break;
 
             default:
                 // No implementation needed.
@@ -272,6 +280,14 @@ static bool is_feature_supported(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_lcs_ctrlpt
 
         case BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG:
             if (p_lcs_ctrlpt->supported_features.led_config_check_supported == 1)
+            {
+                supported = true;
+            }
+            break;
+
+        case BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF:
+        case BLE_LCS_CTRLPT_OP_CODE_REQ_SENS_OFF:
+            if (p_lcs_ctrlpt->supported_features.sensor_calibration_supported == 1)
             {
                 supported = true;
             }
@@ -399,6 +415,18 @@ static void on_ctrlpt_write(ble_lcs_ctrlpt_t       * p_lcs_ctrlpt,
 
             case BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_CHK_LED_CNFG;
+                evt.p_params = &rcvd_ctrlpt.params;
+                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                break;
+
+            case BLE_LCS_CTRLPT_OP_CODE_REQ_SENS_OFF:
+                evt.evt_type = BLE_LCS_CTRLPT_EVT_REQ_SENS_OFF;
+                evt.p_params = &rcvd_ctrlpt.params;
+                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                break;
+
+            case BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF:
+                evt.evt_type = BLE_LCS_CTRLPT_EVT_CALIB_SENS_OFF;
                 evt.p_params = &rcvd_ctrlpt.params;
                 p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;

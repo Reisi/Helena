@@ -14,6 +14,7 @@
 #include "inv_mpu.h"
 #include "inv_mpu_dmp_motion_driver.h"
 #include "debug.h"
+#include "fds.h"
 #include <math.h>
 #include "fastmath.h"
 #include "i2c.h"
@@ -26,6 +27,9 @@ typedef int16_t q15_t;
 
 /* Private defines -----------------------------------------------------------*/
 #define MOVINGTHRESHOLD         (10*131)  // gyro moving threshold in degree per second times hardware units
+
+#define FDSACCELBIAS            0xACCE      /**< number identifying accel bias fds data */
+#define FDSINSTANCE             0x4107      /**< number identifying fds data for motion sensor module */
 
 #define EXTENDED_ERROR_CHECK            /**< activate this flag to get internal error codes */
 
@@ -72,13 +76,40 @@ do                                      \
 
 /* Private variables ---------------------------------------------------------*/
 static bool isEnabled;
-static const signed char gyro_orientation[9] = {-1,  0,  0,
-                                                 0,  0,  1,
-                                                 0,  1,  0};
+static long accelBias[3];
 
 /* Private function prototypes -----------------------------------------------*/
 
 /* Private functions ---------------------------------------------------------*/
+
+/** @brief fds event handler
+ *
+ * @details this function checks the results of file operations and sends the
+ *          appropriate event response to the ble modules light control service
+ */
+static void fdsEventHandler(ret_code_t errCode, fds_cmd_id_t cmd, fds_record_id_t recordId, fds_record_key_t recordKey)
+{
+    // check only events of interest
+    if (recordKey.instance == FDSINSTANCE && recordKey.type == FDSACCELBIAS)
+    {
+        // check if this is an event related to update or write operations
+        if (cmd == FDS_CMD_UPDATE || cmd == FDS_CMD_WRITE)
+        {
+            // run garbage collection if necessary
+            if (errCode == NRF_ERROR_NO_MEM)
+            {
+                errCode = fds_gc();
+                if (errCode != NRF_ERROR_BUSY)
+                {
+                    APP_ERROR_CHECK(errCode);
+                }
+            }
+        }
+        else
+            APP_ERROR_CHECK(errCode);
+    }
+}
+
 /* These next two functions converts the orientation matrix (see
  * gyro_orientation) to a scalar representation for use by the DMP.
  * NOTE: These functions are borrowed from Invensense's MPL.
@@ -284,6 +315,57 @@ static float quatToPitch(const long *quat)
     return pitch;
 }
 
+static void loadAccelBias()
+{
+    uint32_t errCode;
+
+    // register to fds module
+    errCode = fds_register(fdsEventHandler);
+    APP_ERROR_CHECK(errCode);
+    errCode = fds_init();
+    APP_ERROR_CHECK(errCode);
+
+    // initialize to zero
+    accelBias[0] = 0;
+    accelBias[1] = 0;
+    accelBias[2] = 0;
+
+    // search if bias data is stored in flash
+    fds_find_token_t token;
+    fds_record_desc_t descriptor;
+    fds_record_key_t key = {.type = FDSACCELBIAS, .instance = FDSINSTANCE};
+
+    errCode = fds_find(key.type, key.instance, &descriptor, &token);
+    if (errCode == NRF_SUCCESS)
+    {
+        // record exists, so open it
+        fds_record_t record;
+        errCode = fds_open(&descriptor, &record);
+        if (errCode == NRF_SUCCESS)
+        {
+            long* pAccel = (long*)record.p_data;
+            accelBias[0] = pAccel[0];
+            accelBias[1] = pAccel[1];
+            accelBias[2] = pAccel[2];
+        }
+    }
+    else if (errCode != NRF_ERROR_NOT_FOUND)
+    {
+        APP_ERROR_HANDLER(errCode);
+    }
+}
+
+static uint32_t applyAccelBias()
+{
+    if (accelBias[0] == 0 && accelBias[1] == 0 && accelBias[2] == 0)
+        return NRF_ERROR_NOT_FOUND;
+
+    if (mpu_set_accel_bias(accelBias) != 0)
+        return NRF_ERROR_INTERNAL;
+    else
+        return NRF_SUCCESS;
+}
+
 /* Public functions ----------------------------------------------------------*/
 uint32_t ms_Init()
 {
@@ -298,6 +380,7 @@ uint32_t ms_Init()
     VERIFY_MPU_ERROR_CODE(dmp_set_fifo_rate(100));
     VERIFY_MPU_ERROR_CODE(mpu_set_dmp_state(1));
     VERIFY_MPU_ERROR_CODE(mpu_set_sensors(0));
+    loadAccelBias();
     return NRF_SUCCESS;
 }
 
@@ -309,7 +392,14 @@ uint32_t ms_Enable(bool enable)
         return NRF_ERROR_INVALID_STATE;
 
     if (enable)
+    {
         errCode = mpu_set_sensors(INV_XYZ_GYRO | INV_XYZ_ACCEL);
+        uint32_t errCodeNrf = applyAccelBias();
+        if (errCodeNrf != NRF_SUCCESS && errCodeNrf != NRF_ERROR_NOT_FOUND)
+        {
+            APP_ERROR_HANDLER(errCodeNrf);
+        }
+    }
     else
         errCode = mpu_set_sensors(0);
 
@@ -358,18 +448,68 @@ uint32_t ms_FetchData(ms_DataStruct* pData)
     pData->acc.x = accel[0];
     pData->acc.y = accel[1];
     pData->acc.z = accel[2];
-    normalizeAcceleration(&pData->rot, &pData->acc);
+    //normalizeAcceleration(&pData->rot, &pData->acc);
     pData->isMoving = isHeadMoving(gyro);
     /*static uint8_t cnt = 100;
     if (--cnt == 0)
     {
         cnt = 100;
-        //SEGGER_RTT_printf(0, "%d, %d, %d\r\n", (int32_t)(pData->rot.pitch*360)/(1<<15), (int32_t)(pData->rot.roll*360)/(1<<15), (int32_t)(pData->rot.yaw*360)/(1<<15));
+        SEGGER_RTT_printf(0, "%d, %d, %d\r\n", (int32_t)(pData->rot.pitch*360)/(1<<15), (int32_t)(pData->rot.roll*360)/(1<<15), (int32_t)(pData->rot.yaw*360)/(1<<15));
         //SEGGER_RTT_printf(0, "%d, %d, %d\r\n", gyro[0], gyro[1], gyro[2]);
         SEGGER_RTT_printf(0, "%d, %d, %d\r\n", pData->acc.x, pData->acc.y, pData->acc.z);
     }*/
 
     return NRF_SUCCESS;
+}
+
+uint32_t ms_GetSensorOffset(ms_AccelerationStruct* pData)
+{
+    if (accelBias[0] == 0 && accelBias[1] == 0 && accelBias[2] == 0)
+        return NRF_ERROR_NOT_FOUND;
+
+    pData->x = accelBias[0];
+    pData->y = accelBias[1];
+    pData->z = accelBias[2];
+    return NRF_SUCCESS;
+}
+
+uint32_t ms_CalibrateSensorOffset(ms_AccelerationStruct* pData)
+{
+    uint32_t errCode;
+    long gyro[3], accel[3];
+    int result;
+
+    result = mpu_run_self_test(gyro, accel);
+    if (result != 3)
+        return NRF_ERROR_INTERNAL;
+
+    accelBias[0] = -accel[0];
+    accelBias[1] = -accel[1];
+    accelBias[2] = -accel[2];
+
+    applyAccelBias();
+
+    pData->x = accelBias[0];
+    pData->y = accelBias[1];
+    pData->z = accelBias[2];
+
+//    SEGGER_RTT_printf(0, "self test %d\r\n", result);
+//    SEGGER_RTT_printf(0, "gyro bias: %d, %d, %d\r\n", gyro[0], gyro[1], gyro[2]);
+//    SEGGER_RTT_printf(0, "accel bias: %d, %d, %d\r\n", accel[0], accel[1], accel[2]);
+
+    fds_find_token_t token;
+    fds_record_desc_t descriptor;
+    fds_record_chunk_t chunk;
+    chunk.p_data = accelBias;
+    chunk.length_words = SIZEOF_WORDS(accelBias);
+
+    fds_record_key_t key = {.type = FDSACCELBIAS, .instance = FDSINSTANCE};
+    errCode = fds_find(key.type, key.instance, &descriptor, &token);
+    if (errCode == NRF_SUCCESS)
+        return fds_update(&descriptor, key, 1, &chunk);
+    else if (errCode == NRF_ERROR_NOT_FOUND)
+        return fds_write(&descriptor, key, 1, &chunk);
+    return errCode;
 }
 
 /**END OF FILE*****************************************************************/

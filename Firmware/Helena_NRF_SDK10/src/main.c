@@ -97,6 +97,7 @@ typedef struct
     bool isModeConfigWritePending;          /**< indicating if a mode configure write response is pending */
     bool isGroupCountPending;               /**< indicating if a group configuration write response is pending */
     bool isLedConfigCheckPending;           /**< indication if a led check procedure was requested */
+    bool isSensorCalibrationPending;        /**< indication if sensor offset calibration was requested */
 } btleStatusStruct;
 
 /* Private variables ---------------------------------------------------------*/
@@ -305,9 +306,20 @@ static void btleLcscpEventHandler(btle_EventStruct * pEvt)
         break;
     case BTLE_EVT_LCSCP_CHECK_LED_CONFIG:
         if (helenaState != HELENA_ON)
+        {
             btleStatus.isLedConfigCheckPending = true;
+            return;
+        }
         else
             rsp.retCode = BTLE_RET_INVALID;
+    case BTLE_EVT_LCSCP_REQ_SENS_OFFSET:
+        if (ms_GetSensorOffset((ms_AccelerationStruct*)&rsp.responseParams.sensOffset) == NRF_SUCCESS)
+            rsp.retCode = BTLE_RET_SUCCESS;
+        else
+            rsp.retCode = BTLE_RET_INVALID;
+        break;
+    case BTLE_EVT_LCSCP_CALIB_SENS_OFFSET:
+        btleStatus.isSensorCalibrationPending = true;
         return;
     default:
         break;
@@ -811,6 +823,20 @@ int main(void)
                 rsp.retCode = BTLE_RET_FAILED;
             rsp.responseParams.ledConfig.floodCnt = ledConfiguration.floodCount;
             rsp.responseParams.ledConfig.spotCnt = ledConfiguration.spotCount;
+            APP_ERROR_CHECK(btle_SendEventResponse(&rsp));
+        }
+
+        // check if sensor calibration is pending
+        if (btleStatus.isSensorCalibrationPending)
+        {
+            btle_LcscpEventResponseStruct rsp;
+
+            btleStatus.isSensorCalibrationPending = false;
+            rsp.evt = BTLE_EVT_LCSCP_CALIB_SENS_OFFSET;
+            if (ms_CalibrateSensorOffset((ms_AccelerationStruct*)&rsp.responseParams.sensOffset) == NRF_SUCCESS)
+                rsp.retCode = BTLE_RET_SUCCESS;
+            else
+                rsp.retCode = BTLE_RET_FAILED;
             APP_ERROR_CHECK(btle_SendEventResponse(&rsp));
         }
 

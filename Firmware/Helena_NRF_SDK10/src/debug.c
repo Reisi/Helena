@@ -224,7 +224,7 @@ void debug_Init()
     nrf_drv_wdt_config_t wdtConfig =
     {
         .behaviour = NRF_WDT_BEHAVIOUR_PAUSE_SLEEP_HALT,
-        .reload_value = 2000,
+        .reload_value = 4000,
         .interrupt_priority = APP_IRQ_PRIORITY_LOW
     };
     errCode = nrf_drv_wdt_init(&wdtConfig, &watchdogEventHandler);

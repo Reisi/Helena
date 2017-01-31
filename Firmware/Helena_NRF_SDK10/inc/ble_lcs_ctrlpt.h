@@ -45,7 +45,9 @@ typedef enum
     BLE_LCS_CTRLPT_EVT_CNFG_MODE,       /**< Operator to configure a specific mode */
     BLE_LCS_CTRLPT_EVT_CNFG_GROUP,      /**< Operator to configure grouping */
     BLE_LCS_CTRLPT_EVT_REQ_LED_CNFG,    /**< Operator to request current led configuration */
-    BLE_LCS_CTRLPT_EVT_CHK_LED_CNFG     /**< Operator to start the check procedure for led configuration */
+    BLE_LCS_CTRLPT_EVT_CHK_LED_CNFG,    /**< Operator to start the check procedure for led configuration */
+    BLE_LCS_CTRLPT_EVT_REQ_SENS_OFF,    /**< Operator to request the current sensor offset values */
+    BLE_LCS_CTRLPT_EVT_CALIB_SENS_OFF   /**< Operator to start the sensor offset calibration */
 } ble_lcs_ctrlpt_evt_type_t;
 
 /**@brief Light Control Control Point mode configuration structure */
@@ -75,15 +77,17 @@ typedef struct
 /**@brief Light Control Control Point operator codes */
 typedef enum
 {
-    BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNT  = 1,
-    BLE_LCS_CTRLPT_OP_CODE_REQ_GRP_CNFG  = 2,
-    BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNFG = 3,
-    BLE_LCS_CTRLPT_OP_CODE_SET_MODE      = 4,
-    BLE_LCS_CTRLPT_OP_CODE_CNFG_MODE     = 5,
-    BLE_LCS_CTRLPT_OP_CODE_CNFG_GROUP    = 6,
-    BLE_LCS_CTRLPT_OP_CODE_REQ_LED_CNFG  = 7,
-    BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG  = 8,
-    BLE_LCS_CTRLPT_OP_CODE_RESPONSE      = 32
+    BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNT     = 1,
+    BLE_LCS_CTRLPT_OP_CODE_REQ_GRP_CNFG     = 2,
+    BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNFG    = 3,
+    BLE_LCS_CTRLPT_OP_CODE_SET_MODE         = 4,
+    BLE_LCS_CTRLPT_OP_CODE_CNFG_MODE        = 5,
+    BLE_LCS_CTRLPT_OP_CODE_CNFG_GROUP       = 6,
+    BLE_LCS_CTRLPT_OP_CODE_REQ_LED_CNFG     = 7,
+    BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG     = 8,
+    BLE_LCS_CTRLPT_OP_CODE_REQ_SENS_OFF     = 9,
+    BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF   = 10,
+    BLE_LCS_CTRLPT_OP_CODE_RESPONSE         = 32
 } ble_lcs_ctrlpt_op_code_t;
 
 /**@brief Light Control Control Point response parameter */
@@ -111,11 +115,20 @@ typedef struct
     uint8_t                num_of_entries;
 } ble_lcs_ctrlpt_rsp_param_mode_config_t;
 
+/**@brief Light Control Control Point Response parameter for BLE_LCS_CTRLPT_OP_CODE_REQ_LED_CNFG and BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG */
 typedef struct
 {
     uint8_t cnt_flood;
     uint8_t cnt_spot;
 } ble_lcs_ctrlpt_rsp_param_led_config_t;
+
+/**@brief Light Control Control Point Response parameter for BLE_LCS_CTRLPT_OP_CODE_REQ_SENS_OFF and BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF */
+typedef struct
+{
+    int16_t x;
+    int16_t y;
+    int16_t z;
+} ble_lcs_ctrlpt_rsp_param_sens_offset_t;
 
 /**@brief Light Control Control Point response parameter values */
 typedef union
@@ -124,6 +137,7 @@ typedef union
     uint8_t                                group_config;
     ble_lcs_ctrlpt_rsp_param_mode_config_t mode_config_list;
     ble_lcs_ctrlpt_rsp_param_led_config_t  led_config;
+    ble_lcs_ctrlpt_rsp_param_sens_offset_t sens_offset;
 } ble_lcs_ctrlpt_rsp_params_t;
 
 /**@brief Light Control Control Point Response parameter structure */

@@ -394,7 +394,7 @@ static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t 
     int32_t pitchCalc;
 
     // if spot and flood leds are present, add pitch offset due to tilted optics
-    /*if (drvConfig.floodCount != 0 && drvConfig.spotCount != 0)
+    if (drvConfig.floodCount != 0 && drvConfig.spotCount != 0)
     {
         pitchCalc = pitch + PITCHOFFSETFLOOD;
         if (pitchCalc >= (1<<15))
@@ -409,7 +409,7 @@ static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t 
             pitchCalc += (1<<15);
         pitchSpot = (q15_t)pitchCalc;
     }
-    else*/
+    else
     {
         pitchFlood = pitch;
         pitchSpot = pitch;

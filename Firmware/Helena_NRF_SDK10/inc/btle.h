@@ -58,7 +58,9 @@ typedef enum
     BTLE_EVT_LCSCP_CONFIG_MODE,
     BTLE_EVT_LCSCP_CONFIG_GROUP,
     BTLE_EVT_LCSCP_REQ_LED_CONFIG,
-    BTLE_EVT_LCSCP_CHECK_LED_CONFIG
+    BTLE_EVT_LCSCP_CHECK_LED_CONFIG,
+    BTLE_EVT_LCSCP_REQ_SENS_OFFSET,
+    BTLE_EVT_LCSCP_CALIB_SENS_OFFSET
 } btle_LcsCtrlPtEventEnum;
 
 /**< available light modes for btle module */
@@ -135,6 +137,12 @@ typedef struct
             uint8_t floodCnt;
             uint8_t spotCnt;
         } ledConfig;                    /**< response parameter for event type BTLE_EVT_LCSCP_REQ_LED_CONFIG and BTLE_EVT_LCSCP_CHECK_LED_CONFIG */
+        struct
+        {
+            int16_t x;
+            int16_t y;
+            int16_t z;
+        } sensOffset;                   /**< response parameter for event type BTLE_EVT_LCSCP_REQ_SENS_OFFSET and BTLE_EVT_LCSCP_CALIB_SENS_OFFSET */
     } responseParams;
 } btle_LcscpEventResponseStruct;
 

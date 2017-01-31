@@ -49,6 +49,8 @@ typedef struct
 uint32_t ms_Init(void);
 uint32_t ms_Enable(bool enalbe);
 uint32_t ms_FetchData(ms_DataStruct* pData);
+uint32_t ms_GetSensorOffset(ms_AccelerationStruct* pData);
+uint32_t ms_CalibrateSensorOffset(ms_AccelerationStruct* pData);
 
 #endif /* MOTION_SENSOR_H_INCLUDED */
 
