@@ -31,6 +31,9 @@ q15_t arm_asin_q15(q15_t y)
 {
     int_fast8_t sign, i_search, i_step;
 
+    if (y == INT16_MIN)
+        return (3<<13);
+
     sign = y < 0 ? -1 : 1;
     y *= sign;
 
@@ -51,6 +54,16 @@ q15_t arm_asin_q15(q15_t y)
     if (sign == -1)
         angle = ((int32_t)1<<15) - angle;
     return angle;
+}
+
+q15_t arm_acos_q15(q15_t y)
+{
+    if (y == INT16_MIN)
+        return (2<<13);
+    else if (y > 0)
+        return (1<<13) - arm_asin_q15(y);
+    else
+        return (1<<13) + arm_asin_q15(-y);
 }
 
 /********************************************//**

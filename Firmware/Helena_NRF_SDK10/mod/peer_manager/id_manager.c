@@ -19,7 +19,7 @@
 #include "peer_database.h"
 #include "nordic_common.h"
 
-#define IM_MAX_CONN_HANDLES         8
+#define IM_MAX_CONN_HANDLES         4
 #define IM_NO_INVALID_CONN_HANDLES  0xFF
 #define MAX_REGISTRANTS             3
 #define WHITELIST_MAX_COUNT         MAX(BLE_GAP_WHITELIST_ADDR_MAX_COUNT, \
@@ -59,7 +59,7 @@ typedef struct
 {
     im_evt_handler_t              evt_handlers[MAX_REGISTRANTS];
     uint8_t                       n_registrants;
-    im_connection_t               connections[8];
+    im_connection_t               connections[IM_MAX_CONN_HANDLES];
     pm_peer_id_t                  whitelist_peer_ids[BLE_GAP_WHITELIST_IRK_MAX_COUNT];
     ble_gap_irk_t                 whitelist_irks[BLE_GAP_WHITELIST_IRK_MAX_COUNT];
     ble_gap_addr_t                whitelist_addrs[BLE_GAP_WHITELIST_ADDR_MAX_COUNT];

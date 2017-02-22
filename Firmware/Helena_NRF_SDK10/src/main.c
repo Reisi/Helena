@@ -27,6 +27,7 @@
 #include "custom_board.h"
 #include "nrf_delay.h"
 #include "nrf_gpio.h"
+#include "fastmath.h"
 
 /* Private defines -----------------------------------------------------------*/
 #define APP_TIMER_OP_QUEUE_SIZE 2           /**< Size of timer operation queues. */
@@ -717,6 +718,12 @@ static void updateLightBtleData(const light_ModeStruct* pLightMode, const light_
    (void)btle_UpdateLightMeasurements(&helmetBeam);
 }
 
+static void brakeDetection(bool indicate)
+{
+    if (indicate)
+        cmh_UpdateBrakeIndicator(true);
+}
+
 /**@brief Function for application main entry.
  */
 int main(void)
@@ -853,11 +860,11 @@ int main(void)
             }
 
             // update light
-            errCode = light_UpdateTargets(pLightMode, msData.rot.pitch, &pLightStatus);
+            errCode = light_UpdateTargets(pLightMode, msData.pitch, &pLightStatus);
             APP_ERROR_CHECK(errCode);
 
-            // set status leds
-            ledHandling(pLightStatus->flood, pLightStatus->spot, &btleStatus);
+            // update brake indicator
+            brakeDetection(msData.isBraking);
             // update com related message data
             updateLightMsgData(pLightStatus);
             // update ble related message data
@@ -869,6 +876,9 @@ int main(void)
             if (msData.isMoving)
                 idleTimeout = IDLE_TIMEOUT;
         }
+
+        // set status leds
+        ledHandling(pLightStatus->flood, pLightStatus->spot, &btleStatus);
 
         light_Execute();
         debug_Execute();

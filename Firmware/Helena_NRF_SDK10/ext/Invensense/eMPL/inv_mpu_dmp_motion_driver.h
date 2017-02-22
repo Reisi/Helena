@@ -93,7 +93,5 @@ int dmp_enable_gyro_cal(unsigned char enable);
 int dmp_read_fifo(short *gyro, short *accel, long *quat,
     unsigned long *timestamp, short *sensors, unsigned char *more);
 
-int inv_get_sensor_type_euler(long *quat, long *data);
-long inv_q29_mult(long a, long b);
 #endif  /* #ifndef _INV_MPU_DMP_MOTION_DRIVER_H_ */
 

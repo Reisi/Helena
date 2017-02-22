@@ -61,36 +61,11 @@
 #define get_ms  uc3l0_get_clock_ms
 #define log_i       MPL_LOGI
 #define log_e       MPL_LOGE
+
 #elif defined NRF51
-#include "nrf_drv_twi.h"
 #include "nrf_delay.h"
 #include "app_timer.h"
 #include "i2c.h"
-/*const nrf_drv_twi_t twimd = NRF_DRV_TWI_INSTANCE(1);
-static int i2c_write(uint8_t device_address, uint8_t register_address, uint8_t length, uint8_t *data)
-{
-    uint32_t err_code;
-    uint8_t buffer[20];
-
-    if (length > 19)
-        return -1;
-    buffer[0] = register_address;
-    memcpy(&buffer[1], data, length);
-    err_code = nrf_drv_twi_tx(&twimd, device_address, buffer, length, false);
-    APP_ERROR_CHECK(err_code);
-    return err_code ? -1 : 0;
-}
-static int i2c_read(uint8_t device_address, uint8_t register_address, uint8_t length, uint8_t *data)
-{
-    uint32_t err_code;
-    err_code = nrf_drv_twi_tx(&twimd, device_address, &register_address, 1, true);
-    APP_ERROR_CHECK(err_code);
-    if (err_code)
-        return -1;
-    err_code = nrf_drv_twi_rx(&twimd, device_address, data, length, false);
-    APP_ERROR_CHECK(err_code);
-    return err_code ? -1 : 0;
-}*/
 #define delay_ms    nrf_delay_ms
 static inline int get_ms(unsigned long *count) {
     static uint32_t cnt;
@@ -99,15 +74,9 @@ static inline int get_ms(unsigned long *count) {
     *count = cnt;
     return 0;
 }
-static inline int reg_int_cb(struct int_param_s *int_param) {
-    (void) int_param;
-    return 0;
-}
-static void __INLINE __no_operation() {
-    __ASM volatile ("NOP\n\t");
-}
-#define log_i(...)     do {} while (0)
-#define log_e(...)     do {} while (0)
+#define log_i(...)     do {} while (0)  //SEGGER_RTT_WriteString(__VA_ARGS__)
+#define log_e(...)     do {} while (0)  //SEGGER_RTT_printf(0, __VA_ARGS__)
+
 #else
 #error  Gyro driver is missing the system layer implementations.
 #endif
@@ -1311,9 +1280,8 @@ int dmp_read_fifo(short *gyro, short *accel, long *quat,
     sensors[0] = 0;
 
     /* Get a packet. */
-    int error = mpu_read_fifo_stream(dmp.packet_length, fifo_data, more);
-    if (error)
-        return error;
+    if (mpu_read_fifo_stream(dmp.packet_length, fifo_data, more))
+        return -1;
 
     /* Parse DMP packet. */
     if (dmp.feature_mask & (DMP_FEATURE_LP_QUAT | DMP_FEATURE_6X_LP_QUAT)) {
@@ -1349,7 +1317,7 @@ int dmp_read_fifo(short *gyro, short *accel, long *quat,
             /* Quaternion is outside of the acceptable threshold. */
             mpu_reset_fifo();
             sensors[0] = 0;
-            return -4;
+            return -2;
         }
         sensors[0] |= INV_WXYZ_QUAT;
 #endif
@@ -1408,96 +1376,6 @@ int dmp_register_android_orient_cb(void (*func)(unsigned char))
 {
     dmp.android_orient_cb = func;
     return 0;
-}
-
-/**
- *  @brief      Body-to-world frame euler angles.
- *  The euler angles are output with the following convention:
- *  Pitch: -180 to 180
- *  Roll: -90 to 90
- *  Yaw: -180 to 180
- *  @param[in]  quat
- *  @param[out] data        Euler angles in degrees, q16 fixed point.
- *  @return     0 if succesfull.
- */
-int inv_get_sensor_type_euler(long *quat, long *data)
-{
-
-    long t1, t2, t3;
-    long q00, q01, q02, q03, q11, q12, q13, q22, q23, q33;
-    float values[3];
-
-    q00 = inv_q29_mult(quat[0], quat[0]);
-    q01 = inv_q29_mult(quat[0], quat[1]);
-    q02 = inv_q29_mult(quat[0], quat[2]);
-    q03 = inv_q29_mult(quat[0], quat[3]);
-    q11 = inv_q29_mult(quat[1], quat[1]);
-    q12 = inv_q29_mult(quat[1], quat[2]);
-    q13 = inv_q29_mult(quat[1], quat[3]);
-    q22 = inv_q29_mult(quat[2], quat[2]);
-    q23 = inv_q29_mult(quat[2], quat[3]);
-    q33 = inv_q29_mult(quat[3], quat[3]);
-
-    /* X component of the Ybody axis in World frame */
-    t1 = q12 - q03;
-
-    /* Y component of the Ybody axis in World frame */
-    t2 = q22 + q00 - (1L << 30);
-    values[2] = -atan2f((float) t1, (float) t2) * 180.f / (float) M_PI;
-
-    /* Z component of the Ybody axis in World frame */
-    t3 = q23 + q01;
-    values[0] =
-        atan2f((float) t3,
-                sqrtf((float) t1 * t1 +
-                      (float) t2 * t2)) * 180.f / (float) M_PI;
-    /* Z component of the Zbody axis in World frame */
-    t2 = q33 + q00 - (1L << 30);
-    if (t2 < 0) {
-
-        if (values[0] >= 0)
-            values[0] = 180.f - values[0];
-        else
-            values[0] = -180.f - values[0];
-
-    }
-
-    /* X component of the Xbody axis in World frame */
-    t1 = q11 + q00 - (1L << 30);
-    /* Y component of the Xbody axis in World frame */
-    t2 = q12 + q03;
-    /* Z component of the Xbody axis in World frame */
-    t3 = q13 - q02;
-
-    values[1] =
-        (atan2f((float)(q33 + q00 - (1L << 30)), (float)(q13 - q02)) *
-          180.f / (float) M_PI - 90);
-    if (values[1] >= 90)
-        values[1] = 180 - values[1];
-
-    if (values[1] < -90)
-        values[1] = -180 - values[1];
-    data[0] = (long)(values[0] * 65536.f);
-    data[1] = (long)(values[1] * 65536.f);
-    data[2] = (long)(values[2] * 65536.f);
-
-    return 0;
-}
-
-/** Performs a multiply and shift by 29. These are good functions to write in assembly on
- * with devices with small memory where you want to get rid of the long long which some
- * assemblers don't handle well
- * @param[in] a
- * @param[in] b
- * @return ((long long)a*b)>>29
-*/
-long inv_q29_mult(long a, long b)
-{
-    long long temp;
-    long result;
-    temp = (long long)a *b;
-    result = (long)(temp >> 29);
-    return result;
 }
 
 /**

@@ -23,6 +23,7 @@
 
 /* Exported functions ------------------------------------------------------- */
 q15_t arm_asin_q15(q15_t y);
+q15_t arm_acos_q15(q15_t y);
 q15_t arm_atan2_q15(int16_t y, int16_t x);
 
 #endif /* FASTMATH_H */

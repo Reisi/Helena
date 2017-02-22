@@ -36,6 +36,12 @@ typedef struct
     bool isPending;                         /**< indicator if message is pending */
 } lightDataStruct;
 
+typedef struct
+{
+    uint32_t lastTimeSent;                  /**< timestamp of last message sent */
+    bool isPending;                         /**< indicator if message is pending */
+} brakeIndicatorStruct;
+
 typedef lightDataStruct helmetLightDataStruct;
 
 /* Private macros ------------------------------------------------------------*/
@@ -51,11 +57,13 @@ typedef lightDataStruct helmetLightDataStruct;
 #define LIGHTERROR_DIRECTDRIVE  (1<<3)
 
 #define HELMETLIGHT_TIMEBASE    (APP_TIMER_TICKS(2000, APP_TIMER_PRESCALER))
+#define BRAKEINDICATOR_TIMEBASE (APP_TIMER_TICKS(250, APP_TIMER_PRESCALER))
 
 /* Private variables ---------------------------------------------------------*/
 APP_TIMER_DEF(msgTimerId);  /**< timer for message generation */
 static uint8_t TimeoutCnt;
 static helmetLightDataStruct helmetLight;
+static brakeIndicatorStruct brakeIndicator;
 static cmh_LightMasterHandler pLightMaster;
 
 /* Private function prototypes -----------------------------------------------*/
@@ -68,7 +76,7 @@ void msgTimeoutHandler(void* pContext)
     TimeoutCnt++;
 }
 
-uint32_t sendMessage(lightMessageDataStruct* pData, uint8_t id)
+uint32_t sendLightMessage(lightMessageDataStruct* pData, uint8_t id)
 {
     com_MessageStruct MessageOut;
 
@@ -79,6 +87,22 @@ uint32_t sendMessage(lightMessageDataStruct* pData, uint8_t id)
     MessageOut.Data[2] = pData->current;
     MessageOut.Data[3] = pData->temperature;
     MessageOut.Data[4] = pData->voltage;
+
+    if (com_Put(&MessageOut) == COM_FIFOFULL)
+        return NRF_ERROR_NO_MEM;
+    else
+        return NRF_SUCCESS;
+}
+
+uint32_t sendBrakeMessage()
+{
+    com_MessageStruct MessageOut;
+
+    MessageOut.Identifier = 0xB8;
+    MessageOut.Control = 0x03;
+    MessageOut.Data[0] = 128;
+    MessageOut.Data[1] = 124;
+    MessageOut.Data[2] = 128;
 
     if (com_Put(&MessageOut) == COM_FIFOFULL)
         return NRF_ERROR_NO_MEM;
@@ -121,7 +145,7 @@ uint32_t cmh_UpdateHelmetLight(cmh_HelmetLightStruct* pLight)
         (timestamp >= HELMETLIGHT_TIMEBASE &&
          memcmp(&helmetLight.pendingMessage, &helmetLight.lastMessage, sizeof(lightMessageDataStruct)) != 0))
     {
-        if (sendMessage(&helmetLight.pendingMessage, HELMETLIGHTID) == NRF_SUCCESS)
+        if (sendLightMessage(&helmetLight.pendingMessage, HELMETLIGHTID) == NRF_SUCCESS)
         {
             helmetLight.lastMessage = helmetLight.pendingMessage;
             helmetLight.isPending = false;
@@ -136,24 +160,61 @@ uint32_t cmh_UpdateHelmetLight(cmh_HelmetLightStruct* pLight)
     return NRF_SUCCESS;
 }
 
-void cmh_Execute()
+uint32_t cmh_UpdateBrakeIndicator(bool braking)
 {
     uint32_t timestamp;
 
     (void)app_timer_cnt_get(&timestamp);
-    (void)app_timer_cnt_diff_compute(timestamp, helmetLight.lastTimeSent, &timestamp);
+    (void)app_timer_cnt_diff_compute(timestamp, brakeIndicator.lastTimeSent, &timestamp);
 
-    if (timestamp >= HELMETLIGHT_TIMEBASE && helmetLight.isPending == true)
+    if (timestamp >= HELMETLIGHT_TIMEBASE && braking)
     {
-        if (sendMessage(&helmetLight.pendingMessage, 0x64) == NRF_SUCCESS)
+        if (sendBrakeMessage() == NRF_SUCCESS)
+        {
+            brakeIndicator.isPending = false;
+            (void)app_timer_cnt_get(&brakeIndicator.lastTimeSent);
+        }
+        else
+        {
+            brakeIndicator.isPending = true;
+        }
+    }
+
+    return NRF_SUCCESS;
+}
+
+void cmh_Execute()
+{
+    uint32_t timestamp, timediff;
+
+    (void)app_timer_cnt_get(&timestamp);
+
+    (void)app_timer_cnt_diff_compute(timestamp, helmetLight.lastTimeSent, &timediff);
+    if (timediff >= HELMETLIGHT_TIMEBASE && helmetLight.isPending == true)
+    {
+        if (sendLightMessage(&helmetLight.pendingMessage, 0x64) == NRF_SUCCESS)
         {
             helmetLight.lastMessage = helmetLight.pendingMessage;
             helmetLight.isPending = false;
-            (void)app_timer_cnt_get(&helmetLight.lastTimeSent);
+            helmetLight.lastTimeSent = timestamp;
         }
         else
         {
             helmetLight.isPending = true;
+        }
+    }
+
+    (void)app_timer_cnt_diff_compute(timestamp, brakeIndicator.lastTimeSent, &timediff);
+    if (timediff >= BRAKEINDICATOR_TIMEBASE && brakeIndicator.isPending == true)
+    {
+        if (sendBrakeMessage() == NRF_SUCCESS)
+        {
+            brakeIndicator.isPending = false;
+            brakeIndicator.lastTimeSent = timestamp;
+        }
+        else
+        {
+            brakeIndicator.isPending = true;
         }
     }
 }
@@ -166,7 +227,7 @@ void cmh_ComMessageCheck(const com_MessageStruct * pMessageIn)
     // handle remote requests
     if (pMessageIn->Identifier == HELMETLIGHTID && pMessageIn->Control == 0xF0)
     {
-        if (sendMessage(&helmetLight.pendingMessage, 0x64) == NRF_SUCCESS)
+        if (sendLightMessage(&helmetLight.pendingMessage, 0x64) == NRF_SUCCESS)
         {
             helmetLight.lastMessage = helmetLight.pendingMessage;
             helmetLight.isPending = false;

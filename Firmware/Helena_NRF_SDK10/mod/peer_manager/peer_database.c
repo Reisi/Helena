@@ -23,7 +23,7 @@
 
 #define MODULE_INITIALIZED (m_pdb.n_registrants > 0) /**< Expression which is true when the module is initialized. */
 
-#define N_WRITE_BUFFERS        8                     /**< The number of write buffers available. */
+#define N_WRITE_BUFFERS        4                     /**< The number of write buffers available. */
 #define N_WRITE_BUFFER_RECORDS (N_WRITE_BUFFERS)     /**< The number of write buffer records. */
 
 /**@brief Macro for verifying that the module is initialized. It will cause the function to return
@@ -742,7 +742,7 @@ ret_code_t pdb_raw_store(pm_peer_id_t           peer_id,
                          pm_store_token_t     * p_store_token)
 {
     VERIFY_MODULE_INITIALIZED();
-    
+
     return write_or_update(peer_id, p_peer_data->data_type, p_peer_data, p_store_token, PDS_PREPARE_TOKEN_INVALID);
 }
 

@@ -22,15 +22,15 @@
 #define DISABLE_MASK        UINT32_MAX
 
 #define SCL_PIN_CONF        ((GPIO_PIN_CNF_SENSE_Disabled << GPIO_PIN_CNF_SENSE_Pos)    \
-                            | (GPIO_PIN_CNF_DRIVE_S0D1     << GPIO_PIN_CNF_DRIVE_Pos)   \
-                            | (GPIO_PIN_CNF_PULL_Pullup    << GPIO_PIN_CNF_PULL_Pos)    \
+                            | (GPIO_PIN_CNF_DRIVE_H0D1     << GPIO_PIN_CNF_DRIVE_Pos)   \
+                            | (GPIO_PIN_CNF_PULL_Disabled    << GPIO_PIN_CNF_PULL_Pos)    \
                             | (GPIO_PIN_CNF_INPUT_Connect  << GPIO_PIN_CNF_INPUT_Pos)   \
                             | (GPIO_PIN_CNF_DIR_Input      << GPIO_PIN_CNF_DIR_Pos))
 #define SDA_PIN_CONF        SCL_PIN_CONF
 
 #define SCL_PIN_CONF_CLR    ((GPIO_PIN_CNF_SENSE_Disabled << GPIO_PIN_CNF_SENSE_Pos)    \
-                            | (GPIO_PIN_CNF_DRIVE_S0D1     << GPIO_PIN_CNF_DRIVE_Pos)   \
-                            | (GPIO_PIN_CNF_PULL_Pullup    << GPIO_PIN_CNF_PULL_Pos)    \
+                            | (GPIO_PIN_CNF_DRIVE_H0D1     << GPIO_PIN_CNF_DRIVE_Pos)   \
+                            | (GPIO_PIN_CNF_PULL_Disabled    << GPIO_PIN_CNF_PULL_Pos)    \
                             | (GPIO_PIN_CNF_INPUT_Connect  << GPIO_PIN_CNF_INPUT_Pos)   \
                             | (GPIO_PIN_CNF_DIR_Output     << GPIO_PIN_CNF_DIR_Pos))
 #define SDA_PIN_CONF_CLR    SCL_PIN_CONF_CLR
@@ -42,7 +42,7 @@ typedef enum
     NRF_DRV_TWI_SUBSTATE_SUSPEND,       /**< Tx transmission is suspended. */
     NRF_DRV_TWI_SUBSTATE_RX_SUSPEND,    /**< Rx transmission is suspended. */
     NRF_DRV_TWI_SUBSTATE_STOP,          /**< Transmission will be stoped. */
-    NRF_DRV_TWI_SUBSTATE_ERROR          /**< Error condition. */         
+    NRF_DRV_TWI_SUBSTATE_ERROR          /**< Error condition. */
 } substate_t;
 
 /**@brief State machine events. */
@@ -683,7 +683,7 @@ __STATIC_INLINE void nrf_drv_twi_int_handler(NRF_TWI_Type * p_reg, uint32_t inst
 
     bool error_occured   = nrf_twi_event_check(p_reg, NRF_TWI_EVENTS_ERROR);
     bool end_evt_occured = nrf_twi_event_check(p_reg, p_transfer->end_event);
-    
+
     if (nrf_twi_event_check(p_reg, NRF_TWI_EVENTS_RXDREADY))
         nrf_delay_us(8);
 

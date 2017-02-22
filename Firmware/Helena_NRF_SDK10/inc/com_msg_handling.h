@@ -85,6 +85,13 @@ void cmh_ComMessageCheck(const com_MessageStruct * pMessageIn);
  */
 uint32_t cmh_UpdateHelmetLight(cmh_HelmetLightStruct* pLight);
 
+/** @brief function to update brake indicator
+ *
+ * @param[in]   braking  true if brake condition met, otherwise false
+ * @return      NRF_SUCCESS
+ */
+uint32_t cmh_UpdateBrakeIndicator(bool braking);
+
 #endif /* COM_MSG_HANDLING_H_INCLUDED */
 
 /**END OF FILE*****************************************************************/

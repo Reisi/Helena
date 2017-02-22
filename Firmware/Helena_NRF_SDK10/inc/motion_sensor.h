@@ -36,12 +36,15 @@ typedef struct
 
 typedef struct
 {
-    ms_AccelerationStruct acc;
-    ms_RotationStruct rot;
+    //ms_AccelerationStruct accelBody;
+    //ms_RotationStruct rot;
+    q15_t pitch;
+    bool isBraking;
     bool isMoving;
 } ms_DataStruct;
 
 /* Exported constants --------------------------------------------------------*/
+#define ACCEL_1G                (1<<12) // 1g for selected full scale range
 
 /* Exported macros -----------------------------------------------------------*/
 

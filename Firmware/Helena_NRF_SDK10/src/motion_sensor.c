@@ -15,17 +15,34 @@
 #include "inv_mpu_dmp_motion_driver.h"
 #include "debug.h"
 #include "fds.h"
-#include <math.h>
 #include "fastmath.h"
 #include "i2c.h"
 #include "custom_board.h"
 
 /* Private typedef -----------------------------------------------------------*/
-typedef float float32_t;
+//typedef float float32_t;
 typedef int32_t q30_t;
-typedef int16_t q15_t;
+//typedef int16_t q15_t;
+
+typedef struct
+{
+    q15_t sinpitch;
+    q15_t cospitch;
+    q15_t sinroll;
+    q15_t cosroll;
+    q15_t sinyaw;
+    q15_t cosyaw;
+} rotationStruct;
+
+typedef struct
+{
+    long accel[3];
+    long gyro[3];
+} biasStruct;
 
 /* Private defines -----------------------------------------------------------*/
+#define ACCEL_FULLSCALERANGE    8       // acceleration sensor full scale range
+
 #define MOVINGTHRESHOLD         (10*131)  // gyro moving threshold in degree per second times hardware units
 
 #define FDSACCELBIAS            0xACCE      /**< number identifying accel bias fds data */
@@ -73,10 +90,17 @@ do                                      \
 #endif
 
 #define Q15_ANGLE_INVERT(x)     ((1l<<15) - (x))
+#define Q15_MULT2(x, y)         ((q15_t)(((int32_t)(x) * (y)) >> 15))
+#define Q15_MULT3(x, y, z)      ((q15_t)(((int64_t)(x) * (y) * (z)) >> 30))
+#define Q31_MULT2(x, y)         ((q31_t)(((int64_t)(x) * (y)) >> 31))
+#define Q29_MULT2(x, y)         ((int32_t)(((int64_t)(x) * (y)) >> 29))
+#define Q31_ANGLE_DIFF(a, b)    (((a) - (b)) < -(1<<30) ? INT32_MAX - (b) + (a) : \
+                                 ((a) - (b)) > (1<<30) ? INT32_MIN + (a) - (b) :  \
+                                 ((a) - (b)))
 
 /* Private variables ---------------------------------------------------------*/
 static bool isEnabled;
-static long accelBias[3];
+static biasStruct bias;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -157,89 +181,253 @@ static inline unsigned short inv_orientation_matrix_to_scalar(
     return scalar;
 }
 
-static inline float32_t q15_angle_to_float(q15_t angle)
+/** @brief function to filter the acceleration and gyro data
+ *
+ * @param[in/out] pAccel pointer to acceleration data
+ * @param[in/out] pGyro pointer to gyro data
+ *
+ * @note    this function runs the acceleration and gyro data through an 2nd
+ *          order butterworth low-pass filter with a cut of frequency of
+ *          0.1 * fsample
+ */
+static void filterRawData(short* pAccel, short* pGyro)
 {
-    if (angle > (1>>14))
-        angle -= (1l<<15);
-    return (float32_t)angle * (float32_t)M_TWOPI / (1<<15);
+#define FILTER_NUMOFSTAGES  2
+#define FILTER_POSTSHIFT    1
+
+    static q15_t filterCoefficients[] =
+    {
+        // coefficients for 4nd order butterworth filter with fc = 0.1fs
+        632, 0, 1265, 632, 17180, -4852,// b0 Q13(0.0772), 0, b1 Q13(0.154), b2 Q13(0.0772), a1 Q14(1.05), a2 Q14(-0.296)
+        1024, 0, 2048, 1024, 21642, -10367// b0 Q14(0.0625), 0, b1 Q14(0.125), b2 Q14(0.0625), a1 Q14(1.32), a2 Q14(-0.633)
+    };
+    static arm_biquad_casd_df1_inst_q15 accelInstance[3];
+    static q15_t accelState[3][4*FILTER_NUMOFSTAGES];
+    static arm_biquad_casd_df1_inst_q15 gyroInstance[3];
+    static q15_t gyroState[3][4*FILTER_NUMOFSTAGES];
+
+    q15_t accelFiltered[3];
+    q15_t gyroFiltered[3];
+
+    // initialize filter instance if not done yet
+    if (accelInstance[0].numStages != FILTER_NUMOFSTAGES)
+    {
+        arm_biquad_cascade_df1_init_q15(&accelInstance[0], FILTER_NUMOFSTAGES,
+                                        filterCoefficients, accelState[0], FILTER_POSTSHIFT);
+        arm_biquad_cascade_df1_init_q15(&accelInstance[1], FILTER_NUMOFSTAGES,
+                                        filterCoefficients, accelState[1], FILTER_POSTSHIFT);
+        arm_biquad_cascade_df1_init_q15(&accelInstance[2], FILTER_NUMOFSTAGES,
+                                        filterCoefficients, accelState[2], FILTER_POSTSHIFT);
+        arm_biquad_cascade_df1_init_q15(&gyroInstance[0], FILTER_NUMOFSTAGES,
+                                        filterCoefficients, gyroState[0], FILTER_POSTSHIFT);
+        arm_biquad_cascade_df1_init_q15(&gyroInstance[1], FILTER_NUMOFSTAGES,
+                                        filterCoefficients, gyroState[1], FILTER_POSTSHIFT);
+        arm_biquad_cascade_df1_init_q15(&gyroInstance[2], FILTER_NUMOFSTAGES,
+                                        filterCoefficients, gyroState[2], FILTER_POSTSHIFT);
+    }
+
+    // run data through filter
+    arm_biquad_cascade_df1_q15(&accelInstance[0], &pAccel[0], &accelFiltered[0], 1);
+    arm_biquad_cascade_df1_q15(&accelInstance[1], &pAccel[1], &accelFiltered[1], 1);
+    arm_biquad_cascade_df1_q15(&accelInstance[2], &pAccel[2], &accelFiltered[2], 1);
+    arm_biquad_cascade_df1_q15(&gyroInstance[0], &pGyro[0], &gyroFiltered[0], 1);
+    arm_biquad_cascade_df1_q15(&gyroInstance[1], &pGyro[1], &gyroFiltered[1], 1);
+    arm_biquad_cascade_df1_q15(&gyroInstance[2], &pGyro[2], &gyroFiltered[2], 1);
+
+    pAccel[0] = accelFiltered[0] << FILTER_POSTSHIFT;
+    pAccel[1] = accelFiltered[1] << FILTER_POSTSHIFT;
+    pAccel[2] = accelFiltered[2] << FILTER_POSTSHIFT;
+    pGyro[0] = gyroFiltered[0] << FILTER_POSTSHIFT;
+    pGyro[1] = gyroFiltered[1] << FILTER_POSTSHIFT;
+    pGyro[2] = gyroFiltered[2] << FILTER_POSTSHIFT;
 }
 
-static inline q15_t float_angle_to_q15(float32_t angle)
+/** @brief function to rotate the raw acceleration data into helena axis
+ *
+ * @param[in/out] pAccel pointer to acceleration data
+ */
+static void rotateRawToHelenaAxis(short* pAccel)
 {
-    if (angle < 0)
-        angle += (float32_t)M_TWOPI;
-    return (q15_t)angle * (1<<15) / (float32_t)M_TWOPI;
+    short accelRaw[3] = {pAccel[0], pAccel[1], pAccel[2]};
+    pAccel[0] = pBoardConfig->gyroOrientation[0] * accelRaw[0] +
+                pBoardConfig->gyroOrientation[1] * accelRaw[1] +
+                pBoardConfig->gyroOrientation[2] * accelRaw[2];
+    pAccel[1] = pBoardConfig->gyroOrientation[3] * accelRaw[0] +
+                pBoardConfig->gyroOrientation[4] * accelRaw[1] +
+                pBoardConfig->gyroOrientation[5] * accelRaw[2];
+    pAccel[2] = pBoardConfig->gyroOrientation[6] * accelRaw[0] +
+                pBoardConfig->gyroOrientation[7] * accelRaw[1] +
+                pBoardConfig->gyroOrientation[8] * accelRaw[2];
 }
 
-static void normalizeAcceleration(const ms_RotationStruct* pRot, ms_AccelerationStruct* pAcc)
+/** @brief function to remove the gravity of the acceleration data
+ *
+ * @param[in]       pRot    current rotation data
+ * @param[in/out]   accel   acceleration data
+ * @return void
+ *
+ */
+static void removeGravity(const rotationStruct* pRot, short* accel)
 {
-    //static float32_t lowpassyaw;
-
-    arm_matrix_instance_f32 accIn, accOut, rot;
-    float32_t accInData[3], accOutData[3], rotData[9];
-    float32_t cospitch, sinpitch;
-    float32_t cosroll, sinroll;
-    //float32_t cosyaw, sinyaw;
-
-    //lowpassyaw = lowpassyaw - (lowpassyaw / 256.0f) + (q15_angle_to_float(pRot->yaw) / 256.0f);
-
-    cospitch = cosf(q15_angle_to_float(pRot->pitch));
-    sinpitch = sinf(q15_angle_to_float(pRot->pitch));
-    cosroll = cosf(q15_angle_to_float(pRot->roll));
-    sinroll = sinf(q15_angle_to_float(pRot->roll));
-    //cosyaw = cosf(q15_angle_to_float(pRot->yaw) - lowpassyaw);
-    //sinyaw = sinf(q15_angle_to_float(pRot->yaw) - lowpassyaw);
-
-    /*// rotation matrix for pitch compensation only
-    rotData[0] = 1.0f;
-    rotData[1] = 0.0f;
-    rotData[2] = 0.0f;
-    rotData[3] = 0.0f;
-    rotData[4] = cospitch;
-    rotData[5] = -sinpitch;
-    rotData[6] = 0.0f;
-    rotData[7] = sinpitch;
-    rotData[8] = cospitch;
-    arm_mat_init_f32(&rot, 3, 3, rotData);*/
-
-    // rotation matrix for pitch and roll compensation
-    rotData[0] = cosroll;
-    rotData[1] = 0.0f;
-    rotData[2] = sinroll;
-    rotData[3] = sinpitch * sinroll;
-    rotData[4] = cospitch;
-    rotData[5] = -sinpitch * cosroll;
-    rotData[6] = -cospitch * sinroll;
-    rotData[7] = sinpitch;
-    rotData[8] = cospitch * cosroll;
-    arm_mat_init_f32(&rot, 3, 3, rotData);
-
-    /*// rotation matrix for pitch, roll and yaw compensation
-    rotData[0] = cosroll * cosyaw;
-    rotData[1] = -cosroll * sinyaw;
-    rotData[2] = sinroll;
-    rotData[3] = sinpitch * sinroll * cosyaw + cospitch * sinyaw;
-    rotData[4] = -sinpitch * sinroll * sinyaw + cospitch * cosyaw;
-    rotData[5] = -sinpitch * cosroll;
-    rotData[6] = -cospitch * sinroll * cosyaw + sinpitch * cosyaw;
-    rotData[7] = cospitch * sinroll * sinyaw + sinpitch * cosyaw;
-    rotData[8] = cospitch * cosroll;
-    arm_mat_init_f32(&rot, 3, 3, rotData);*/
-
-    accInData[0] = -pAcc->x;
-    accInData[1] = pAcc->z;
-    accInData[2] = pAcc->y;
-    arm_mat_init_f32(&accIn, 3, 1, accInData);
-
-    arm_mat_init_f32(&accOut, 3, 1, accOutData);
-
-    APP_ERROR_CHECK(arm_mat_mult_f32(&rot, &accIn, &accOut));
-
-    pAcc->x = accOutData[0];
-    pAcc->y = accOutData[1];
-    pAcc->z = accOutData[2];
+    unsigned short accelSens;
+    mpu_get_accel_sens(&accelSens);
+    accel[0] -= Q15_MULT3(-pRot->cospitch, pRot->sinroll, (q15_t)accelSens);
+    accel[1] -= Q15_MULT2(pRot->sinpitch, (q15_t)accelSens);
+    accel[2] -= Q15_MULT3(pRot->cospitch, pRot->cosroll, (q15_t)accelSens);
 }
 
+/** @brief function to remove euler and centrifugal acceleration form acceleration data
+ *
+ * @param[in]       pGyro       current gyro data
+ * @param[in]       pPosition   helenas current position in relation to rotation center
+ * @param[in/out]   pAccel      acceleration data
+ *
+ * @note    This function calculates euler and centrifugal accelerations with
+ *          the gyro and position data and removes this from the current
+ *          acceleration values.
+ */
+static void removeHeadMovements(const short* pGyro, q15_t* pPosition, short* pAccel)
+{
+#ifndef ARM_MATH_CM0_FAMILY
+#error "pState can not be NULL for non CM0 cpus"
+#endif
+
+    static short gyroOld[3];
+    arm_matrix_instance_q15 accel, accelCF, accelEuler, matrix, position, i;
+    q15_t accelCFData[3], accelEulerData[3], matrixData[9], iData[3];
+
+    arm_mat_init_q15(&matrix, 3, 3, matrixData);
+    arm_mat_init_q15(&accelCF, 3, 1, accelCFData);
+    arm_mat_init_q15(&accelEuler, 3, 1, accelEulerData);
+    arm_mat_init_q15(&position, 3, 1, pPosition);
+    arm_mat_init_q15(&i, 3, 1, iData);
+    arm_mat_init_q15(&accel, 3, 1, pAccel);
+
+    // remove centrifugal acceleration
+    matrixData[0] = Q15_MULT2(pGyro[1], pGyro[1]) + Q15_MULT2(pGyro[2], pGyro[2]);
+    matrixData[1] = Q15_MULT2(-pGyro[0], pGyro[1]);
+    matrixData[2] = Q15_MULT2(-pGyro[0], pGyro[2]);
+    matrixData[3] = matrixData[1];
+    matrixData[4] = Q15_MULT2(pGyro[0], pGyro[0]) + Q15_MULT2(pGyro[2], pGyro[2]);
+    matrixData[5] = Q15_MULT2(-pGyro[1], pGyro[2]);
+    matrixData[6] = matrixData[2];
+    matrixData[7] = matrixData[5];
+    matrixData[8] = Q15_MULT2(pGyro[0], pGyro[0]) + Q15_MULT2(pGyro[1], pGyro[1]);
+
+    arm_mat_mult_q15(&matrix, &position, &accelCF, NULL);
+
+    /// to do: change converting number into more readable preprocessor constants
+    accelCFData[0] = ((q31_t)accelCFData[0] * 63594) >> 12;   // converting result into accel hardware units
+    accelCFData[1] = ((q31_t)accelCFData[1] * 63594) >> 12;
+    accelCFData[2] = ((q31_t)accelCFData[2] * 63594) >> 12;
+
+    arm_mat_sub_q15(&accel, &accelCF, &i);
+
+    // remove euler acceleration
+    matrixData[0] = 0;
+    matrixData[1] = pGyro[2] - gyroOld[2];
+    matrixData[2] = gyroOld[1] - pGyro[1];
+    matrixData[3] = -matrixData[1];
+    matrixData[4] = 0;
+    matrixData[5] = pGyro[0] - gyroOld[0];
+    matrixData[6] = -matrixData[2];
+    matrixData[7] = -matrixData[5];
+    matrixData[8] = 0;
+
+    arm_mat_mult_q15(&matrix, &position, &accelEuler, NULL);
+
+    /// to do: change converting number into more readable preprocessor constants
+    accelEulerData[0] = ((q31_t)accelEulerData[0] * 45546) >> 10;   // convert into hardware units
+    accelEulerData[1] = ((q31_t)accelEulerData[1] * 45546) >> 10;
+    accelEulerData[2] = ((q31_t)accelEulerData[2] * 45546) >> 10;
+
+    gyroOld[0] = pGyro[0];
+    gyroOld[1] = pGyro[1];
+    gyroOld[2] = pGyro[2];
+
+    arm_mat_sub_q15(&i, &accelEuler, &accel);
+}
+
+/** @brief function to rotate from helena axis into body axis
+ *
+ * @param[in]       pRot    current rotation data
+ * @param[in/out]   pAccel  acceleration data
+ */
+static void rotateIntoBodyAxis(const rotationStruct* pRot, short* pAccel)
+{
+    arm_matrix_instance_q15 accelHead, accelBody, matrix;
+    q15_t accelHeadData[3], matrixData[9];
+
+    arm_mat_init_q15(&matrix, 3, 3, matrixData);
+    arm_mat_init_q15(&accelHead, 3, 1, accelHeadData);
+    arm_mat_init_q15(&accelBody, 3, 1, pAccel);
+
+    accelHeadData[0] = pAccel[0];
+    accelHeadData[1] = pAccel[1];
+    accelHeadData[2] = pAccel[2];
+
+    matrixData[0] = Q15_MULT2(pRot->cosroll, pRot->cosyaw) + Q15_MULT3(pRot->sinpitch, pRot->sinroll, pRot->sinyaw);
+    matrixData[1] = Q15_MULT2(-pRot->cosroll, pRot->sinyaw) + Q15_MULT3(pRot->sinpitch, pRot->sinroll, pRot->cosyaw);
+    matrixData[2] = Q15_MULT2(pRot->cospitch, pRot->sinroll);
+    matrixData[3] = Q15_MULT2(pRot->cospitch, pRot->sinyaw);
+    matrixData[4] = Q15_MULT2(pRot->cospitch, pRot->cosyaw);
+    matrixData[5] = -pRot->sinpitch;
+    matrixData[6] = Q15_MULT2(-pRot->sinroll, pRot->cosyaw) + Q15_MULT3(pRot->sinpitch, pRot->cosroll, pRot->sinyaw);
+    matrixData[7] = Q15_MULT2(pRot->sinroll, pRot->sinyaw) + Q15_MULT3(pRot->sinpitch, pRot->cosroll, pRot->cosyaw);
+    matrixData[8] = Q15_MULT2(pRot->cospitch, pRot->cosroll);
+
+    arm_mat_mult_q15(&matrix, &accelHead, &accelBody, NULL);
+}
+
+/** @brief function to normalize the acceleration data
+ *
+ * @param[in]       pRotation   current rotation data
+ * @param[in/out]   accel       acceleration data
+ * @param[in/out]   gyro        gyro data
+ *
+ * @details These function function processes the raw acceleration data and
+ *          transfers them into the current acceleration appealed to the body.
+ */
+static void normalizeAcceleration(const short* pRotation, short* accel, short* gyro)
+{
+    static q31_t yawFilter;                 // long term value of yaw angle
+
+    rotationStruct rotationData;
+
+    /// to do: change from fixed position to calibrated values or self finding algorithm
+    q15_t position[3] = {0, -0.12 * (1<<15), -0.22 * (1<<15)};
+
+    // roll and pitch angles can be used directly, but there is no reference
+    // for the yaw angle, so we can only assume, that the mid term direction of
+    // view is the riding direction. For this case we can calculate the current
+    // yaw angle by using the difference of the current angle to a low-pass
+    // filtered value.
+    q31_t anglediff = Q31_ANGLE_DIFF(pRotation[2] << 16, yawFilter);
+    yawFilter += (anglediff >> 6);  // resulting cut-off frequency 1/(2*pi*2^6*Ta) ~= 0.25Hz
+    if (yawFilter < 0)
+        yawFilter += INT32_MAX;
+    if (anglediff < 0)
+        anglediff += INT32_MAX;
+
+    rotationData.sinroll = arm_sin_q15(pRotation[1]);
+    rotationData.cosroll = arm_cos_q15(pRotation[1]);
+    rotationData.sinpitch = arm_sin_q15(pRotation[0]);
+    rotationData.cospitch = arm_cos_q15(pRotation[0]);
+    rotationData.sinyaw = arm_sin_q15(anglediff >> 16);
+    rotationData.cosyaw = arm_cos_q15(anglediff >> 16);
+
+    filterRawData(accel, gyro);
+    rotateRawToHelenaAxis(accel);
+    removeGravity(&rotationData, accel);
+    removeHeadMovements(gyro, position, accel);
+    rotateIntoBodyAxis(&rotationData, accel);
+}
+
+/** @brief function to check if head is moving
+ *
+ * @param[in]   pGyro   gyro data
+ * @return      true if head is moving, otherwise false
+ */
 static bool isHeadMoving(const short *pGyro)
 {
     long rotation;
@@ -254,68 +442,236 @@ static bool isHeadMoving(const short *pGyro)
         return false;
 }
 
-static void quatToEuler(const q30_t *pQuat, q15_t *pEuler)
+/** @brief function to check if a braking situation is detected
+ *
+ * @param[in]   pAccel  current body acceleration
+ * @return      true if braking situation is detected, otherwise false
+ *
+ * @details This function checks the braking situation by checking if
+ *           - the magnitude of the acceleration is higher than the threshold,
+ *           - the acceleration vector is pointing forward with a tolerance of
+ *             ANGLEX in x-axis and ANGLEZ in z-axis and
+ *           - the angle is not to nervous by checking the sum of the angle
+ *             differences over the past data.
+ */
+static bool isBrakingDetected(const short* pAccel)
 {
-#define MUL2AB(a, b) (((int64_t)a * b) >> 29)    // helper macro for 2*a*b
-    int32_t ysqr, i0, i1, i2, i3, i4;
+#define BRAKE_THRESHOLD             (int32_t)(ACCEL_1G * -0.2)
+#define BRAKE_ANGLEX                3   // = 1/(tan(alpha)^2), 3 -> +-30°
+#define BRAKE_ANGLEZ                8   // = 1/(tan(beta)^2),  8 -> +-19°
+#define BRAKE_POSTFILTERSHIFT       3
+#define BRAKE_NOISEFILTERCNT        10
+#define BRAKE_NOISEANGLE            ((q15_t)((q31_t)30 * (2<<15) / 360))
 
-    ysqr = MUL2AB(pQuat[2], pQuat[2]);
-    i0   = MUL2AB(pQuat[0], pQuat[1]) - MUL2AB(pQuat[2], pQuat[3]);
-    i1   = (1<<30) - (MUL2AB(pQuat[1], pQuat[1]) + ysqr);
-    i2   = MUL2AB(pQuat[0], pQuat[2]) - MUL2AB(pQuat[3], pQuat[1]);
-    i3   = MUL2AB(pQuat[0], pQuat[3]) - MUL2AB(pQuat[1], pQuat[2]);
-    i4   = (1<<30) - (ysqr - MUL2AB(pQuat[3], pQuat[3]));
-
-    /*// pitch
-    pEuler[0] = arm_atan2_q15(i0>>16, i1>>16);
-    // roll
-    if (i2 >= (1<<30)) {pEuler[1] = (1<<13);}
-    else if (i2 <= (-1<<30)) {pEuler[1] = (3<<13);}
-    else {pEuler[1] = arm_asin_q15(i2>>15);}
-    // yaw
-    pEuler[2] = arm_atan2_q15(i3>>16, i4>>16);*/
-
-    float32_t i;
-    i = atan2f((float32_t)i0, (float32_t)i1);
-    if (i < 0) {i += (float32_t)M_TWOPI;}
-    i /= (float32_t)M_TWOPI;
-    pEuler[0] = i * (1<<15);
-    if (i2 >= (1<<30)) {pEuler[1] = (1<<13);}
-    else if (i2 <= (-1<<30)) {pEuler[1] = (3<<13);}
-    else
+    static int32_t accelFilter[3];
+    static struct
     {
-        i = asin((float32_t)i2/(1<<30));
-        if (i < 0) {i += (float32_t)M_TWOPI;}
-        i /= (float32_t)M_TWOPI;
-        pEuler[1] = i * (1<<15);
+        q15_t angleBetweenVectors[BRAKE_NOISEFILTERCNT];
+        uint8_t last;
+    } noiseData;
+    static int32_t scalarProduct, thisAccelMag, lastAccelMag;
+    int32_t thisAccelSquare[3];
+    q3_12_t lastAccel[3], thisAccel[3];
+
+    // save last vector
+    lastAccel[0] = accelFilter[0] >> BRAKE_POSTFILTERSHIFT;
+    lastAccel[1] = accelFilter[1] >> BRAKE_POSTFILTERSHIFT;
+    lastAccel[2] = accelFilter[2] >> BRAKE_POSTFILTERSHIFT;
+
+    // run acceleration data through simple low pass filter
+    accelFilter[0] = accelFilter[0] - (accelFilter[0] >> BRAKE_POSTFILTERSHIFT) + pAccel[0];
+    accelFilter[1] = accelFilter[1] - (accelFilter[1] >> BRAKE_POSTFILTERSHIFT) + pAccel[1];
+    accelFilter[2] = accelFilter[2] - (accelFilter[2] >> BRAKE_POSTFILTERSHIFT) + pAccel[2];
+
+    // get actual acceleration vector
+    thisAccel[0] = accelFilter[0] >> BRAKE_POSTFILTERSHIFT;
+    thisAccel[1] = accelFilter[1] >> BRAKE_POSTFILTERSHIFT;
+    thisAccel[2] = accelFilter[2] >> BRAKE_POSTFILTERSHIFT;
+
+    // calculate square values
+    thisAccelSquare[0] = thisAccel[0] * thisAccel[0];
+    thisAccelSquare[1] = thisAccel[1] * thisAccel[1];
+    thisAccelSquare[2] = thisAccel[2] * thisAccel[2];
+
+    // calculate angle between this and last vector for noise determination
+    scalarProduct = thisAccel[0] * lastAccel[0] +
+                    thisAccel[1] * lastAccel[1] +
+                    thisAccel[2] * lastAccel[2];
+    thisAccelMag = thisAccelSquare[0] + thisAccelSquare[1] + thisAccelSquare[2];
+    arm_sqrt_q31(thisAccelMag >> 1, &thisAccelMag);
+    lastAccelMag = lastAccel[0] * lastAccel[0] + lastAccel[1] * lastAccel[1] + lastAccel[2] * lastAccel[2];
+    arm_sqrt_q31(lastAccelMag >> 1, &lastAccelMag);
+    noiseData.angleBetweenVectors[noiseData.last++] = arm_acos_q15(((int64_t)scalarProduct << 15)/(((int64_t)lastAccelMag * thisAccelMag) >> 30));
+    if (noiseData.last >= BRAKE_NOISEFILTERCNT)
+        noiseData.last = 0;
+
+    //SEGGER_RTT_printf(0, "%d, %d, %d\r\n", accelFilter[0] >> BRAKE_POSTFILTERSHIFT, accelFilter[1] >> BRAKE_POSTFILTERSHIFT, accelFilter[2] >> BRAKE_POSTFILTERSHIFT);
+
+    // check if braking
+    if ((accelFilter[1] >> BRAKE_POSTFILTERSHIFT) > 0)
+        return false;
+
+    // check if deceleration is high enough
+    if (thisAccelSquare[0] + thisAccelSquare[1] + thisAccelSquare[2] < BRAKE_THRESHOLD * BRAKE_THRESHOLD)
+        return false;
+
+    // check if vector points into valid direction
+    if (thisAccelSquare[1] < thisAccelSquare[0] * BRAKE_ANGLEX + thisAccelSquare[2] * BRAKE_ANGLEZ)
+        return false;
+
+    // check for noise in angle of vector
+    // due to the always positive XZ component the calculated angle will be
+    // always between 0 and 180°. Therefore no overflow has to be considered
+    q31_t angleSum = 0;
+    for (uint_fast8_t i = 0; i < BRAKE_NOISEFILTERCNT; i++)
+    {
+        angleSum += noiseData.angleBetweenVectors[i];
     }
-    i = atan2f((float32_t)i3, (float32_t)i4);
-    if (i < 0) {i += (float32_t)M_TWOPI;}
-    i /= (float32_t)M_TWOPI;
-    pEuler[2] = i * (1<<15);
+    if (angleSum > BRAKE_NOISEANGLE)
+        return false;
+
+    return true;
 }
 
-static float quatToPitch(const long *quat)
+/** Performs a multiply and shift by 29. These are good functions to write in assembly on
+ * with devices with small memory where you want to get rid of the long long which some
+ * assemblers don't handle well
+ * @param[in] a
+ * @param[in] b
+ * @return ((long long)a*b)>>29
+*/
+long inv_q29_mult(long a, long b)
 {
+    long long temp;
+    long result;
+    temp = (long long)a *b;
+    result = (long)(temp >> 29);
+    return result;
+}
+
+/**
+ *  @brief      Body-to-world frame euler angles.
+ *  The euler angles are output with the following convention:
+ *  Pitch: -180 to 180
+ *  Roll: -90 to 90
+ *  Yaw: -180 to 180
+ *  @param[in]  quat
+ *  @param[out] data        Euler angles in degrees, q16 fixed point.
+ *  @return     0 if succesfull.
+ */
+int inv_get_sensor_type_euler(long *quat, long *data)
+{
+
     long t1, t2, t3;
-    float pitch;
+    long q00, q01, q02, q03, q11, q12, q13, q22, q23, q33;
+    float values[3];
 
-    t1 = inv_q29_mult(quat[1], quat[2]) - inv_q29_mult(quat[0], quat[3]);
-    t2 = inv_q29_mult(quat[2], quat[2]) + inv_q29_mult(quat[0], quat[0]) - (1L<<30);
-    t3 = inv_q29_mult(quat[2], quat[3]) + inv_q29_mult(quat[0], quat[1]);
-    pitch = atan2f((float)t3, sqrtf((float)t1*t1 + (float)t2*t2));
-    t2 = inv_q29_mult(quat[3], quat[3]) + inv_q29_mult(quat[0], quat[0]) - (1L<<30);
-    if (t2 < 0)
-    {
-        if (pitch >= 0)
-            pitch = (float)M_PI - pitch;
+    q00 = inv_q29_mult(quat[0], quat[0]);
+    q01 = inv_q29_mult(quat[0], quat[1]);
+    q02 = inv_q29_mult(quat[0], quat[2]);
+    q03 = inv_q29_mult(quat[0], quat[3]);
+    q11 = inv_q29_mult(quat[1], quat[1]);
+    q12 = inv_q29_mult(quat[1], quat[2]);
+    q13 = inv_q29_mult(quat[1], quat[3]);
+    q22 = inv_q29_mult(quat[2], quat[2]);
+    q23 = inv_q29_mult(quat[2], quat[3]);
+    q33 = inv_q29_mult(quat[3], quat[3]);
+
+    /* X component of the Ybody axis in World frame */
+    t1 = q12 - q03;
+
+    /* Y component of the Ybody axis in World frame */
+    t2 = q22 + q00 - (1L << 30);
+    values[2] = -atan2f((float) t1, (float) t2) * 180.f / (float) M_PI;
+
+    /* Z component of the Ybody axis in World frame */
+    t3 = q23 + q01;
+    values[0] =
+        atan2f((float) t3,
+                sqrtf((float) t1 * t1 +
+                      (float) t2 * t2)) * 180.f / (float) M_PI;
+    /* Z component of the Zbody axis in World frame */
+    t2 = q33 + q00 - (1L << 30);
+    if (t2 < 0) {
+
+        if (values[0] >= 0)
+            values[0] = 180.f - values[0];
         else
-            pitch = -((float)M_PI) - pitch;
+            values[0] = -180.f - values[0];
+
     }
-    return pitch;
+
+    /* X component of the Xbody axis in World frame */
+    t1 = q11 + q00 - (1L << 30);
+    /* Y component of the Xbody axis in World frame */
+    t2 = q12 + q03;
+    /* Z component of the Xbody axis in World frame */
+    t3 = q13 - q02;
+
+    values[1] =
+        (atan2f((float)(q33 + q00 - (1L << 30)), (float)(q13 - q02)) *
+          180.f / (float) M_PI - 90);
+    if (values[1] >= 90)
+        values[1] = 180 - values[1];
+
+    if (values[1] < -90)
+        values[1] = -180 - values[1];
+    data[0] = (long)(values[0] * 65536.f);
+    data[1] = (long)(values[1] * 65536.f);
+    data[2] = (long)(values[2] * 65536.f);
+
+    return 0;
 }
 
-static void loadAccelBias()
+static void quatToEuler(const long *pQuat, q3_12_t *pEuler)
+{
+    int32_t i, j, k, l;
+    int32_t q00, q01, q02, q03, q12, q13, q22, q23, q33;
+
+    q00 = Q29_MULT2(pQuat[0], pQuat[0]);
+    q01 = Q29_MULT2(pQuat[0], pQuat[1]);
+    q02 = Q29_MULT2(pQuat[0], pQuat[2]);
+    q03 = Q29_MULT2(pQuat[0], pQuat[3]);
+    q12 = Q29_MULT2(pQuat[1], pQuat[2]);
+    q13 = Q29_MULT2(pQuat[1], pQuat[3]);
+    q22 = Q29_MULT2(pQuat[2], pQuat[2]);
+    q23 = Q29_MULT2(pQuat[2], pQuat[3]);
+    q33 = Q29_MULT2(pQuat[3], pQuat[3]);
+
+    i = q12 - q03;
+    j = q22 + q00 - (1L << 30);
+
+    pEuler[2] = arm_atan2_q15(-i >> 16, j >> 16);
+
+    k = q23 + q01;
+    int64_t m = (int64_t)i*i + (int64_t)j*j;
+    arm_sqrt_q31(m >> 33, &l);
+    //l = m >> 15;
+
+    pEuler[0] = arm_atan2_q15(k >> 16, l >> 15);
+
+    i = q33 + q00 - (1L << 30);
+    if (i < 0)
+    {
+        if (pEuler[0] <= (1<<14))
+            pEuler[0] = (1<<14) - pEuler[0];
+        else
+            pEuler[0] = (1<<14) + ((1l<<15) - pEuler[0]);
+    }
+
+    j = q13 - q02;
+
+    pEuler[1] = arm_atan2_q15(i >> 16, j >> 16);
+    pEuler[1] -= (1<<13);
+    if (pEuler[1] < 0)
+        pEuler[1] = (1l<<15) + pEuler[1];
+    if (pEuler[1] > (1<<13) && pEuler[1] < (1<<14))
+        pEuler[1] = (1<<14) - pEuler[1];
+    if (pEuler[1] > (1<<14) && pEuler[1] < (3<<13))
+        pEuler[1] += (1<<13);
+}
+
+static void loadBias()
 {
     uint32_t errCode;
 
@@ -326,9 +682,11 @@ static void loadAccelBias()
     APP_ERROR_CHECK(errCode);
 
     // initialize to zero
-    accelBias[0] = 0;
-    accelBias[1] = 0;
-    accelBias[2] = 0;
+    for (uint_fast8_t i = 0; i < 3; i++)
+    {
+        bias.accel[0] = 0;
+        bias.gyro[0] = 0;
+    }
 
     // search if bias data is stored in flash
     fds_find_token_t token;
@@ -341,13 +699,8 @@ static void loadAccelBias()
         // record exists, so open it
         fds_record_t record;
         errCode = fds_open(&descriptor, &record);
-        if (errCode == NRF_SUCCESS)
-        {
-            long* pAccel = (long*)record.p_data;
-            accelBias[0] = pAccel[0];
-            accelBias[1] = pAccel[1];
-            accelBias[2] = pAccel[2];
-        }
+        if (errCode == NRF_SUCCESS && record.header.tl.length_words == SIZEOF_WORDS(bias))
+            bias = *(biasStruct*)record.p_data;
     }
     else if (errCode != NRF_ERROR_NOT_FOUND)
     {
@@ -355,12 +708,30 @@ static void loadAccelBias()
     }
 }
 
-static uint32_t applyAccelBias()
+static uint32_t applyBias(biasStruct* pBias)
 {
-    if (accelBias[0] == 0 && accelBias[1] == 0 && accelBias[2] == 0)
+    long accel[3], gyro[3];
+    unsigned short accelSens;
+    float gyroSens;
+
+    if (pBias->accel[0] == 0 && pBias->accel[1] == 0 && pBias->accel[2] == 0 &&
+        pBias->gyro[0] == 0 && pBias->gyro[1] == 0 && pBias->gyro[2] == 0)
         return NRF_ERROR_NOT_FOUND;
 
-    if (mpu_set_accel_bias(accelBias) != 0)
+    //mpu_get_accel_sens(&accelSens);
+    //mpu_get_gyro_sens(&gyroSens);
+    accelSens = 2048;   // required resolution for offset cancellation
+    gyroSens = 32.8f;   // required resolution for offset cancellation
+
+    for (uint_fast8_t i = 0; i < 3; i++)
+    {
+        accel[i] = (pBias->accel[i] * accelSens) >> 16;
+        gyro[i] = ((long)(pBias->gyro[i] * gyroSens)) >> 16;
+    }
+
+    if (mpu_set_accel_bias_6050_reg(accel) != 0)
+        return NRF_ERROR_INTERNAL;
+    if (mpu_set_gyro_bias_reg(gyro) != 0)
         return NRF_ERROR_INTERNAL;
     else
         return NRF_SUCCESS;
@@ -373,14 +744,15 @@ uint32_t ms_Init()
     VERIFY_MPU_ERROR_CODE(mpu_init(NULL));
     VERIFY_MPU_ERROR_CODE(mpu_set_sensors(INV_XYZ_GYRO | INV_XYZ_ACCEL));
     VERIFY_MPU_ERROR_CODE(mpu_set_lpf(20));
-    VERIFY_MPU_ERROR_CODE(mpu_set_accel_fsr(8));
+    VERIFY_MPU_ERROR_CODE(mpu_set_accel_fsr(ACCEL_FULLSCALERANGE));
     VERIFY_MPU_ERROR_CODE(dmp_load_motion_driver_firmware());
     VERIFY_MPU_ERROR_CODE(dmp_set_orientation(inv_orientation_matrix_to_scalar(pBoardConfig->gyroOrientation)));
     VERIFY_MPU_ERROR_CODE(dmp_enable_feature(DMP_FEATURE_6X_LP_QUAT | DMP_FEATURE_GYRO_CAL | DMP_FEATURE_SEND_CAL_GYRO | DMP_FEATURE_SEND_RAW_ACCEL | DMP_FEATURE_SEND_CAL_GYRO));
     VERIFY_MPU_ERROR_CODE(dmp_set_fifo_rate(100));
     VERIFY_MPU_ERROR_CODE(mpu_set_dmp_state(1));
+    loadBias();
+    applyBias(&bias);
     VERIFY_MPU_ERROR_CODE(mpu_set_sensors(0));
-    loadAccelBias();
     return NRF_SUCCESS;
 }
 
@@ -394,11 +766,11 @@ uint32_t ms_Enable(bool enable)
     if (enable)
     {
         errCode = mpu_set_sensors(INV_XYZ_GYRO | INV_XYZ_ACCEL);
-        uint32_t errCodeNrf = applyAccelBias();
+        /*uint32_t errCodeNrf = applyBias();
         if (errCodeNrf != NRF_SUCCESS && errCodeNrf != NRF_ERROR_NOT_FOUND)
         {
             APP_ERROR_HANDLER(errCodeNrf);
-        }
+        }*/
     }
     else
         errCode = mpu_set_sensors(0);
@@ -411,7 +783,7 @@ uint32_t ms_Enable(bool enable)
 
 uint32_t ms_FetchData(ms_DataStruct* pData)
 {
-    short gyro[3], accel[3], sensors;
+    short gyro[3], accel[3], rotation[3], sensors;
     long quat[4];
     unsigned long timestamp;
     unsigned char more;
@@ -422,12 +794,13 @@ uint32_t ms_FetchData(ms_DataStruct* pData)
     if (!isEnabled)
         return NRF_ERROR_INVALID_STATE;
 
-    sensors = INV_WXYZ_QUAT | INV_XYZ_ACCEL;
+    more = 0xFF;
     do                                      /**< MPU is sampling data with 100Hz, too, but due to unsynchronized */
     {                                       /**< clocks, data is read out until fifo is empty. */
         int error = dmp_read_fifo(gyro, accel, quat, &timestamp, &sensors, &more);
-        if (error && error != -3)           /**< ignore unaligned data error (can happen if data is read, */
-        {                                   /**< while mpu is writing data into fifo */
+        if (error != -2 &&                  /**< ignore unaligned data error (can happen if data is read, */
+            error && more == 0xFF)          /**< and error, when trying to read empty fifo */
+        {
             VERIFY_MPU_ERROR_CODE(error);
         }
     }
@@ -442,21 +815,21 @@ uint32_t ms_FetchData(ms_DataStruct* pData)
         if (euler[i] < 0)
             euler[i] += 360<<16;
     }
-    pData->rot.pitch = euler[0]/720;
-    pData->rot.roll = euler[1]/720;
-    pData->rot.yaw = euler[2]/720;
-    pData->acc.x = accel[0];
-    pData->acc.y = accel[1];
-    pData->acc.z = accel[2];
-    //normalizeAcceleration(&pData->rot, &pData->acc);
+    rotation[0] = euler[0]/720;
+    rotation[1] = euler[1]/720;
+    rotation[2] = euler[2]/720;
+    //quatToEuler(quat, rotation);
+    pData->pitch = rotation[0];
+    normalizeAcceleration(rotation, accel, gyro);
+    pData->isBraking = isBrakingDetected(accel);
     pData->isMoving = isHeadMoving(gyro);
-    /*static uint8_t cnt = 100;
+    /*static uint8_t cnt = 50;
     if (--cnt == 0)
     {
-        cnt = 100;
-        SEGGER_RTT_printf(0, "%d, %d, %d\r\n", (int32_t)(pData->rot.pitch*360)/(1<<15), (int32_t)(pData->rot.roll*360)/(1<<15), (int32_t)(pData->rot.yaw*360)/(1<<15));
-        //SEGGER_RTT_printf(0, "%d, %d, %d\r\n", gyro[0], gyro[1], gyro[2]);
-        SEGGER_RTT_printf(0, "%d, %d, %d\r\n", pData->acc.x, pData->acc.y, pData->acc.z);
+        cnt = 50;
+        SEGGER_RTT_printf(0, "%d, %d, %d, ", (int32_t)(rotation[0]*360)/(1<<15), (int32_t)(rotation[1]*360)/(1<<15), (int32_t)(rotation[2]*360)/(1<<15));
+        //SEGGER_RTT_printf(0, "%d, %d, %d, ", gyro[0], gyro[1], gyro[2]);
+        SEGGER_RTT_printf(0, "%d, %d, %d\r\n", accel[0], accel[1], accel[2]);
     }*/
 
     return NRF_SUCCESS;
@@ -464,12 +837,13 @@ uint32_t ms_FetchData(ms_DataStruct* pData)
 
 uint32_t ms_GetSensorOffset(ms_AccelerationStruct* pData)
 {
-    if (accelBias[0] == 0 && accelBias[1] == 0 && accelBias[2] == 0)
+    if (bias.accel[0] == 0 && bias.accel[1] == 0 && bias.accel[2] == 0 &&
+        bias.gyro[0] == 0 && bias.gyro[1] == 0 && bias.gyro[2] == 0)
         return NRF_ERROR_NOT_FOUND;
 
-    pData->x = accelBias[0];
-    pData->y = accelBias[1];
-    pData->z = accelBias[2];
+    pData->x = bias.accel[0];
+    pData->y = bias.accel[1];
+    pData->z = bias.accel[2];
     return NRF_SUCCESS;
 }
 
@@ -478,20 +852,31 @@ uint32_t ms_CalibrateSensorOffset(ms_AccelerationStruct* pData)
     uint32_t errCode;
     long gyro[3], accel[3];
     int result;
+    biasStruct newBias;
 
     result = mpu_run_self_test(gyro, accel);
-    if (result != 3)
+    if (result != 7)
         return NRF_ERROR_INTERNAL;
 
-    accelBias[0] = -accel[0];
-    accelBias[1] = -accel[1];
-    accelBias[2] = -accel[2];
+    newBias.accel[0] = accel[0];
+    newBias.accel[1] = accel[1];
+    newBias.accel[2] = accel[2];
+    newBias.gyro[0] = gyro[0] + bias.gyro[0];
+    newBias.gyro[1] = gyro[1] + bias.gyro[1];
+    newBias.gyro[2] = gyro[2] + bias.gyro[2];
 
-    applyAccelBias();
+    applyBias(&newBias);
 
-    pData->x = accelBias[0];
-    pData->y = accelBias[1];
-    pData->z = accelBias[2];
+    bias.accel[0] += newBias.accel[0];
+    bias.accel[1] += newBias.accel[1];
+    bias.accel[2] += newBias.accel[2];
+    bias.gyro[0] = newBias.gyro[0];
+    bias.gyro[1] = newBias.gyro[1];
+    bias.gyro[2] = newBias.gyro[2];
+
+    pData->x = bias.accel[0];
+    pData->y = bias.accel[1];
+    pData->z = bias.accel[2];
 
 //    SEGGER_RTT_printf(0, "self test %d\r\n", result);
 //    SEGGER_RTT_printf(0, "gyro bias: %d, %d, %d\r\n", gyro[0], gyro[1], gyro[2]);
@@ -500,8 +885,8 @@ uint32_t ms_CalibrateSensorOffset(ms_AccelerationStruct* pData)
     fds_find_token_t token;
     fds_record_desc_t descriptor;
     fds_record_chunk_t chunk;
-    chunk.p_data = accelBias;
-    chunk.length_words = SIZEOF_WORDS(accelBias);
+    chunk.p_data = &bias;
+    chunk.length_words = SIZEOF_WORDS(bias);
 
     fds_record_key_t key = {.type = FDSACCELBIAS, .instance = FDSINSTANCE};
     errCode = fds_find(key.type, key.instance, &descriptor, &token);
