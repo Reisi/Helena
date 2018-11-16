@@ -59,10 +59,8 @@ void hmi_Init()
 {
     uint32_t errCode;
 
-    nrf_gpio_cfg_output(LEDRED);
-    nrf_gpio_cfg_output(LEDBLUE);
-    nrf_gpio_pin_clear(LEDRED);
-    nrf_gpio_pin_clear(LEDBLUE);
+    nrf_gpio_cfg_default(LEDRED);
+    nrf_gpio_cfg_default(LEDBLUE);
 
     if (!nrf_drv_gpiote_is_init())
     {
@@ -155,7 +153,52 @@ hmi_ButtonEnum hmi_Debounce()
 
 void hmi_SetLed(hmi_LedEnum Led, hmi_LedStateEnum state)
 {
-    uint32_t pinnumber = 1;
+    static uint8_t ledState;
+
+    switch (state)
+    {
+    case hmi_LEDOFF:
+        ledState &= ~(1<<Led);
+        break;
+    case hmi_LEDON:
+        ledState |= (1<<Led);
+        break;
+    case hmi_LEDTOGGLE:
+        ledState ^= (1<<Led);
+        break;
+    }
+
+    switch (ledState & ((1<<hmi_LEDBLUE)|(1<<hmi_LEDRED)))
+    {
+    case 0:
+        nrf_gpio_cfg_default(LEDRED);
+        nrf_gpio_cfg_default(LEDBLUE);
+        break;
+    case (1<<hmi_LEDRED):
+        nrf_gpio_cfg_default(LEDBLUE);
+        nrf_gpio_cfg_output(LEDRED);
+        if (LEDRED == LEDBLUE)
+            nrf_gpio_pin_clear(LEDRED);
+        else
+            nrf_gpio_pin_set(LEDRED);
+        break;
+    case (1<<hmi_LEDBLUE):
+        nrf_gpio_cfg_default(LEDRED);
+        nrf_gpio_cfg_output(LEDBLUE);
+        nrf_gpio_pin_set(LEDBLUE);
+        break;
+    case (1<<hmi_LEDRED)|(1<<hmi_LEDBLUE):
+        nrf_gpio_cfg_output(LEDBLUE);
+        nrf_gpio_pin_set(LEDRED);
+        nrf_gpio_cfg_output(LEDRED);
+        if (LEDRED == LEDBLUE)
+            nrf_gpio_pin_clear(LEDRED);
+        else
+            nrf_gpio_pin_set(LEDRED);
+        break;
+    }
+
+    /*uint32_t pinnumber = 1;
     if (Led == hmi_LEDRED)
         pinnumber = LEDRED;
     else if (Led == hmi_LEDBLUE)
@@ -165,7 +208,7 @@ void hmi_SetLed(hmi_LedEnum Led, hmi_LedStateEnum state)
     else if (state == hmi_LEDON)
         nrf_gpio_pin_set(pinnumber);
     else
-        nrf_gpio_pin_clear(pinnumber);
+        nrf_gpio_pin_clear(pinnumber);*/
 }
 
 /**END OF FILE*****************************************************************/

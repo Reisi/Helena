@@ -384,6 +384,8 @@ void com_Init()
         APP_ERROR_CHECK(errCode);
     }
     nrf_drv_gpiote_in_config_t rxConfig = GPIOTE_CONFIG_IN_SENSE_TOGGLE(false);
+    if (PCOMTX == PCOMRX)
+        rxConfig.is_watcher = true;
     errCode = nrf_drv_gpiote_in_init(PCOMRX, &rxConfig, &com_Sync);
     APP_ERROR_CHECK(errCode);
 

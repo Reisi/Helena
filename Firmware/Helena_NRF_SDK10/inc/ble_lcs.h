@@ -88,6 +88,7 @@ typedef struct
     uint16_t mode_grouping_supported        : 1;
     uint16_t led_config_check_supported     : 1;
     uint16_t sensor_calibration_supported   : 1;
+    uint16_t current_limitation_supported   : 1;
 } ble_lcs_lf_t;
 
 // include control point header here, because its using feature and light mode structures

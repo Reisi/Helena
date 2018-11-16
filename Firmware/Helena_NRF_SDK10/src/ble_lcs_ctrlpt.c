@@ -143,6 +143,7 @@ static uint32_t lcs_ctrlpt_decode(uint8_t             * p_rcvd_val,
         case BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG:
         case BLE_LCS_CTRLPT_OP_CODE_REQ_SENS_OFF:
         case BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF:
+        case BLE_LCS_CTRLPT_OP_CODE_REQ_LIMITS:
             break;
 
         case BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNFG:
@@ -170,6 +171,15 @@ static uint32_t lcs_ctrlpt_decode(uint8_t             * p_rcvd_val,
 
         case BLE_LCS_CTRLPT_OP_CODE_CNFG_GROUP:
             p_write_val->params.group_config = p_rcvd_val[pos];
+            break;
+
+        case BLE_LCS_CTRLPT_OP_CODE_SET_LIMITS:
+            if (len != 3)
+            {
+                return NRF_ERROR_INVALID_PARAM;
+            }
+            p_write_val->params.current_limits.flood = p_rcvd_val[pos++];
+            p_write_val->params.current_limits.spot = p_rcvd_val[pos];
             break;
 
         default:
@@ -222,6 +232,10 @@ static int ctrlpt_rsp_encode(ble_lcs_ctrlpt_t      * p_lcs_ctrlpt,
                 len += uint16_encode(p_ctrlpt_rsp->params.sens_offset.x, &p_data[len]);
                 len += uint16_encode(p_ctrlpt_rsp->params.sens_offset.y, &p_data[len]);
                 len += uint16_encode(p_ctrlpt_rsp->params.sens_offset.z, &p_data[len]);
+                break;
+            case BLE_LCS_CTRLPT_OP_CODE_REQ_LIMITS:
+                p_data[len++] = p_ctrlpt_rsp->params.current_limits.flood;
+                p_data[len++] = p_ctrlpt_rsp->params.current_limits.spot;
                 break;
 
             default:
@@ -288,6 +302,14 @@ static bool is_feature_supported(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_lcs_ctrlpt
         case BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF:
         case BLE_LCS_CTRLPT_OP_CODE_REQ_SENS_OFF:
             if (p_lcs_ctrlpt->supported_features.sensor_calibration_supported == 1)
+            {
+                supported = true;
+            }
+            break;
+
+        case BLE_LCS_CTRLPT_OP_CODE_REQ_LIMITS:
+        case BLE_LCS_CTRLPT_OP_CODE_SET_LIMITS:
+            if (p_lcs_ctrlpt->supported_features.current_limitation_supported == 1)
             {
                 supported = true;
             }
@@ -427,6 +449,18 @@ static void on_ctrlpt_write(ble_lcs_ctrlpt_t       * p_lcs_ctrlpt,
 
             case BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_CALIB_SENS_OFF;
+                evt.p_params = &rcvd_ctrlpt.params;
+                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                break;
+
+            case BLE_LCS_CTRLPT_OP_CODE_REQ_LIMITS:
+                evt.evt_type = BLE_LCS_CTRLPT_EVT_REQ_LIMITS;
+                evt.p_params = &rcvd_ctrlpt.params;
+                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                break;
+
+            case BLE_LCS_CTRLPT_OP_CODE_SET_LIMITS:
+                evt.evt_type = BLE_LCS_CTRLPT_EVT_SET_LIMITS;
                 evt.p_params = &rcvd_ctrlpt.params;
                 p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;

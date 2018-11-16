@@ -19,6 +19,7 @@ typedef enum
 {
     rev20 = 0,
     rev21,
+    rev22,
     revCnt
 } revisionEnum;
 
@@ -58,6 +59,21 @@ static const board_ConfigStruct boardConfig[revCnt] =
                              0,  0,  1,
                              0, -1,  0},
         .hwRevStr  = "2.1"
+    },
+    {
+        .button    = 9,
+        .ledBlue   = 13,
+        .ledRed    = 13,
+        .bdepRX    = 10,
+        .bdepTX    = 10,
+        .analogVin = 1,
+        .i2cSCL    = 3,
+        .i2cSDA    = 2,
+        .mpuInt    = 4,
+        .gyroOrientation = {-1,  0,  0,
+                             0,  0,  1,
+                             0,  1,  0},
+        .hwRevStr  = "2.2"
     },
 };
 const board_ConfigStruct * pBoardConfig;

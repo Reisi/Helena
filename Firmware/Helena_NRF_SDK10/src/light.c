@@ -27,7 +27,7 @@
 
 #define VOLTAGEMIN          6050    // minimum operation input voltage
 #define VOLTAGEMAX          8500    // maximum operation input voltage
-#define CURRENTMAX          MILLIAMPERE_IN_TARGETVALUE(3000)
+#define CURRENTMAX          3000    // maximum output current
 #define TEMPERATUREMAX      3480    // = 75 °C
 
 #define LUTSIZE             256     // size of look up table for pitch<->comp mapping, must be power of two
@@ -39,6 +39,7 @@
 #define FDSINSTANCE         0x7167      /**< number identifying fds data for light module */
 
 #define LIGHT_LEDCONFIG_UNKNOWN         UINT8_MAX
+#define LIGHT_DEFAULT_LIMIT             85
 
 /* Private typedef -----------------------------------------------------------*/
 typedef enum
@@ -64,10 +65,24 @@ typedef struct
     q15_t partFlood[CROSSINGSIZE + 1];
 } crossingLUTStruct;
 
+typedef struct
+{
+    int8_t flood;
+    int8_t spot;
+} currentLimitStruct;
+
+typedef struct
+{
+    light_DriverConfigStruct drvConfig;
+    currentLimitStruct currentLimits;
+} storageDataStruct;
+
 /* Private macros ------------------------------------------------------------*/
 #define EXTENDED_ERROR_CHECK            /**< activate this flag to get internal error codes */
 
 #ifdef EXTENDED_ERROR_CHECK
+
+#define SIZE_IN_WORDS(x)    ((sizeof(x) + 3) / 4)
 
 #define VERIFY_NRF_ERROR_CODE(err_code) \
 do                                      \
@@ -214,9 +229,11 @@ static const crossingLUTStruct crossingLUT =
 static stateEnum lightState;            /**< current light state */
 static light_StatusStruct lightStatus;  /**< current light status informations */
 static uint8_t targets[2];              /**< current target values */
+static uint8_t currentLimits[2];        /**< current current limits */
 static volatile bool updateFlag;        /**< flags indication if status has to be updated */
 APP_TIMER_DEF(updateTimerId);           /**< timer for timebase */
-static light_DriverConfigStruct drvConfig;
+static storageDataStruct storage;
+//static light_DriverConfigStruct drvConfig;
 
 /* Private functions ---------------------------------------------------------*/
 /** @brief handler for timebase timer event
@@ -394,7 +411,7 @@ static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t 
     int32_t pitchCalc;
 
     // if spot and flood leds are present, add pitch offset due to tilted optics
-    if (drvConfig.floodCount != 0 && drvConfig.spotCount != 0)
+    if (storage.drvConfig.floodCount != 0 && storage.drvConfig.spotCount != 0)
     {
         pitchCalc = pitch + PITCHOFFSETFLOOD;
         if (pitchCalc >= (1<<15))
@@ -498,10 +515,23 @@ static void limiter(light_StatusStruct * pStatus, uint8_t *pFlood, uint8_t *pSpo
     pStatus->flood &= ~(LIGHT_STATUS_OVERCURRENT | LIGHT_STATUS_VOLTAGELIMIT | LIGHT_STATUS_TEMPERATURELIMIT);
     pStatus->spot &= ~(LIGHT_STATUS_OVERCURRENT | LIGHT_STATUS_VOLTAGELIMIT | LIGHT_STATUS_TEMPERATURELIMIT);
 
-    // check current limit first
-    limit = CURRENTMAX;
+    /*// temporary to protect XHP50 in prototype due to broken PCB
+    limit = MILLIAMPERE_IN_TARGETVALUE(500);
     if (*pFlood > limit) {*pFlood = limit; pStatus->flood |= LIGHT_STATUS_OVERCURRENT;}
-    if (*pSpot > limit) {*pSpot = limit; pStatus->spot |= LIGHT_STATUS_OVERCURRENT;}
+    limit = CURRENTMAX;
+    if (*pSpot > limit) {*pSpot = limit; pStatus->spot |= LIGHT_STATUS_OVERCURRENT;}*/
+
+    // check current limit first
+    if (*pFlood > currentLimits[FLOOD])
+    {
+        *pFlood = currentLimits[FLOOD];
+        pStatus->flood |= LIGHT_STATUS_OVERCURRENT;
+    }
+    if (*pSpot > currentLimits[SPOT])
+    {
+        *pSpot = currentLimits[SPOT];
+        pStatus->spot |= LIGHT_STATUS_OVERCURRENT;
+    }
 
     // check input voltage limit
     if (pStatus->inputVoltage >= VOLTAGEMAX)                // voltage to high
@@ -570,17 +600,39 @@ static void validateLedConfig(light_DriverConfigStruct* pLedConfig)
         pLedConfig->spotCount = 2;
 }
 
-static void readLedConfig()
+static void convertCurrentLimit(currentLimitStruct* pLimits)
+{
+    int16_t limit;
+
+    limit = ((int16_t)pLimits->flood * MILLIAMPERE_IN_TARGETVALUE(CURRENTMAX)) / 100;
+    if (limit < 0)
+        limit = 0;
+    if (limit > MILLIAMPERE_IN_TARGETVALUE(CURRENTMAX))
+        limit = MILLIAMPERE_IN_TARGETVALUE(CURRENTMAX);
+    currentLimits[FLOOD] = limit;
+
+    limit = ((int16_t)pLimits->spot * MILLIAMPERE_IN_TARGETVALUE(CURRENTMAX)) / 100;
+    if (limit < 0)
+        limit = 0;
+    if (limit > MILLIAMPERE_IN_TARGETVALUE(CURRENTMAX))
+        limit = MILLIAMPERE_IN_TARGETVALUE(CURRENTMAX);
+    currentLimits[SPOT] = limit;
+}
+
+static void readStorage()
 {
     uint32_t errCode;
 
     fds_find_token_t token;
     fds_record_desc_t descriptor;
     fds_record_key_t key = {.type = FDSDRVCONFIG, .instance = FDSINSTANCE};
-    light_DriverConfigStruct* pConfig;
+    storageDataStruct* pData;
 
-    drvConfig.floodCount = LIGHT_LEDCONFIG_UNKNOWN;
-    drvConfig.spotCount = LIGHT_LEDCONFIG_UNKNOWN;
+    // set default values
+    storage.drvConfig.floodCount = LIGHT_LEDCONFIG_UNKNOWN;
+    storage.drvConfig.spotCount = LIGHT_LEDCONFIG_UNKNOWN;
+    storage.currentLimits.flood = LIGHT_DEFAULT_LIMIT;
+    storage.currentLimits.spot = LIGHT_DEFAULT_LIMIT;
 
     errCode = fds_find(key.type, key.instance, &descriptor, &token);
     if (errCode == NRF_SUCCESS)
@@ -589,9 +641,12 @@ static void readLedConfig()
         errCode = fds_open(&descriptor, &record);
         if (errCode == NRF_SUCCESS)
         {
-            pConfig = (light_DriverConfigStruct*)record.p_data;
-            drvConfig.floodCount = pConfig->floodCount;
-            drvConfig.spotCount = pConfig->spotCount;
+            pData = (storageDataStruct*)record.p_data;
+            storage.drvConfig.floodCount = pData->drvConfig.floodCount;
+            storage.drvConfig.spotCount = pData->drvConfig.spotCount;
+            // limits has been added supplementary, check size to be sure to not read flimflam from old data
+            if (record.header.tl.length_words == SIZE_IN_WORDS(storage))
+                storage.currentLimits = pData->currentLimits;
         }
         else
             APP_ERROR_HANDLER(errCode);
@@ -603,10 +658,11 @@ static void readLedConfig()
     }
 
     // set default values if led count isn't known
-    validateLedConfig(&drvConfig);
+    validateLedConfig(&storage.drvConfig);
+    convertCurrentLimit(&storage.currentLimits);
 }
 
-static void writeLedConfig()
+static void writeStorage()
 {
     uint32_t errCode;
     fds_find_token_t token;
@@ -614,8 +670,8 @@ static void writeLedConfig()
     fds_record_chunk_t chunk;
 
     fds_record_key_t key = {.type = FDSDRVCONFIG, .instance = FDSINSTANCE};
-    chunk.p_data = &drvConfig;
-    chunk.length_words = SIZEOF_WORDS(drvConfig);
+    chunk.p_data = &storage;
+    chunk.length_words = SIZE_IN_WORDS(storage);
     errCode = fds_find(key.type, key.instance, &descriptor, &token);
     if (errCode == NRF_SUCCESS)
     {
@@ -668,15 +724,15 @@ uint32_t light_Init(light_DriverConfigStruct * pLedConfig)
     lightState = STATEOFF;
 
     // check driver revision;
-    drvConfig.rev = driverRevCheck();
+    storage.drvConfig.rev = driverRevCheck();
 
     // register to fds module
     VERIFY_NRF_ERROR_CODE(fds_register(fdsEventHandler));
     VERIFY_NRF_ERROR_CODE(fds_init());
 
     // read led configuration
-    readLedConfig();
-    *pLedConfig = drvConfig;
+    readStorage();
+    *pLedConfig = storage.drvConfig;
 
     return NRF_SUCCESS;
 }
@@ -824,8 +880,8 @@ uint32_t light_CheckLedConfig(light_DriverConfigStruct* pLedConfig)
 
     // save old state and reset old configuration
     oldState = lightState;
-    drvConfig.floodCount = LIGHT_LEDCONFIG_UNKNOWN;
-    drvConfig.spotCount = LIGHT_LEDCONFIG_UNKNOWN;
+    storage.drvConfig.floodCount = LIGHT_LEDCONFIG_UNKNOWN;
+    storage.drvConfig.spotCount = LIGHT_LEDCONFIG_UNKNOWN;
 
     // turn on led driver with 2*2/3 output current
     buffer[0] = (HELENABASE_SLEEP_DISABLE<<HELENABASE_CRA_SLEEP_OFFSET) | (HELENABASE_ADCRATE_1S<<HELENABASE_CRA_ADCRATE_OFFSET);
@@ -842,32 +898,32 @@ uint32_t light_CheckLedConfig(light_DriverConfigStruct* pLedConfig)
     {
         // check if current is available, if not there is no led connected
         if (lightStatus.currentFlood < 500)
-            drvConfig.floodCount = 0;
+            storage.drvConfig.floodCount = 0;
         if (lightStatus.currentSpot < 500)
-            drvConfig.spotCount = 0;
+            storage.drvConfig.spotCount = 0;
 
         // read duty cycle registers
-        if (drvConfig.rev == LIGHT_DRIVERREV11)
+        if (storage.drvConfig.rev == LIGHT_DRIVERREV11)
         {
             errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_DUTYCYCLELEFT, 2, buffer);
             if(errCode == NRF_SUCCESS)
             {
-                if (drvConfig.floodCount)
-                    drvConfig.floodCount = buffer[0] < (HELENABASE_DC_MAX * 0.75) ? 1 : 2;
-                if (drvConfig.spotCount)
-                    drvConfig.spotCount = buffer[1] < (HELENABASE_DC_MAX * 0.75) ? 1 : 2;
+                if (storage.drvConfig.floodCount)
+                    storage.drvConfig.floodCount = buffer[0] < (HELENABASE_DC_MAX * 0.75) ? 1 : 2;
+                if (storage.drvConfig.spotCount)
+                    storage.drvConfig.spotCount = buffer[1] < (HELENABASE_DC_MAX * 0.75) ? 1 : 2;
             }
         }
     }
 
     // set default values if led count isn't known
-    validateLedConfig(&drvConfig);
+    validateLedConfig(&storage.drvConfig);
 
-    pLedConfig->floodCount = drvConfig.floodCount;
-    pLedConfig->spotCount = drvConfig.spotCount;
+    pLedConfig->floodCount = storage.drvConfig.floodCount;
+    pLedConfig->spotCount = storage.drvConfig.spotCount;
 
     // save new state
-    writeLedConfig();
+    writeStorage();
 
     // turn of driver
     if (oldState == STATEOFF)
@@ -879,6 +935,33 @@ uint32_t light_CheckLedConfig(light_DriverConfigStruct* pLedConfig)
     VERIFY_NRF_ERROR_CODE(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 3, buffer));
 
     return errCode;
+}
+
+uint32_t light_GetLimits(int8_t* pFloodLimit, int8_t* pSpotLimit)
+{
+    if (pFloodLimit == NULL || pSpotLimit == NULL)
+        return NRF_ERROR_NULL;
+
+    *pFloodLimit = storage.currentLimits.flood;
+    *pSpotLimit = storage.currentLimits.spot;
+
+    return NRF_SUCCESS;
+}
+
+uint32_t light_SetLimits(int8_t floodLimit, int8_t spotLimit)
+{
+    if (floodLimit < 0 || floodLimit > 100 ||
+        spotLimit < 0 || spotLimit > 100)
+        return NRF_ERROR_INVALID_PARAM;
+
+    storage.currentLimits.flood = floodLimit;
+    storage.currentLimits.spot = spotLimit;
+
+    convertCurrentLimit(&storage.currentLimits);
+
+    writeStorage();
+
+    return NRF_SUCCESS;
 }
 
 /**END OF FILE*****************************************************************/

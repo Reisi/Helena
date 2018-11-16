@@ -322,6 +322,24 @@ static void btleLcscpEventHandler(btle_EventStruct * pEvt)
     case BTLE_EVT_LCSCP_CALIB_SENS_OFFSET:
         btleStatus.isSensorCalibrationPending = true;
         return;
+    case BTLE_EVT_LCSCP_REQ_LIMITS:
+    {
+        int8_t floodLimit, spotLimit;
+        if (light_GetLimits(&floodLimit, &spotLimit) == NRF_SUCCESS)
+        {
+            rsp.retCode = BTLE_RET_SUCCESS;
+            rsp.responseParams.currentLimits.flood = floodLimit;
+            rsp.responseParams.currentLimits.spot = spotLimit;
+        }
+        else
+            rsp.retCode = BTLE_RET_FAILED;
+    }   break;
+    case BTLE_EVT_LCSCP_SET_LIMITS:
+        if (light_SetLimits(pEvt->lcscpEventParams.currentLimits.flood,
+                            pEvt->lcscpEventParams.currentLimits.spot) == NRF_SUCCESS)
+            rsp.retCode = BTLE_RET_SUCCESS;
+        else
+            rsp.retCode = BTLE_RET_FAILED;
     default:
         break;
     }

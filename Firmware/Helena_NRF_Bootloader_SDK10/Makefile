@@ -31,7 +31,7 @@ SHAREDFLAGS += \
 	-D__STACK_SIZE=0x600 \
 	-D__HEAP_SIZE=0 \
 	-DBOARD_CUSTOM \
-	-DHELENA_REV21 \
+	-DHELENA_REV22 \
 
 CFLAGS += \
 	-mcpu=cortex-m0 \

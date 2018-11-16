@@ -34,8 +34,8 @@ typedef enum
 
 typedef struct
 {
-    uint8_t floodCount;
-    uint8_t spotCount;
+    uint8_t floodCount;         /**< number of leds connected in series */
+    uint8_t spotCount;          /**< number of leds connected in series */
     light_DriverRevisionEnum rev;
 } light_DriverConfigStruct;
 
@@ -116,6 +116,22 @@ void light_Execute(void);
  * @return      NRF_SUCCESS or an error code
  */
 uint32_t light_CheckLedConfig(light_DriverConfigStruct* pLedConfig);
+
+/** @brief Function to get the current limits
+ *
+ * @param[out]  pFloodLimit current flood limit in %
+ * @param[out]  pSpotLimit  current spot limit in %
+ * @return      NRF_SUCCESS or an error code
+ */
+uint32_t light_GetLimits(int8_t* pFloodLimit, int8_t* pSpotLimit);
+
+/** @brief Function to set the current limits for the leds
+ *
+ * @param[in]   floodLimit  limit in % for flood led
+ * @param[in]   spotLimit   limit in % for spot led
+ * @return      NRF_SUCCESS or an error code
+ */
+uint32_t light_SetLimits(int8_t floodLimit, int8_t spotLimit);
 
 #endif /*_LIGHT_H_*/
 

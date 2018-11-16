@@ -47,7 +47,9 @@ typedef enum
     BLE_LCS_CTRLPT_EVT_REQ_LED_CNFG,    /**< Operator to request current led configuration */
     BLE_LCS_CTRLPT_EVT_CHK_LED_CNFG,    /**< Operator to start the check procedure for led configuration */
     BLE_LCS_CTRLPT_EVT_REQ_SENS_OFF,    /**< Operator to request the current sensor offset values */
-    BLE_LCS_CTRLPT_EVT_CALIB_SENS_OFF   /**< Operator to start the sensor offset calibration */
+    BLE_LCS_CTRLPT_EVT_CALIB_SENS_OFF,  /**< Operator to start the sensor offset calibration */
+    BLE_LCS_CTRLPT_EVT_REQ_LIMITS,      /**< Operator to request the current current limits */
+    BLE_LCS_CTRLPT_EVT_SET_LIMITS,      /**< Operator to set the current limits  */
 } ble_lcs_ctrlpt_evt_type_t;
 
 /**@brief Light Control Control Point mode configuration structure */
@@ -58,13 +60,21 @@ typedef struct
     ble_lcs_light_mode_t config[BLE_LCS_CTRLPT_MAX_NUM_OF_MODES];
 } ble_lcs_ctrlpt_mode_cnfg_t;
 
+/**@brief Light Control Control Point set current limits structure */
+typedef struct
+{
+    int8_t  flood;
+    int8_t  spot;
+} ble_lcs_ctrlpt_set_limits_t;
+
 /**@brief Light Control Service Control Point write values */
 typedef union
 {
-    uint8_t                    mode_list_start;
-    uint8_t                    set_mode;
-    ble_lcs_ctrlpt_mode_cnfg_t mode_config;
-    uint8_t                    group_config;
+    uint8_t                     mode_list_start;
+    uint8_t                     set_mode;
+    ble_lcs_ctrlpt_mode_cnfg_t  mode_config;
+    uint8_t                     group_config;
+    ble_lcs_ctrlpt_set_limits_t current_limits;
 } ble_lcs_ctrlpt_write_val_t;
 
 /**@brief Light Control Service Control Point event */
@@ -87,6 +97,8 @@ typedef enum
     BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG     = 8,
     BLE_LCS_CTRLPT_OP_CODE_REQ_SENS_OFF     = 9,
     BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF   = 10,
+    BLE_LCS_CTRLPT_OP_CODE_REQ_LIMITS       = 11,
+    BLE_LCS_CTRLPT_OP_CODE_SET_LIMITS       = 12,
     BLE_LCS_CTRLPT_OP_CODE_RESPONSE         = 32
 } ble_lcs_ctrlpt_op_code_t;
 
@@ -130,6 +142,13 @@ typedef struct
     int16_t z;
 } ble_lcs_ctrlpt_rsp_param_sens_offset_t;
 
+/**@brief Light Control Control Point Response parameter for  BLE_LCS_CTRLPT_OP_CODE_REQ_LIMITS */
+typedef struct
+{
+    int8_t flood;
+    int8_t spot;
+} ble_lcs_ctrlpt_rsp_param_limits_t;
+
 /**@brief Light Control Control Point response parameter values */
 typedef union
 {
@@ -138,6 +157,7 @@ typedef union
     ble_lcs_ctrlpt_rsp_param_mode_config_t mode_config_list;
     ble_lcs_ctrlpt_rsp_param_led_config_t  led_config;
     ble_lcs_ctrlpt_rsp_param_sens_offset_t sens_offset;
+    ble_lcs_ctrlpt_rsp_param_limits_t      current_limits;
 } ble_lcs_ctrlpt_rsp_params_t;
 
 /**@brief Light Control Control Point Response parameter structure */

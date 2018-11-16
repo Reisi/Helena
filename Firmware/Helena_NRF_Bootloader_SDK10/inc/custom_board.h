@@ -13,6 +13,10 @@
 #define BSP_LED_0       27
 #define BSP_LED_1       10
 #define BSP_BUTTON_0    11
+#elif defined HELENA_REV22
+#define BSP_LED_0       13
+#define BSP_LED_1       12  // dummy pin, not used
+#define BSP_BUTTON_0    9
 #else
 #error "helena board revision not defined"
 #endif
