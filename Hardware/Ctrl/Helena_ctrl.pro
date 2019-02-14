@@ -1,4 +1,4 @@
-update=15/12/2016 13:46:47
+update=01/03/2017 12:55:56
 version=1
 last_client=kicad
 [pcbnew]
@@ -58,3 +58,4 @@ LibName26=opto
 LibName27=atmel
 LibName28=contrib
 LibName29=valves
+LibName30=E:/Data_Arty/Kicad/library/rt_nrf
