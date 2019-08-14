@@ -1,0 +1,3 @@
+(sym_lib_table
+  (lib (name Helena_base_sd-rescue)(type Legacy)(uri ${KIPRJMOD}/Helena_base_sd-rescue.lib)(options "")(descr ""))
+)

@@ -210,7 +210,7 @@ endef
 INCLUDES := $(patsubst %,-I%,$(INC_DIRS))
 
 vpath %.c $(SRC_DIRS)
-vpath %.s $(SRC_DIRS)
+vpath %.S $(SRC_DIRS)
 
 define echosize
 	@'$(SIZE)' $1
@@ -220,7 +220,7 @@ $(DBG_BUILD_DIR)/%.o: %.c | $(DBG_BUILD_DIR)
 	@echo Compiling file: $(notdir $<)
 	@'$(CC)' $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
-$(DBG_BUILD_DIR)/%.o: %.s | $(DBG_BUILD_DIR)
+$(DBG_BUILD_DIR)/%.o: %.S | $(DBG_BUILD_DIR)
 	@echo Compiling file: $(notdir $<)
 	@'$(CC)' $(ASMFLAGS) $(INCLUDES) -c -o $@ $<
 

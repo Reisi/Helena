@@ -1,27 +1,11 @@
-EESchema-LIBRARY Version 2.3
+EESchema-LIBRARY Version 2.4
 #encoding utf-8
 #
-# +3V3
+# Helena_base_sd-rescue_ATTINY85-S-RESCUE-Helena_base_sd
 #
-DEF +3V3 #PWR 0 0 Y Y 1 F P
-F0 "#PWR" 0 -150 50 H I C CNN
-F1 "+3V3" 0 140 50 H V C CNN
-F2 "" 0 0 50 H V C CNN
-F3 "" 0 0 50 H V C CNN
-ALIAS +3.3V
-DRAW
-P 2 0 1 0 -30 50 0 100 N
-P 2 0 1 0 0 0 0 100 N
-P 2 0 1 0 0 100 30 50 N
-X +3V3 1 0 0 0 U 50 50 1 1 W N
-ENDDRAW
-ENDDEF
-#
-# ATTINY85-S-RESCUE-Helena_base_sd
-#
-DEF ATTINY85-S-RESCUE-Helena_base_sd IC 0 40 Y Y 1 F N
+DEF Helena_base_sd-rescue_ATTINY85-S-RESCUE-Helena_base_sd IC 0 40 Y Y 1 F N
 F0 "IC" -1150 400 50 H V C CNN
-F1 "ATTINY85-S-RESCUE-Helena_base_sd" 1000 -400 50 H V C CNN
+F1 "Helena_base_sd-rescue_ATTINY85-S-RESCUE-Helena_base_sd" 1000 -400 50 H V C CNN
 F2 "SO8-200" 950 0 50 H V C CIN
 F3 "" 0 0 50 H V C CNN
 DRAW
@@ -37,11 +21,11 @@ X VCC 8 1350 250 150 L 40 40 1 1 W
 ENDDRAW
 ENDDEF
 #
-# C
+# Helena_base_sd-rescue_C
 #
-DEF C C 0 10 N Y 1 F N
+DEF Helena_base_sd-rescue_C C 0 10 N Y 1 F N
 F0 "C" 25 100 50 H V L CNN
-F1 "C" 25 -100 50 H V L CNN
+F1 "Helena_base_sd-rescue_C" 25 -100 50 H V L CNN
 F2 "" 38 -150 50 H V C CNN
 F3 "" 0 0 50 H V C CNN
 $FPLIST
@@ -59,11 +43,11 @@ X ~ 2 0 -150 110 U 50 50 1 1 P
 ENDDRAW
 ENDDEF
 #
-# CONN_01X01
+# Helena_base_sd-rescue_CONN_01X01
 #
-DEF CONN_01X01 P 0 40 Y N 1 F N
+DEF Helena_base_sd-rescue_CONN_01X01 P 0 40 Y N 1 F N
 F0 "P" 0 100 50 H V C CNN
-F1 "CONN_01X01" 100 0 50 V V C CNN
+F1 "Helena_base_sd-rescue_CONN_01X01" 100 0 50 V V C CNN
 F2 "" 0 0 50 H V C CNN
 F3 "" 0 0 50 H V C CNN
 $FPLIST
@@ -79,11 +63,11 @@ X P1 1 -200 0 150 R 50 50 1 1 P
 ENDDRAW
 ENDDEF
 #
-# CONN_01X06
+# Helena_base_sd-rescue_CONN_01X06
 #
-DEF CONN_01X06 P 0 40 Y N 1 F N
+DEF Helena_base_sd-rescue_CONN_01X06 P 0 40 Y N 1 F N
 F0 "P" 0 350 50 H V C CNN
-F1 "CONN_01X06" 100 0 50 V V C CNN
+F1 "Helena_base_sd-rescue_CONN_01X06" 100 0 50 V V C CNN
 F2 "" 0 0 50 H V C CNN
 F3 "" 0 0 50 H V C CNN
 $FPLIST
@@ -109,11 +93,11 @@ X P6 6 -200 -250 150 R 50 50 1 1 P
 ENDDRAW
 ENDDEF
 #
-# D_Schottky
+# Helena_base_sd-rescue_D_Schottky
 #
-DEF D_Schottky D 0 40 N N 1 F N
+DEF Helena_base_sd-rescue_D_Schottky D 0 40 N N 1 F N
 F0 "D" 0 100 50 H V C CNN
-F1 "D_Schottky" 0 -100 50 H V C CNN
+F1 "Helena_base_sd-rescue_D_Schottky" 0 -100 50 H V C CNN
 F2 "" 0 0 50 H V C CNN
 F3 "" 0 0 50 H V C CNN
 $FPLIST
@@ -133,11 +117,11 @@ X A 2 150 0 100 L 50 50 1 1 P
 ENDDRAW
 ENDDEF
 #
-# D_Schottky_x2_ACom_KKA
+# Helena_base_sd-rescue_D_Schottky_x2_ACom_KKA
 #
-DEF D_Schottky_x2_ACom_KKA D 0 30 Y N 1 F N
+DEF Helena_base_sd-rescue_D_Schottky_x2_ACom_KKA D 0 30 Y N 1 F N
 F0 "D" 50 -100 50 H V C CNN
-F1 "D_Schottky_x2_ACom_KKA" 0 100 50 H V C CNN
+F1 "Helena_base_sd-rescue_D_Schottky_x2_ACom_KKA" 0 100 50 H V C CNN
 F2 "" 0 0 50 H V C CNN
 F3 "" 0 0 50 H V C CNN
 DRAW
@@ -157,11 +141,11 @@ X A 3 0 -200 100 U 50 50 0 1 P
 ENDDRAW
 ENDDEF
 #
-# FB
+# Helena_base_sd-rescue_FB
 #
-DEF FB FB 0 0 N Y 1 F N
+DEF Helena_base_sd-rescue_FB FB 0 0 N Y 1 F N
 F0 "FB" 80 0 50 V V C CNN
-F1 "FB" -75 0 50 V V C CNN
+F1 "Helena_base_sd-rescue_FB" -75 0 50 V V C CNN
 F2 "" -70 0 30 V V C CNN
 F3 "" -10 0 30 H V C CNN
 $FPLIST
@@ -178,24 +162,11 @@ X ~ 2 0 -150 50 U 60 60 1 1 P
 ENDDRAW
 ENDDEF
 #
-# GND
+# Helena_base_sd-rescue_INDUCTOR_SMALL
 #
-DEF GND #PWR 0 0 Y Y 1 F P
-F0 "#PWR" 0 -250 50 H I C CNN
-F1 "GND" 0 -150 50 H V C CNN
-F2 "" 0 0 50 H V C CNN
-F3 "" 0 0 50 H V C CNN
-DRAW
-P 6 0 1 0 0 0 0 -50 50 -50 0 -100 -50 -50 0 -50 N
-X GND 1 0 0 0 D 50 50 1 1 W N
-ENDDRAW
-ENDDEF
-#
-# INDUCTOR_SMALL
-#
-DEF INDUCTOR_SMALL L 0 0 N N 1 F N
+DEF Helena_base_sd-rescue_INDUCTOR_SMALL L 0 0 N N 1 F N
 F0 "L" 0 100 50 H V C CNN
-F1 "INDUCTOR_SMALL" 0 -50 50 H V C CNN
+F1 "Helena_base_sd-rescue_INDUCTOR_SMALL" 0 -50 50 H V C CNN
 F2 "" 0 0 50 H V C CNN
 F3 "" 0 0 50 H V C CNN
 DRAW
@@ -208,11 +179,11 @@ X 2 2 250 0 50 L 30 30 1 1 I
 ENDDRAW
 ENDDEF
 #
-# MCP1703
+# Helena_base_sd-rescue_MCP1703
 #
-DEF MCP1703 U 0 40 Y Y 1 F N
+DEF Helena_base_sd-rescue_MCP1703 U 0 40 Y Y 1 F N
 F0 "U" 250 200 60 H V C CNN
-F1 "MCP1703" -50 200 60 H V C CNN
+F1 "Helena_base_sd-rescue_MCP1703" -50 200 60 H V C CNN
 F2 "" -100 450 60 H V C CNN
 F3 "" -100 450 60 H V C CNN
 DRAW
@@ -223,11 +194,11 @@ X IN 3 -450 0 200 R 50 50 1 1 W
 ENDDRAW
 ENDDEF
 #
-# MCP6482
+# Helena_base_sd-rescue_MCP6482
 #
-DEF MCP6482 U 0 20 Y Y 2 F N
+DEF Helena_base_sd-rescue_MCP6482 U 0 20 Y Y 2 F N
 F0 "U" -50 200 60 H V L CNN
-F1 "MCP6482" -50 -250 60 H V L CNN
+F1 "Helena_base_sd-rescue_MCP6482" -50 -250 60 H V L CNN
 F2 "" 0 0 60 H V C CNN
 F3 "" 0 0 60 H V C CNN
 $FPLIST
@@ -247,11 +218,11 @@ X ~ 7 500 0 300 L 40 40 2 1 O
 ENDDRAW
 ENDDEF
 #
-# Q_NMOS_GSD
+# Helena_base_sd-rescue_Q_NMOS_GSD
 #
-DEF Q_NMOS_GSD Q 0 0 Y N 1 F N
+DEF Helena_base_sd-rescue_Q_NMOS_GSD Q 0 0 Y N 1 F N
 F0 "Q" 200 50 50 H V L CNN
-F1 "Q_NMOS_GSD" 200 -50 50 H V L CNN
+F1 "Helena_base_sd-rescue_Q_NMOS_GSD" 200 -50 50 H V L CNN
 F2 "" 200 100 50 H V C CNN
 F3 "" 0 0 50 H V C CNN
 DRAW
@@ -278,11 +249,11 @@ X D 3 100 200 100 D 50 50 1 1 P
 ENDDRAW
 ENDDEF
 #
-# Q_PNP_BEC
+# Helena_base_sd-rescue_Q_PNP_BEC
 #
-DEF Q_PNP_BEC Q 0 0 Y N 1 F N
+DEF Helena_base_sd-rescue_Q_PNP_BEC Q 0 0 Y N 1 F N
 F0 "Q" 200 50 50 H V L CNN
-F1 "Q_PNP_BEC" 200 -50 50 H V L CNN
+F1 "Helena_base_sd-rescue_Q_PNP_BEC" 200 -50 50 H V L CNN
 F2 "" 200 100 50 H V C CNN
 F3 "" 0 0 50 H V C CNN
 DRAW
@@ -297,11 +268,11 @@ X C 3 100 200 100 D 50 50 1 1 P
 ENDDRAW
 ENDDEF
 #
-# R
+# Helena_base_sd-rescue_R
 #
-DEF R R 0 0 N Y 1 F N
+DEF Helena_base_sd-rescue_R R 0 0 N Y 1 F N
 F0 "R" 80 0 50 V V C CNN
-F1 "R" 0 0 50 V V C CNN
+F1 "Helena_base_sd-rescue_R" 0 0 50 V V C CNN
 F2 "" -70 0 50 V V C CNN
 F3 "" 0 0 50 H V C CNN
 $FPLIST
@@ -315,26 +286,11 @@ X ~ 2 0 -150 50 U 50 50 1 1 P
 ENDDRAW
 ENDDEF
 #
-# VPP
+# Helena_base_sd-rescue_ZENER_3pin_KNCA
 #
-DEF VPP #PWR 0 0 Y Y 1 F P
-F0 "#PWR" 0 -150 50 H I C CNN
-F1 "VPP" 0 150 50 H V C CNN
-F2 "" 0 0 50 H V C CNN
-F3 "" 0 0 50 H V C CNN
-DRAW
-P 2 0 1 0 -30 50 0 100 N
-P 2 0 1 0 0 0 0 100 N
-P 2 0 1 0 0 100 30 50 N
-X VPP 1 0 0 0 U 50 50 1 1 W N
-ENDDRAW
-ENDDEF
-#
-# ZENER_3pin_KNCA
-#
-DEF ZENER_3pin_KNCA D 0 40 N N 1 F N
+DEF Helena_base_sd-rescue_ZENER_3pin_KNCA D 0 40 N N 1 F N
 F0 "D" 0 100 50 H V C CNN
-F1 "ZENER_3pin_KNCA" 0 -100 50 H V C CNN
+F1 "Helena_base_sd-rescue_ZENER_3pin_KNCA" 0 -100 50 H V C CNN
 F2 "" 0 0 60 H V C CNN
 F3 "" 0 0 60 H V C CNN
 $FPLIST
@@ -345,6 +301,50 @@ P 5 0 1 8 -70 50 -50 30 -50 -30 -30 -50 -30 -50 N
 P 5 0 1 0 -50 0 50 50 50 -50 -50 0 -50 0 F
 X A 1 200 0 150 L 50 50 1 1 P
 X K 3 -200 0 150 R 50 50 1 1 P
+ENDDRAW
+ENDDEF
+#
+# power_+3.3V
+#
+DEF power_+3.3V #PWR 0 0 Y Y 1 F P
+F0 "#PWR" 0 -150 50 H I C CNN
+F1 "power_+3.3V" 0 140 50 H V C CNN
+F2 "" 0 0 50 H I C CNN
+F3 "" 0 0 50 H I C CNN
+ALIAS +3.3V
+DRAW
+P 2 0 1 0 -30 50 0 100 N
+P 2 0 1 0 0 0 0 100 N
+P 2 0 1 0 0 100 30 50 N
+X +3V3 1 0 0 0 U 50 50 1 1 W N
+ENDDRAW
+ENDDEF
+#
+# power_GND
+#
+DEF power_GND #PWR 0 0 Y Y 1 F P
+F0 "#PWR" 0 -250 50 H I C CNN
+F1 "power_GND" 0 -150 50 H V C CNN
+F2 "" 0 0 50 H I C CNN
+F3 "" 0 0 50 H I C CNN
+DRAW
+P 6 0 1 0 0 0 0 -50 50 -50 0 -100 -50 -50 0 -50 N
+X GND 1 0 0 0 D 50 50 1 1 W N
+ENDDRAW
+ENDDEF
+#
+# power_VPP
+#
+DEF power_VPP #PWR 0 0 Y Y 1 F P
+F0 "#PWR" 0 -150 50 H I C CNN
+F1 "power_VPP" 0 150 50 H V C CNN
+F2 "" 0 0 50 H I C CNN
+F3 "" 0 0 50 H I C CNN
+DRAW
+P 2 0 1 0 -30 50 0 100 N
+P 2 0 1 0 0 0 0 100 N
+P 2 0 1 0 0 100 30 50 N
+X VPP 1 0 0 0 U 50 50 1 1 W N
 ENDDRAW
 ENDDEF
 #

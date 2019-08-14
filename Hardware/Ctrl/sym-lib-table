@@ -1,0 +1,3 @@
+(sym_lib_table
+  (lib (name Helena_ctrl-rescue)(type Legacy)(uri ${KIPRJMOD}/Helena_ctrl-rescue.lib)(options "")(descr ""))
+)
