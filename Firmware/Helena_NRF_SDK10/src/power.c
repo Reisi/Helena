@@ -23,13 +23,22 @@
 /* Private typedef -----------------------------------------------------------*/
 
 /* Private macros ------------------------------------------------------------*/
-#define RESULT_IN_MILLIVOLT(x)  (((uint32_t)x * 5130) >> 8)
+// macros when using one third input scaling and bandgap reference
+//#define RESULT_IN_MILLIVOLT(x)  (((uint32_t)x * 5130) >> 8)
+#define RESULT_TO_Q6_10(x)      (((uint32_t)x * 5253) >> 8)
+
+// macros when using two third input scaling and VDD/2 reference
+//#define RESULT_TO_Q6_10(x)      ((x * 924549ul) >> 16)
+
+#define SINGLE_CELL_MIN_VOLTAGE ((3000l << 10) / 1000)
+#define SINGLE_CELL_MAX_VOLTAGE ((4300l << 10) / 1000)
+
 
 /* Private defines -----------------------------------------------------------*/
 
 /* Private variables ---------------------------------------------------------*/
 static volatile uint8_t activeFlag;
-static pwr_VoltageStruct voltage;
+static pwr_inputVoltage_t voltage;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -37,7 +46,7 @@ static pwr_VoltageStruct voltage;
 void ADC_IRQHandler(void)
 {
     nrf_adc_conversion_event_clean();
-    voltage.inputVoltage = RESULT_IN_MILLIVOLT(nrf_adc_result_get());
+    voltage.inputVoltage = RESULT_TO_Q6_10(nrf_adc_result_get());
     (void)app_timer_cnt_get(&voltage.timestamp);
     nrf_adc_input_select(NRF_ADC_CONFIG_INPUT_DISABLED);
 }
@@ -67,8 +76,19 @@ static nrf_adc_config_input_t gpioToAin(uint32_t pin)
     }
 }
 
+static uint8_t getNumberOfCells(q6_10_t supplyVoltage)
+{
+    for (uint8_t i = 1; i <= 3; i++)
+    {
+        if (supplyVoltage >= SINGLE_CELL_MIN_VOLTAGE * i &&
+            supplyVoltage <= SINGLE_CELL_MAX_VOLTAGE * i)
+            return i;
+    }
+    return 0;
+}
+
 /* Public functions ----------------------------------------------------------*/
-void pwr_Init()
+uint8_t pwr_Init()
 {
     nrf_adc_config_t adcConfig =
     {
@@ -77,9 +97,14 @@ void pwr_Init()
         .reference =  NRF_ADC_CONFIG_REF_VBG
     };
     nrf_adc_configure(&adcConfig);
+
+    int32_t result = nrf_adc_convert_single(gpioToAin(pBoardConfig->analogVin));
+
     nrf_adc_int_enable(ADC_INTENSET_END_Enabled << ADC_INTENSET_END_Pos);
     sd_nvic_SetPriority(ADC_IRQn, NRF_APP_PRIORITY_LOW);
     sd_nvic_EnableIRQ(ADC_IRQn);
+
+    return getNumberOfCells(RESULT_TO_Q6_10(result));
 }
 
 void pwr_SleepManagement()
@@ -90,15 +115,17 @@ void pwr_SleepManagement()
     }
 }
 
-void pwr_SetActiveFlag(uint8_t mask)
+void pwr_SetActiveFlag(pwr_moduleFlags_t module)
 {
+    uint8_t mask = 1 << module;
     CRITICAL_REGION_ENTER();
     activeFlag |= mask;
     CRITICAL_REGION_EXIT();
 }
 
-void pwr_ClearActiveFlag(uint8_t mask)
+void pwr_ClearActiveFlag(pwr_moduleFlags_t module)
 {
+    uint8_t mask = 1 << module;
     CRITICAL_REGION_ENTER();
     activeFlag &= ~mask;
     CRITICAL_REGION_EXIT();
@@ -115,7 +142,7 @@ uint32_t pwr_StartInputVoltageConversion()
     return NRF_SUCCESS;
 }
 
-uint32_t pwr_GetInputVoltage(pwr_VoltageStruct * pVoltage)
+uint32_t pwr_GetInputVoltage(pwr_inputVoltage_t* pVoltage)
 {
     if (nrf_adc_is_busy())
         return NRF_ERROR_INVALID_STATE;

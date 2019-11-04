@@ -43,7 +43,7 @@ void hmi_DebounceStart(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
 {
     nrf_drv_gpiote_in_event_disable(BUTTON);
     APP_ERROR_CHECK(app_timer_start(hmi_Timer, TIMEBASE, NULL));
-    pwr_SetActiveFlag(1<<pwr_ACTIVEHMI);
+    pwr_SetActiveFlag(pwr_ACTIVEHMI);
 }
 
 void hmi_TimerCallback(void *p_context)
@@ -51,7 +51,7 @@ void hmi_TimerCallback(void *p_context)
     (void)p_context;
 
     hmi_TimebaseFlag = 1;
-    pwr_SetActiveFlag(1<<pwr_ACTIVEHMI);
+    pwr_SetActiveFlag(pwr_ACTIVEHMI);
 }
 
 /* Public functions ----------------------------------------------------------*/
@@ -85,7 +85,7 @@ hmi_ButtonEnum hmi_Debounce()
     if (hmi_TimebaseFlag)
     {
         hmi_TimebaseFlag = 0;
-        pwr_ClearActiveFlag(1<<pwr_ACTIVEHMI);
+        pwr_ClearActiveFlag(pwr_ACTIVEHMI);
         i = nrf_gpio_pin_read(BUTTON);
         i = but_state ^ ~i;
         ct0 = ~(ct0 & i);

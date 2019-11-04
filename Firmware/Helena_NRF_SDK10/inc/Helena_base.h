@@ -58,6 +58,30 @@
 #define MILLIAMPERE_IN_TARGETVALUE(x)    (((uint32_t)x * 5571) >> 16)
 #define REGISTERVALUE_IN_DECIKELVIN(x)   (((uint32_t)x * 5) >> 1)
 
+/********************************************//**
+ * @brief macro to convert temperature register value
+ *
+ * @param  x raw register value
+ * @return temperature in Kelvin in q12_4_t
+ ***********************************************/
+#define REGISTERVALUE_TO_KELVINQ4(x)     ((uint16_t)((uint32_t)x << 2))
+
+/********************************************//**
+ * @brief macro to convert current register value
+ *
+ * @param  x raw current value
+ * @return current in Ampere in q6_10_t
+ ***********************************************/
+#define REGISTERVALUE_TO_AMPEREQ10(x)    ((uint16_t)((x * 1733ul) >> 11))
+
+/********************************************//**
+ * @brief macro to convert current to target value
+ *
+ * @param  x current in Amper in q6_10_t
+ * @return target value in uint8_t
+ ***********************************************/
+#define AMPEREQ10_TO_TARGETVALUE(x)      ((uint8_t)((x * 85ul) >> 10))
+
 /* Exported functions ------------------------------------------------------- */
 
 #endif /* _HELENABASE_H_ */

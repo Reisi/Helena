@@ -13,7 +13,7 @@
 #define VERSION_H_INCLUDED
 
 #define VERSION_MAJOR   0
-#define VERSION_MINOR   13
+#define VERSION_MINOR   14
 #define VERSION_PATCH   0
 
 #define VERSION_LEVEL   "alpha"

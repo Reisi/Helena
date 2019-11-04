@@ -164,7 +164,7 @@ static void com_Receive()
         {
             com_RxDoneFlag = 1;
             com_RXBuffer ^= 1;
-            pwr_SetActiveFlag(1<<pwr_ACTIVECOM);
+            pwr_SetActiveFlag(pwr_ACTIVECOM);
         }
         com_RX.BitCounter = 0;
     }
@@ -427,7 +427,7 @@ const com_MessageStruct *com_Check()
     if (com_RxDoneFlag)
     {
         com_RxDoneFlag = 0;
-        pwr_ClearActiveFlag(1<<pwr_ACTIVECOM);
+        pwr_ClearActiveFlag(pwr_ACTIVECOM);
         crctemp = 0xFF;
         for (i = 0; i < 3 + (com_ReceiveBuffer[com_RXBuffer ^ 1][1] & 0x0F); i++)
             crctemp = _crc_ibutton_update(crctemp, com_ReceiveBuffer[com_RXBuffer ^ 1][i]);

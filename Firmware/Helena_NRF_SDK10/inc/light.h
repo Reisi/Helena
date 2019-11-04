@@ -1,9 +1,7 @@
 /**
   ******************************************************************************
   * @file    light.h
-  * @author  RT
-  * @version V1.1
-  * @date    16/11/07
+  * @author  Thomas Reisnecker
   * @brief   Header for light.c module
   ******************************************************************************
   */
@@ -15,63 +13,60 @@
 /* Includes ------------------------------------------------------------------*/
 #include <stdint.h>
 #include <stdbool.h>
+#include "fpint.h"
 
 /* Exported defines ----------------------------------------------------------*/
-#define LIGHT_STATUS_OVERCURRENT        (1<<0)
-#define LIGHT_STATUS_VOLTAGELIMIT       (1<<1)
-#define LIGHT_STATUS_TEMPERATURELIMIT   (1<<2)
-#define LIGHT_STATUS_DUTYCYCLELIMIT     (1<<3)
 
 /* Exported types ------------------------------------------------------------*/
-typedef int16_t q15_t;
-
 typedef enum
 {
-    LIGHT_DRIVERREV10 = 0,      /**< led driver firmware revision 1.0 */
-    LIGHT_DRIVERREV11,          /**< rev 1.1, added support for dutycyle readback */
+    LIGHT_DRIVERREV10 = 0,      // led driver firmware revision 1.0
+    LIGHT_DRIVERREV11,          // rev 1.1, added support for dutycyle readback
     LIGHT_DRIVERREVUNKNOWN
-} light_DriverRevisionEnum;
+} light_driverRevision_t;
 
 typedef struct
 {
-    uint8_t floodCount;         /**< number of leds connected in series */
-    uint8_t spotCount;          /**< number of leds connected in series */
-    light_DriverRevisionEnum rev;
-} light_DriverConfigStruct;
-
-typedef enum
-{
-    LIGHT_MODEOFF = 0,          /**< light is off */
-    LIGHT_MODEFLOOD,            /**< flood active */
-    LIGHT_MODESPOT,             /**< spot active */
-    LIGHT_MODEFULL,             /**< flood and spot active */
-    LIGHT_MODEFLOODAPC,         /**< flood active, with pitch compensation */
-    LIGHT_MODESPOTAPC,          /**< spot active with pitch compensation */
-    LIGHT_MODEFULLAPC,          /**< flood and spot active with pitch compensation */
-    LIGHT_MODEFLOODCLONED,      /**< flood active, settings cloned to spot driver */
-    LIGHT_MODESPOTCLONED,       /**< spot active, settings cloned to flood driver */
-    LIGHT_MODEFLOODAPCCLONED,   /**< flood active, pitch compensated, settings cloned to spot driver */
-    LIGHT_MODESPOTAPCCLONED,    /**< spot active, pitch compensated, settings cloned to flood driver */
-    LIGHT_MODECNT
-} light_ModeEnum;
+    uint8_t floodCount;         // number of leds connected in series
+    uint8_t spotCount;          // number of leds connected in series
+    light_driverRevision_t rev;
+} light_driverConfig_t;
 
 typedef struct
 {
-    light_ModeEnum mode;        /**< mode */
-    int8_t intensity;           /**< intensity in % or in lux in adaptive modes */
-} light_ModeStruct;
-
-typedef uint8_t light_Status;   /**< light status flag register */
+    bool flood             : 1; // flood active
+    bool spot              : 1; // spot active
+    bool pitchCompensation : 1; // pitch compensation
+    bool cloned            : 1; // output cloned to both drivers, ignored if both flood and spot are enabled
+} light_modeSetup_t;
 
 typedef struct
 {
-    light_Status flood;         /**< status of flood */
-    light_Status spot;          /**< status of spot */
-    uint16_t currentFlood;      /**< flood current in mA */
-    uint16_t currentSpot;       /**< spot current in mA */
-    uint16_t temperature;       /**< temperature in 0.1K */
-    uint16_t inputVoltage;      /**< input voltage in mV */
-} light_StatusStruct;
+    light_modeSetup_t setup;        // light setup
+    union
+    {
+        q8_t intensity;             // valid if pitchCompensation is false
+        uint8_t illuminanceInLux;   // valid if pitchCompensation is true
+    };
+} light_mode_t;
+
+typedef struct
+{
+    bool current     : 1;       // indicating that current limiting is active
+    bool voltage     : 1;       // indicating that voltage limiting is active
+    bool temperature : 1;       // indicating that temperature limiting is active
+    bool dutycycle   : 1;       // indicating that duty cycle limit is active
+} light_limiterActive_t;
+
+typedef struct
+{
+    light_limiterActive_t flood;// status of flood driver
+    light_limiterActive_t spot; // status of spot driver
+    q6_10_t currentFlood;       // flood current in A
+    q6_10_t currentSpot;        // spot current in A
+    q12_4_t temperature;        // temperature K
+    q6_10_t inputVoltage;       // input voltage in V
+} light_status_t;
 
 /* Exported constants --------------------------------------------------------*/
 
@@ -80,15 +75,19 @@ typedef struct
 /* Exported functions ------------------------------------------------------- */
 /** @brief initialization function
  *
- * @param[out]  pLedConfig  LED Configuration
- * @return      NRF_SUCCESS or an error code
+ * @param[in]   cellCnt     cell count of supply battery
+ * @param[out]  pLedConfig  last known LED configuration
+ * @return      NRF_SUCCESS
+ *              NRF_ERROR_INTERNAL if initialization failed
  */
-uint32_t light_Init(light_DriverConfigStruct * pLedConfig);
+uint32_t light_Init(uint8_t cellCnt, light_driverConfig_t * pLedConfig);
 
 /** @brief function to enable / disable light functionality
  *
  * @param[in]   enable  true to enable, false to disable
- * @return      NRF_SUCCESS or NRF_ERROR_INVALID_STATE;
+ * @return      NRF_SUCCESS
+ *              NRF_ERROR_INVALID_STATE
+ *              NRF_ERROR_INTERNAL
  *
  * @note        when light is disabled, no valid data is return by
  *              @ref light_Execute
@@ -100,9 +99,12 @@ uint32_t light_Enable(bool enable);
  * @param[in]   pMode       requested light mode
  * @param[in]   pitch       current light pitch angle
  * @param[out]  ppStatus    actual status of light
- * @return      NRF_SUCCESS or an error code
+ * @return      NRF_SUCCESS
+ *              NRF_ERROR_NULL
+ *              NRF_ERROR_INVALID_STATE if module is not enabled
+ *              NRF_ERROR_INTERNAL
  */
-uint32_t light_UpdateTargets(const light_ModeStruct* pMode, q15_t pitch, const light_StatusStruct* *ppStatus);
+uint32_t light_UpdateTargets(light_mode_t const* pMode, q15_t pitch, light_status_t const** ppStatus);
 
 /** @brief execute function
  *
@@ -114,24 +116,30 @@ void light_Execute(void);
  *
  * @param[out]  pLedConfig configuration of leds
  * @return      NRF_SUCCESS or an error code
+ *
+ * @note        The configuration will be stored in flash and returned at
+ *              future calls of @ref light_Init
  */
-uint32_t light_CheckLedConfig(light_DriverConfigStruct* pLedConfig);
+uint32_t light_CheckLedConfig(light_driverConfig_t* pLedConfig);
 
 /** @brief Function to get the current limits
  *
- * @param[out]  pFloodLimit current flood limit in %
- * @param[out]  pSpotLimit  current spot limit in %
- * @return      NRF_SUCCESS or an error code
+ * @param[out]  pFloodLimit current flood limit
+ * @param[out]  pSpotLimit  current spot limit
+ * @return      NRF_SUCCESS
+ *              NRF_ERROR_NULL
  */
-uint32_t light_GetLimits(int8_t* pFloodLimit, int8_t* pSpotLimit);
+uint32_t light_GetLimits(q8_t* pFloodLimit, q8_t* pSpotLimit);
 
 /** @brief Function to set the current limits for the leds
  *
- * @param[in]   floodLimit  limit in % for flood led
- * @param[in]   spotLimit   limit in % for spot led
- * @return      NRF_SUCCESS or an error code
+ * @param[in]   floodLimit  limit for flood led
+ * @param[in]   spotLimit   limit for spot led
+ * @return      NRF_SUCCESS
+ *
+ * @note        The limits will be stored in flash
  */
-uint32_t light_SetLimits(int8_t floodLimit, int8_t spotLimit);
+uint32_t light_SetLimits(q8_t floodLimit, q8_t spotLimit);
 
 #endif /*_LIGHT_H_*/
 

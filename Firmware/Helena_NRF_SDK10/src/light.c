@@ -1,9 +1,7 @@
 /**
   ******************************************************************************
   * @file    light.c
-  * @author  RT
-  * @version V1.1
-  * @date    16/11/07
+  * @author  Thomas Reisnecker
   * @brief   light management module
   ******************************************************************************
   */
@@ -19,70 +17,71 @@
 #include <stdlib.h>
 
 /* Private defines -----------------------------------------------------------*/
-#define FLOOD               0
-#define SPOT                1
+#define FLOOD                   0
+#define SPOT                    1
 
-#define TIMEBASE_ON         (APP_TIMER_TICKS(10,0))
-#define TIMEBASE_IDLE       (APP_TIMER_TICKS(1000,0))
+#define TIMEBASE_ON             (APP_TIMER_TICKS(10,0))
+#define TIMEBASE_IDLE           (APP_TIMER_TICKS(1000,0))
 
-#define VOLTAGEMIN          6050    // minimum operation input voltage
-#define VOLTAGEMAX          8500    // maximum operation input voltage
-#define CURRENTMAX          3000    // maximum output current
-#define TEMPERATUREMAX      3480    // = 75 °C
+#define VOLTAGEMIN              ((3025ul << 10) / 1000)
+#define VOLTAGEMAX              ((4250ul << 10) / 1000)
 
-#define LUTSIZE             256     // size of look up table for pitch<->comp mapping, must be power of two
-#define CROSSINGSIZE        16      // size of look up table for crossing between spot and flood, must be power of two
-#define PITCHOFFSETSPOT     (155)//((float32_t)0.0296706)
-#define PITCHOFFSETFLOOD    (-155)//((float32_t)-0.0296706)
+#define NUM_OF_CELL_CONFIGS     3   // supporting 1, 2 or 3 cells in series
 
-#define FDSDRVCONFIG        0x073D      /**< number identifying led configuration fds data */
-#define FDSINSTANCE         0x7167      /**< number identifying fds data for light module */
+#define OUTPUTMAX1CELL          0//UINT8_MAX               // max. output (= 3A with correct calibrated driver)
+#define OUTPUTMAX2CELL          UINT8_MAX               // max. output (= 3A with correct calibrated driver
+#define OUTPUTMAX3CELL          0//(UINT8_MAX * 24/30)     // for 3cell out has to be limited to 2.4A
+#define OUTPUT_DEFAULT_LIMT     (UINT8_MAX * 85/100)    // default configurable current limit is set to 85%
 
-#define LIGHT_LEDCONFIG_UNKNOWN         UINT8_MAX
-#define LIGHT_DEFAULT_LIMIT             85
+#define TEMPERATUREMAX          ((75+273) << 4)         // 75 °C in q12_4_t K
+
+#define LUTSIZE                 256     // size of look up table for pitch<->comp mapping, must be power of two
+#define CROSSINGSIZE            16      // size of look up table for crossing between spot and flood, must be power of two
+#define PITCHOFFSETSPOT         155     // 1.7° in q15_t
+#define PITCHOFFSETFLOOD        -155    // -1.7° in q15_t
+
+#define FDSDRVCONFIG            0x073D  // number identifying led configuration fds data
+#define FDSINSTANCE             0x7167  // number identifying fds data for light module
+
+#define LIGHT_LEDCONFIG_UNKNOWN UINT8_MAX
 
 /* Private typedef -----------------------------------------------------------*/
 typedef enum
 {
-    STATEOFF, STATEIDLE, STATEON
-} stateEnum;
-
-//typedef float float32_t;
-typedef int16_t q15_t;
-typedef int16_t q7_8_t;
-typedef uint8_t q8_t;
+    STATEOFF = 0,   // LED driver is shutdown
+    STATEIDLE,      // LED driver in idle mode, no leds, but temperature measurement once per second
+    STATEON         // at least on led is on, processing at 10msec timebase
+} state_t;
 
 typedef struct
 {
     q15_t pitch[LUTSIZE];
     q7_8_t comp[LUTSIZE];
-} compensationLUTStruct;
+} compensationLUT_t;
 
 typedef struct
 {
     q15_t pitch[CROSSINGSIZE + 1];
     q15_t partSpot[CROSSINGSIZE + 1];
     q15_t partFlood[CROSSINGSIZE + 1];
-} crossingLUTStruct;
+} crossingLUT_t;
 
 typedef struct
 {
-    int8_t flood;
-    int8_t spot;
-} currentLimitStruct;
+    q8_t flood;       // flood current limit
+    q8_t spot;        // spot current limit
+} currentLimit_t;
 
 typedef struct
 {
-    light_DriverConfigStruct drvConfig;
-    currentLimitStruct currentLimits;
-} storageDataStruct;
+    light_driverConfig_t drvConfig;
+    currentLimit_t currentLimits;
+} storageData_t;
 
 /* Private macros ------------------------------------------------------------*/
 #define EXTENDED_ERROR_CHECK            /**< activate this flag to get internal error codes */
 
 #ifdef EXTENDED_ERROR_CHECK
-
-#define SIZE_IN_WORDS(x)    ((sizeof(x) + 3) / 4)
 
 #define VERIFY_NRF_ERROR_CODE(err_code) \
 do                                      \
@@ -107,8 +106,13 @@ do                                      \
 
 #endif
 
+#define SIZE_IN_WORDS(x)        ((sizeof(x) + 3) / 4)
+#define sign(x)                 (x < 0 ? -1 : 1)
+//#define OUTPUT_TO_PERCENT(x)    ((x * 100) / 256)
+//#define PERCENT_TO_OUTPUT(x)    ((x * 256) / 100)
+
 /* Private variables ---------------------------------------------------------*/
-static const compensationLUTStruct spotLUT =
+static const compensationLUT_t spotLUT =
 {
     .pitch =
     {
@@ -157,7 +161,7 @@ static const compensationLUTStruct spotLUT =
         5231,5313,5396,5480,5566,5653,5741,5831,5922,6015,6109,6204
     }
 };
-static const compensationLUTStruct floodLUT =
+static const compensationLUT_t floodLUT =
 {
     .pitch =
     {
@@ -207,7 +211,7 @@ static const compensationLUTStruct floodLUT =
         6993,7100,7208,7319,7431,7545,7660,7777,7897,8018
     }
 };
-static const crossingLUTStruct crossingLUT =
+static const crossingLUT_t crossingLUT =
 {
     .pitch =
     {
@@ -226,14 +230,14 @@ static const crossingLUTStruct crossingLUT =
     }
 };
 
-static stateEnum lightState;            /**< current light state */
-static light_StatusStruct lightStatus;  /**< current light status informations */
-static uint8_t targets[2];              /**< current target values */
-static uint8_t currentLimits[2];        /**< current current limits */
-static volatile bool updateFlag;        /**< flags indication if status has to be updated */
-APP_TIMER_DEF(updateTimerId);           /**< timer for timebase */
-static storageDataStruct storage;
-//static light_DriverConfigStruct drvConfig;
+static state_t lightState;              // current light state
+static light_status_t lightStatus;      // current light status informations
+static uint8_t cellCnt;                 // number of in series connected li-ion cells of supply battery
+static uint8_t targets[2];              // current target values
+static uint8_t currentLimits[2];        // current current limits
+static volatile bool updateFlag;        // flags indication if status has to be updated
+APP_TIMER_DEF(updateTimerId);           // timer for timebase
+static storageData_t storage;           // information stored into flash
 
 /* Private functions ---------------------------------------------------------*/
 /** @brief handler for timebase timer event
@@ -242,44 +246,37 @@ static void updateTimerHandler(void *pContext)
 {
     (void)pContext;
     updateFlag = true;
-    pwr_SetActiveFlag(1<<pwr_ACTIVELIGHT);
+    pwr_SetActiveFlag(pwr_ACTIVELIGHT);
 }
 
 /** @brief function to read data of i2c Step down converter
  *
  * @param[out]  pStatus converter status data
- * @return      NRF_SUCCESS or error code
- *
+ * @return      NRF_SUCCESS or error code *
  */
-static uint32_t readConverterData(light_StatusStruct* pStatus)
+static uint32_t readConverterData(light_status_t* pStatus)
 {
     uint8_t Buffer[6];
     uint32_t errCode;
     uint16_t i;
-    static uint32_t temperature;
+    static q20_12_t temperature;
 
     errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_STATUSSDL_H, 6, Buffer);
     if(errCode == NRF_SUCCESS)
     {
-        if (Buffer[0]>>4)
-            pStatus->flood |= LIGHT_STATUS_DUTYCYCLELIMIT;
-        else
-            pStatus->flood &= ~LIGHT_STATUS_DUTYCYCLELIMIT;
+        pStatus->flood.dutycycle = Buffer[0]>>4 ? true : false;
+        pStatus->spot.dutycycle = Buffer[2]>>4 ? true : false;
         i = ((Buffer[0] & 0x0F)<<8) | Buffer[1];
-        pStatus->currentFlood = REGISTERVALUE_IN_MILLIAMPERE(i);
-        if (Buffer[2]>>4)
-            pStatus->spot |= LIGHT_STATUS_DUTYCYCLELIMIT;
-        else
-            pStatus->spot &= ~LIGHT_STATUS_DUTYCYCLELIMIT;
-        i = ((Buffer[2] & 0x0F)<<8) | Buffer[2];
-        pStatus->currentSpot = REGISTERVALUE_IN_MILLIAMPERE(i);
+        pStatus->currentFlood = REGISTERVALUE_TO_AMPEREQ10(i);
+        i = ((Buffer[2] & 0x0F)<<8) | Buffer[3];
+        pStatus->currentSpot = REGISTERVALUE_TO_AMPEREQ10(i);
         i = (Buffer[4]<<8) | Buffer[5];
         if (temperature == 0)
-            temperature = (REGISTERVALUE_IN_DECIKELVIN(i) << 8);
+            temperature = (REGISTERVALUE_TO_KELVINQ4(i) << 8);
         else
         {
             temperature -= temperature >> 8;
-            temperature += REGISTERVALUE_IN_DECIKELVIN(i);
+            temperature += REGISTERVALUE_TO_KELVINQ4(i);
         }
         pStatus->temperature = (temperature + 128) >> 8;
     }
@@ -322,7 +319,7 @@ static q15_t limitPitch(q15_t pitch)
  * @return              relative output current
  *
  */
-static q8_t getTargetFromLUT(const compensationLUTStruct * pLut, q15_t pitch, q7_8_t intensity)
+static q8_t getTargetFromLUT(const compensationLUT_t* pLut, q15_t pitch, q7_8_t intensity)
 {
     uint_fast8_t i, j;
     int32_t target;
@@ -404,11 +401,12 @@ static void getIntensitiesFromLUT(q15_t pitch, q7_8_t intensity, q7_8_t* pIntens
  * @param[out]  pFlood  target current for flood
  * @param[out]  pSpot   target current for spot
  */
-static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t *pFlood, uint8_t *pSpot)
+static void calculateTarget(const light_mode_t *pMode, q15_t pitch, uint8_t *pFlood, uint8_t *pSpot)
 {
     q15_t pitchSpot;
     q15_t pitchFlood;
     int32_t pitchCalc;
+    q7_8_t illuminanceInLux;
 
     // if spot and flood leds are present, add pitch offset due to tilted optics
     if (storage.drvConfig.floodCount != 0 && storage.drvConfig.spotCount != 0)
@@ -434,70 +432,41 @@ static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t 
     pitchFlood = limitPitch(pitchFlood);
     pitchSpot = limitPitch(pitchSpot);
 
-    switch (pMode->mode)
+    *pFlood = 0;
+    *pSpot = 0;
+    if (pMode->setup.pitchCompensation)
     {
-    case LIGHT_MODEFLOOD:
-    case LIGHT_MODEFLOODCLONED:
-        if (pMode->intensity >= 100)
-            *pFlood = 255;
-        else
-            *pFlood = ((uint16_t)pMode->intensity << 8) / 100;
-        if (pMode->mode == LIGHT_MODEFLOODCLONED)
-            *pSpot = *pFlood;
-        else
-            *pSpot = 0;
-        break;
-    case LIGHT_MODESPOT:
-    case LIGHT_MODESPOTCLONED:
-        if (pMode->intensity >= 100)
-            *pSpot = 255;
-        else
-            *pSpot = ((uint16_t)pMode->intensity << 8) / 100;
-        if (pMode->mode == LIGHT_MODESPOTCLONED)
-            *pFlood = *pSpot;
-        else
-            *pFlood = 0;
-        break;
-    case LIGHT_MODEFULL:
-        *pFlood = 0;
-        if (pMode->intensity >= 100)
+        illuminanceInLux = pMode->illuminanceInLux > INT8_MAX ? INT8_MAX : pMode->illuminanceInLux;
+        illuminanceInLux <<= 8;
+        if (pMode->setup.flood && pMode->setup.spot)
         {
-            *pSpot = 255;
-            *pFlood = 255;
+            q7_8_t intensityFlood, intensitySpot;
+            getIntensitiesFromLUT(limitPitch(pitch), illuminanceInLux, &intensityFlood, &intensitySpot);
+            *pFlood = getTargetFromLUT(&floodLUT, pitchFlood, intensityFlood);
+            *pSpot = getTargetFromLUT(&spotLUT, pitchSpot, intensitySpot);
         }
         else
         {
-            *pSpot = ((uint16_t)pMode->intensity << 8) / 100;
-            *pFlood = *pSpot;
+            if (pMode->setup.flood)
+            {
+                *pFlood = getTargetFromLUT(&floodLUT, pitchFlood, illuminanceInLux);
+                if (pMode->setup.cloned)
+                    *pSpot = *pFlood;
+            }
+            if (pMode->setup.spot)
+            {
+                *pSpot = getTargetFromLUT(&spotLUT, pitchSpot, illuminanceInLux);
+                if (pMode->setup.cloned)
+                    *pFlood = *pSpot;
+            }
         }
-        break;
-    case LIGHT_MODEFLOODAPC:
-    case LIGHT_MODEFLOODAPCCLONED:
-        *pFlood = getTargetFromLUT(&floodLUT, pitchFlood, (q7_8_t)pMode->intensity << 8);
-        if (pMode->mode == LIGHT_MODEFLOODAPCCLONED)
-            *pSpot = *pFlood;
-        else
-            *pSpot = 0;
-        break;
-    case LIGHT_MODESPOTAPC:
-    case LIGHT_MODESPOTAPCCLONED:
-        *pSpot = getTargetFromLUT(&spotLUT, pitchSpot, (q7_8_t)pMode->intensity << 8);
-        if (pMode->mode == LIGHT_MODESPOTAPCCLONED)
-            *pFlood = *pSpot;
-        else
-            *pFlood = 0;
-        break;
-    case LIGHT_MODEFULLAPC:
+    }
+    else
     {
-        q7_8_t intensityFlood, intensitySpot;
-        getIntensitiesFromLUT(limitPitch(pitch), (q7_8_t)pMode->intensity << 8, &intensityFlood, &intensitySpot);
-        *pFlood = getTargetFromLUT(&floodLUT, pitchFlood, intensityFlood);
-        *pSpot = getTargetFromLUT(&spotLUT, pitchSpot, intensitySpot);
-    }   break;
-    default:
-        *pFlood = 0;
-        *pSpot = 0;
-        break;
+        if (pMode->setup.flood || (pMode->setup.spot && pMode->setup.cloned))
+            *pFlood = pMode->intensity;
+        if (pMode->setup.spot || (pMode->setup.flood && pMode->setup.cloned))
+            *pSpot = pMode->intensity;
     }
 }
 
@@ -507,54 +476,81 @@ static void calculateTarget(const light_ModeStruct *pMode, q15_t pitch, uint8_t 
  * @param[in/out]   pFlood  flood current
  * @param[in/out]   pSpot   spot current
  */
-static void limiter(light_StatusStruct * pStatus, uint8_t *pFlood, uint8_t *pSpot)
+static void limiter(light_status_t * pStatus, uint8_t *pFlood, uint8_t *pSpot)
 {
-    uint8_t limit;
+    uint8_t voltageLimit, temperatureLimit;
 
-    // clear status flags
-    pStatus->flood &= ~(LIGHT_STATUS_OVERCURRENT | LIGHT_STATUS_VOLTAGELIMIT | LIGHT_STATUS_TEMPERATURELIMIT);
-    pStatus->spot &= ~(LIGHT_STATUS_OVERCURRENT | LIGHT_STATUS_VOLTAGELIMIT | LIGHT_STATUS_TEMPERATURELIMIT);
+    // calculate voltage limit
+    if (cellCnt == 0)
+        voltageLimit = 0;
+    else
+    {
+        uint16_t normVoltage = pStatus->inputVoltage / cellCnt; // normalize input voltage to 1 cell
+        if (normVoltage >= VOLTAGEMAX)                          // voltage to high
+            voltageLimit = 0;
+        else if (normVoltage >= (VOLTAGEMIN + 126 + 127*2))     // above limiting range
+            voltageLimit = 255;
+        else if (normVoltage >= (VOLTAGEMIN + 126))             // within flat limiting range
+            voltageLimit = 128 + ((normVoltage - (VOLTAGEMIN + 126)) >> 1);
+        else if (normVoltage >= VOLTAGEMIN)                     // within steep limiting range
+            voltageLimit = 2 + (normVoltage - VOLTAGEMIN);
+        else                                                    // voltage to low
+            voltageLimit = 2;
+    }
 
-    /*// temporary to protect XHP50 in prototype due to broken PCB
-    limit = MILLIAMPERE_IN_TARGETVALUE(500);
-    if (*pFlood > limit) {*pFlood = limit; pStatus->flood |= LIGHT_STATUS_OVERCURRENT;}
-    limit = CURRENTMAX;
-    if (*pSpot > limit) {*pSpot = limit; pStatus->spot |= LIGHT_STATUS_OVERCURRENT;}*/
+    // calculate temperature limit
+    if (pStatus->temperature > TEMPERATUREMAX)
+        temperatureLimit = 0;                                      // temperature is to high, shut of
+    else if (pStatus->temperature <= TEMPERATUREMAX - 256)
+        temperatureLimit = 255;                                    // no limitation necessary
+    else
+        temperatureLimit = TEMPERATUREMAX - pStatus->temperature;  // limiting
 
-    // check current limit first
+    // limit flood
+    pStatus->flood.current = false;         // clear all flags first
+    pStatus->flood.voltage = false;
+    pStatus->flood.temperature = false;
     if (*pFlood > currentLimits[FLOOD])
     {
         *pFlood = currentLimits[FLOOD];
-        pStatus->flood |= LIGHT_STATUS_OVERCURRENT;
+        pStatus->flood.current = true;
     }
+    if (*pFlood > voltageLimit)
+    {
+        *pFlood = voltageLimit;
+        pStatus->flood.current = false;     // clear flag in case it has been set before
+        pStatus->flood.voltage = true;
+    }
+    if (*pFlood > temperatureLimit)
+    {
+        *pFlood = temperatureLimit;
+        pStatus->flood.current = false;     // clear flag in case it has been set before
+        pStatus->flood.voltage = false;     // clear flag in case it has been set before
+        pStatus->flood.temperature = true;
+    }
+
+    // limit spot
+    pStatus->spot.current = false;
+    pStatus->spot.voltage = false;
+    pStatus->spot.temperature = false;
     if (*pSpot > currentLimits[SPOT])
     {
         *pSpot = currentLimits[SPOT];
-        pStatus->spot |= LIGHT_STATUS_OVERCURRENT;
+        pStatus->spot.current = true;
     }
-
-    // check input voltage limit
-    if (pStatus->inputVoltage >= VOLTAGEMAX)                // voltage to high
-        limit = 0;
-    else if (pStatus->inputVoltage >= (VOLTAGEMIN + 1024 - 8))  // no limiting needed
-        limit = 255;
-    else if (pStatus->inputVoltage >= VOLTAGEMIN)           // limiting needed
-        limit = 2 + ((pStatus->inputVoltage - VOLTAGEMIN) >> 2);
-    else                                                    // voltage to low
-        limit = 2;
-
-    if (*pFlood > limit) {*pFlood = limit; pStatus->flood |= LIGHT_STATUS_VOLTAGELIMIT;}
-    if (*pSpot > limit) {*pSpot = limit; pStatus->spot |= LIGHT_STATUS_VOLTAGELIMIT;}
-
-    // check temperature limit
-    if (pStatus->temperature > TEMPERATUREMAX)
-        limit = 0;
-    else if (pStatus->temperature <= (TEMPERATUREMAX - 256))
-        limit = 255;
-    else
-        limit = (TEMPERATUREMAX - pStatus->temperature);
-    if (*pFlood > limit) {*pFlood = limit; pStatus->flood |= LIGHT_STATUS_TEMPERATURELIMIT;}
-    if (*pSpot > limit) {*pSpot = limit; pStatus->spot |= LIGHT_STATUS_TEMPERATURELIMIT;}
+    if (*pSpot > voltageLimit)
+    {
+        *pSpot = voltageLimit;
+        pStatus->spot.current = false;
+        pStatus->spot.voltage = true;
+    }
+    if (*pSpot > temperatureLimit)
+    {
+        *pSpot = temperatureLimit;
+        pStatus->spot.current = false;
+        pStatus->spot.voltage = false;
+        pStatus->spot.temperature = true;
+    }
 }
 
 /** @brief fds event handler
@@ -585,7 +581,7 @@ static void fdsEventHandler(ret_code_t errCode, fds_cmd_id_t cmd, fds_record_id_
     }
 }
 
-static void validateLedConfig(light_DriverConfigStruct* pLedConfig)
+static void validateLedConfig(light_driverConfig_t* pLedConfig)
 {
     // if both driver led counts are not known, use default setup
     if (pLedConfig->floodCount == LIGHT_LEDCONFIG_UNKNOWN && pLedConfig->spotCount == LIGHT_LEDCONFIG_UNKNOWN)
@@ -600,23 +596,21 @@ static void validateLedConfig(light_DriverConfigStruct* pLedConfig)
         pLedConfig->spotCount = 2;
 }
 
-static void convertCurrentLimit(currentLimitStruct* pLimits)
+static void validateCurrentLimit(currentLimit_t* pLimits)
 {
-    int16_t limit;
+    q8_t designLimit;
 
-    limit = ((int16_t)pLimits->flood * MILLIAMPERE_IN_TARGETVALUE(CURRENTMAX)) / 100;
-    if (limit < 0)
-        limit = 0;
-    if (limit > MILLIAMPERE_IN_TARGETVALUE(CURRENTMAX))
-        limit = MILLIAMPERE_IN_TARGETVALUE(CURRENTMAX);
-    currentLimits[FLOOD] = limit;
+    designLimit = cellCnt == 1 ? OUTPUTMAX1CELL :
+                  cellCnt == 2 ? OUTPUTMAX2CELL :
+                  cellCnt == 3 ? OUTPUTMAX3CELL : 0;
 
-    limit = ((int16_t)pLimits->spot * MILLIAMPERE_IN_TARGETVALUE(CURRENTMAX)) / 100;
-    if (limit < 0)
-        limit = 0;
-    if (limit > MILLIAMPERE_IN_TARGETVALUE(CURRENTMAX))
-        limit = MILLIAMPERE_IN_TARGETVALUE(CURRENTMAX);
-    currentLimits[SPOT] = limit;
+    if (pLimits->flood > designLimit)
+        pLimits->flood = designLimit;
+    currentLimits[FLOOD] = pLimits->flood;
+
+    if (pLimits->spot > designLimit)
+        pLimits->spot = designLimit;
+    currentLimits[SPOT] = pLimits->spot;
 }
 
 static void readStorage()
@@ -626,13 +620,13 @@ static void readStorage()
     fds_find_token_t token;
     fds_record_desc_t descriptor;
     fds_record_key_t key = {.type = FDSDRVCONFIG, .instance = FDSINSTANCE};
-    storageDataStruct* pData;
+    storageData_t* pData;
 
     // set default values
     storage.drvConfig.floodCount = LIGHT_LEDCONFIG_UNKNOWN;
     storage.drvConfig.spotCount = LIGHT_LEDCONFIG_UNKNOWN;
-    storage.currentLimits.flood = LIGHT_DEFAULT_LIMIT;
-    storage.currentLimits.spot = LIGHT_DEFAULT_LIMIT;
+    storage.currentLimits.flood = OUTPUT_DEFAULT_LIMT;
+    storage.currentLimits.spot = OUTPUT_DEFAULT_LIMT;
 
     errCode = fds_find(key.type, key.instance, &descriptor, &token);
     if (errCode == NRF_SUCCESS)
@@ -641,7 +635,7 @@ static void readStorage()
         errCode = fds_open(&descriptor, &record);
         if (errCode == NRF_SUCCESS)
         {
-            pData = (storageDataStruct*)record.p_data;
+            pData = (storageData_t*)record.p_data;
             storage.drvConfig.floodCount = pData->drvConfig.floodCount;
             storage.drvConfig.spotCount = pData->drvConfig.spotCount;
             // limits has been added supplementary, check size to be sure to not read flimflam from old data
@@ -659,7 +653,7 @@ static void readStorage()
 
     // set default values if led count isn't known
     validateLedConfig(&storage.drvConfig);
-    convertCurrentLimit(&storage.currentLimits);
+    validateCurrentLimit(&storage.currentLimits);
 }
 
 static void writeStorage()
@@ -685,7 +679,7 @@ static void writeStorage()
         APP_ERROR_HANDLER(errCode);
 }
 
-static light_DriverRevisionEnum driverRevCheck()
+static light_driverRevision_t driverRevCheck()
 {
     uint32_t errCode;
     uint8_t buffer[4];
@@ -710,7 +704,7 @@ static light_DriverRevisionEnum driverRevCheck()
 }
 
 /* Public functions ----------------------------------------------------------*/
-uint32_t light_Init(light_DriverConfigStruct * pLedConfig)
+uint32_t light_Init(uint8_t supplyCellCnt, light_driverConfig_t* pLedConfig)
 {
     // create timer for timebase
     VERIFY_NRF_ERROR_CODE(app_timer_create(&updateTimerId, APP_TIMER_MODE_REPEATED, updateTimerHandler));
@@ -718,7 +712,7 @@ uint32_t light_Init(light_DriverConfigStruct * pLedConfig)
     // initialize TWI interface
     VERIFY_NRF_ERROR_CODE(i2c_Init());
 
-    // enable workaround for TWI lock up in tev2 ICs
+    // enable workaround for TWI lock up in rev2 ICs
     i2c_EnableAutoRecover(true);
 
     lightState = STATEOFF;
@@ -729,6 +723,9 @@ uint32_t light_Init(light_DriverConfigStruct * pLedConfig)
     // register to fds module
     VERIFY_NRF_ERROR_CODE(fds_register(fdsEventHandler));
     VERIFY_NRF_ERROR_CODE(fds_init());
+
+    // save cell count
+    cellCnt = supplyCellCnt;
 
     // read led configuration
     readStorage();
@@ -766,7 +763,7 @@ uint32_t light_Enable(bool enable)
     return NRF_SUCCESS;
 }
 
-uint32_t light_UpdateTargets(const light_ModeStruct* pMode, q15_t pitch, const light_StatusStruct* *ppStatus)
+uint32_t light_UpdateTargets(const light_mode_t* pMode, q15_t pitch, const light_status_t* *ppStatus)
 {
     if (pMode == NULL || ppStatus == NULL)
         return NRF_ERROR_NULL;
@@ -775,13 +772,13 @@ uint32_t light_UpdateTargets(const light_ModeStruct* pMode, q15_t pitch, const l
         return NRF_ERROR_INVALID_STATE;
 
     // check if timer has to be changed
-    if (pMode->mode != LIGHT_MODEOFF && lightState == STATEIDLE)
+    if ((pMode->setup.flood || pMode->setup.spot) && lightState == STATEIDLE)
     {
         VERIFY_NRF_ERROR_CODE(app_timer_stop(updateTimerId));
         VERIFY_NRF_ERROR_CODE(app_timer_start(updateTimerId, TIMEBASE_ON, NULL));
         lightState = STATEON;
     }
-    else if (pMode->mode == LIGHT_MODEOFF && lightState == STATEON)
+    else if ((!pMode->setup.flood && !pMode->setup.spot) && lightState == STATEON)
     {
         VERIFY_NRF_ERROR_CODE(app_timer_stop(updateTimerId));
         VERIFY_NRF_ERROR_CODE(app_timer_start(updateTimerId, TIMEBASE_IDLE, NULL));
@@ -791,18 +788,24 @@ uint32_t light_UpdateTargets(const light_ModeStruct* pMode, q15_t pitch, const l
         VERIFY_NRF_ERROR_CODE(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_TARGETSDL, 2, targets));
     }
 
-    if (pMode->mode != LIGHT_MODEOFF)
+    if (pMode->setup.flood || pMode->setup.spot)
         calculateTarget(pMode, pitch, &targets[FLOOD], &targets[SPOT]);
 
     // clear error flags if leds are off
-    if (pMode->mode == LIGHT_MODEOFF ||
-        pMode->mode == LIGHT_MODESPOT || pMode->mode == LIGHT_MODESPOTAPC ||
-        pMode->mode == LIGHT_MODESPOTCLONED || pMode->mode == LIGHT_MODESPOTAPCCLONED)
-        lightStatus.flood = 0;
-    if (pMode->mode == LIGHT_MODEOFF ||
-        pMode->mode == LIGHT_MODEFLOOD || pMode->mode == LIGHT_MODEFLOODAPC ||
-        pMode->mode == LIGHT_MODEFLOODCLONED || pMode->mode == LIGHT_MODEFLOODAPCCLONED)
-        lightStatus.spot = 0;
+    if (!pMode->setup.flood)
+    {
+        lightStatus.flood.current = false;
+        lightStatus.flood.voltage = false;
+        lightStatus.flood.temperature = false;
+        lightStatus.flood.dutycycle = false;
+    }
+    if (!pMode->setup.spot)
+    {
+        lightStatus.spot.current = false;
+        lightStatus.spot.voltage = false;
+        lightStatus.spot.temperature = false;
+        lightStatus.spot.dutycycle = false;
+    }
     *ppStatus = &lightStatus;
 
     return NRF_SUCCESS;
@@ -810,31 +813,35 @@ uint32_t light_UpdateTargets(const light_ModeStruct* pMode, q15_t pitch, const l
 
 void light_Execute()
 {
-#define LOWPASSTHRESH   100     // threshold in mV, when low pass filter is bypassed
-#define sign(x)     (x < 0 ? -1 : 1)
-    static uint32_t voltageFiltered;
+    static q18_14_t voltageFiltered;
 
     if (!updateFlag)
         return;
 
     updateFlag = false;
-    pwr_ClearActiveFlag(1<<pwr_ACTIVELIGHT);
+    pwr_ClearActiveFlag(pwr_ACTIVELIGHT);
 
     // check if input voltage value is up to date
-    pwr_VoltageStruct voltage;
-    if (pwr_GetInputVoltage(&voltage) == NRF_SUCCESS)   // if this fails, conversion is already in progress, no need to check
+    pwr_inputVoltage_t voltage;
+    if (pwr_GetInputVoltage(&voltage) == NRF_SUCCESS)       // if this fails, conversion is already in progress, no need to check
     {
         uint32_t timestamp;
         (void)app_timer_cnt_get(&timestamp);
         (void)app_timer_cnt_diff_compute(timestamp, voltage.timestamp, &timestamp);
-        if (timestamp > TIMEBASE_ON)                    // value to old, get new one
+        if (timestamp > TIMEBASE_ON)                        // value to old, get new one
             pwr_StartInputVoltageConversion();
     }
 
-    APP_ERROR_CHECK(readConverterData(&lightStatus));                        // read current converter status and data
+    APP_ERROR_CHECK(readConverterData(&lightStatus));       // read current converter status and data while conversion is in progress
 
-    while (pwr_GetInputVoltage(&voltage) != NRF_SUCCESS);                    // wait for conversion to be finished
+    while (pwr_GetInputVoltage(&voltage) != NRF_SUCCESS);   // conversion should be finished, if not wait
 
+    // filter input voltage, a dynamic filter is used with high time constant
+    // for small changes and low time constant for big changes. This way the
+    // limiter does not produce flickering output if the supply voltage drops
+    // due to draining battery, but still reacts fast enough on big voltage
+    // drops in adaptive mode.
+    /// to do: filter and limiter works fine in with 2 cells, but with 1 and 3 cells?
     int_fast16_t diff = (voltageFiltered >> 4) - (int_fast16_t)voltage.inputVoltage;
     for (uint_fast8_t i = 0; i < 4 ; i++)
     {
@@ -847,32 +854,22 @@ void light_Execute()
     }
     lightStatus.inputVoltage = voltageFiltered >> 4;
 
-    /*if (voltageFiltered == 0)                                                // in case of filter is empty or
-        voltageFiltered = voltage.inputVoltage << 4;                         // use input directly
-    else if ((voltageFiltered >> 4) > (voltage.inputVoltage + LOWPASSTHRESH))// massive input voltage drop
-        voltageFiltered = (voltage.inputVoltage + LOWPASSTHRESH) << 4;       // bypass filter
-    else if ((voltageFiltered >> 4) < (voltage.inputVoltage - LOWPASSTHRESH))// massive input voltage increase
-        voltageFiltered = (voltage.inputVoltage - LOWPASSTHRESH) << 4;       // bypass filter
-    else                                                                     // otherwise use a low pass filter for input voltage
-        voltageFiltered = voltageFiltered - (voltageFiltered >> 4) + voltage.inputVoltage;
-    lightStatus.inputVoltage = voltageFiltered >> 4;*/
-
-    if (targets[FLOOD] == 0 && targets[SPOT] == 0)              // if light is off, nothing more to do
+    if (targets[FLOOD] == 0 && targets[SPOT] == 0)          // if light is off, nothing more to do
         return;
 
     uint8_t limitedTargets[2];
 
-    limitedTargets[FLOOD] = targets[FLOOD];
+    limitedTargets[FLOOD] = targets[FLOOD];                 // run targets through limiter
     limitedTargets[SPOT] = targets[SPOT];
     limiter(&lightStatus, &limitedTargets[FLOOD], &limitedTargets[SPOT]);
-
+                                                            // and finally send to driver
     APP_ERROR_CHECK(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_TARGETSDL, 2, limitedTargets));
 }
 
-uint32_t light_CheckLedConfig(light_DriverConfigStruct* pLedConfig)
+uint32_t light_CheckLedConfig(light_driverConfig_t* pLedConfig)
 {
     uint8_t buffer[3];
-    stateEnum oldState;
+    state_t oldState;
     uint32_t errCode;
 
     if (lightState == STATEON)
@@ -937,7 +934,7 @@ uint32_t light_CheckLedConfig(light_DriverConfigStruct* pLedConfig)
     return errCode;
 }
 
-uint32_t light_GetLimits(int8_t* pFloodLimit, int8_t* pSpotLimit)
+uint32_t light_GetLimits(q8_t* pFloodLimit, q8_t* pSpotLimit)
 {
     if (pFloodLimit == NULL || pSpotLimit == NULL)
         return NRF_ERROR_NULL;
@@ -948,16 +945,12 @@ uint32_t light_GetLimits(int8_t* pFloodLimit, int8_t* pSpotLimit)
     return NRF_SUCCESS;
 }
 
-uint32_t light_SetLimits(int8_t floodLimit, int8_t spotLimit)
+uint32_t light_SetLimits(q8_t floodLimit, q8_t spotLimit)
 {
-    if (floodLimit < 0 || floodLimit > 100 ||
-        spotLimit < 0 || spotLimit > 100)
-        return NRF_ERROR_INVALID_PARAM;
-
     storage.currentLimits.flood = floodLimit;
     storage.currentLimits.spot = spotLimit;
 
-    convertCurrentLimit(&storage.currentLimits);
+    validateCurrentLimit(&storage.currentLimits);
 
     writeStorage();
 
