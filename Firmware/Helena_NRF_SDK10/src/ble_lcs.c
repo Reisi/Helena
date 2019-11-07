@@ -13,11 +13,11 @@
 #include <string.h>
 
 /* Private defines -----------------------------------------------------------*/
-#define BLE_UUID_LCS_LM_CHARACTERISTIC 0x0102   /**< The UUID of the light measurement characteristic */
-#define BLE_UUID_LCS_LF_CHARACTERISTIC 0x0103   /**< The UUID of the light feature characteristic */
+#define BLE_UUID_LCS_LM_CHARACTERISTIC      0x0102  /**< The UUID of the light measurement characteristic */
+#define BLE_UUID_LCS_LF_CHARACTERISTIC      0x0103  /**< The UUID of the light feature characteristic */
 
-#define BLR_LCS_LM_MIN_CHAR_LEN            3    /**< minimum length of the light measurement characteristic */
-#define BLR_LCS_LM_MAX_CHAR_LEN            14   /**< maximum length of the light measurement characteristic */
+#define BLE_LCS_LM_MIN_CHAR_LEN             3       /**< minimum length of the light measurement characteristic */
+#define BLE_LCS_LM_MAX_CHAR_LEN             14      /**< maximum length of the light measurement characteristic */
 
 /* Private typedef -----------------------------------------------------------*/
 
@@ -31,7 +31,12 @@ static uint32_t light_measurement_char_add(ble_lcs_t * p_lcs, const ble_lcs_init
     ble_gatts_attr_t    attr_char_value;
     ble_gatts_attr_md_t attr_md;
     ble_uuid_t          ble_uuid;
-    uint8_t             init_value[BLR_LCS_LM_MIN_CHAR_LEN] = {0, 0, p_lcs_init->initial_mode.type};
+    uint8_t             init_value[BLE_LCS_LM_MIN_CHAR_LEN];
+    union
+    {
+        ble_lcs_light_setup_t raw;
+        uint8_t               encoded;
+    } setup;
 
     memset(&cccd_md, 0, sizeof(ble_gatts_attr_md_t));
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&cccd_md.read_perm);
@@ -57,12 +62,16 @@ static uint32_t light_measurement_char_add(ble_lcs_t * p_lcs, const ble_lcs_init
     attr_md.wr_auth = 0;
     attr_md.vlen    = 1;
 
+    memset(init_value, 0, sizeof(init_value));
+    setup.raw = p_lcs_init->initial_mode.setup;
+    init_value[BLE_LCS_LM_MIN_CHAR_LEN - 1] = setup.encoded;
+
     memset(&attr_char_value, 0, sizeof(ble_gatts_attr_t));
     attr_char_value.p_uuid    = &ble_uuid;
     attr_char_value.p_attr_md = &attr_md;
-    attr_char_value.init_len  = BLR_LCS_LM_MIN_CHAR_LEN;
+    attr_char_value.init_len  = BLE_LCS_LM_MIN_CHAR_LEN;
     attr_char_value.init_offs = 0;
-    attr_char_value.max_len   = BLR_LCS_LM_MAX_CHAR_LEN;
+    attr_char_value.max_len   = BLE_LCS_LM_MAX_CHAR_LEN;
     attr_char_value.p_value   = init_value;
 
     return sd_ble_gatts_characteristic_add(p_lcs->service_handle,
@@ -180,6 +189,12 @@ static uint8_t lm_encode(const ble_lcs_lm_t * p_lcs_lm, const ble_lcs_lf_t * p_f
         uint16_t           encoded;
     } flags;
 
+    union
+    {
+        ble_lcs_light_setup_t raw;
+        uint8_t               encoded;
+    } setup;
+
     // encode flags
     flags.raw = p_lcs_lm->flags;
     if (p_features->flood_supported == 0)
@@ -198,8 +213,9 @@ static uint8_t lm_encode(const ble_lcs_lm_t * p_lcs_lm, const ble_lcs_lf_t * p_f
     }
     len += uint16_encode(flags.encoded & BLE_LCS_LM_FLAGS_MASK, &p_encoded_buffer[len]);
 
-    // encode mode
-    p_encoded_buffer[len++] = p_lcs_lm->mode.type;
+    // encode setup
+    setup.raw = p_lcs_lm->mode.setup;
+    p_encoded_buffer[len++] = setup.encoded;
 
     // encode intensity
     if (flags.raw.intensity_present)
@@ -355,7 +371,7 @@ uint32_t ble_lcs_light_measurement_send(const ble_lcs_t * p_lcs, const ble_lcs_l
     // send data if connected and notifying
     if (p_lcs->conn_handle != BLE_CONN_HANDLE_INVALID && p_lcs->is_lm_notfy_enabled)
     {
-        uint8_t                encoded_data[BLR_LCS_LM_MAX_CHAR_LEN];
+        uint8_t                encoded_data[BLE_LCS_LM_MAX_CHAR_LEN];
         uint16_t               len;
         uint16_t               hvx_len;
         ble_gatts_hvx_params_t hvx_params;

@@ -13,7 +13,7 @@
 #include <string.h>
 
 /* Private defines -----------------------------------------------------------*/
-#define BLE_UUID_LCS_LCP_CHARACTERISTIC 0x0104   /**< The UUID of the light Control Point characteristic */
+#define BLE_UUID_LCS_LCP_CHARACTERISTIC     0x0104  /**< The UUID of the light Control Point characteristic */
 
 /* Private typedef -----------------------------------------------------------*/
 typedef struct
@@ -163,7 +163,13 @@ static uint32_t lcs_ctrlpt_decode(uint8_t             * p_rcvd_val,
             p_write_val->params.mode_config.mode_entries = 0;
             for (uint_fast8_t i = 0; pos < len; i++)
             {
-                p_write_val->params.mode_config.config[i].type = p_rcvd_val[pos++];
+                union
+                {
+                    ble_lcs_light_setup_t decoded;
+                    uint8_t               raw;
+                } setup;
+                setup.raw = p_rcvd_val[pos++];
+                p_write_val->params.mode_config.config[i].setup = setup.decoded;
                 p_write_val->params.mode_config.config[i].intensity = p_rcvd_val[pos++];
                 p_write_val->params.mode_config.mode_entries++;
             }
@@ -218,7 +224,13 @@ static int ctrlpt_rsp_encode(ble_lcs_ctrlpt_t      * p_lcs_ctrlpt,
             case BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNFG:
                 for (uint8_t i = 0; i < p_ctrlpt_rsp->params.mode_config_list.num_of_entries; i++)
                 {
-                    p_data[len++] = p_ctrlpt_rsp->params.mode_config_list.p_list[i].type;
+                    union
+                    {
+                        ble_lcs_light_setup_t raw;
+                        uint8_t               encoded;
+                    } setup;
+                    setup.raw = p_ctrlpt_rsp->params.mode_config_list.p_list[i].setup;
+                    p_data[len++] = setup.encoded;
                     p_data[len++] = p_ctrlpt_rsp->params.mode_config_list.p_list[i].intensity;
                 }
                 break;

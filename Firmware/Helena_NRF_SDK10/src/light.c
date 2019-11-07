@@ -26,14 +26,14 @@
 #define VOLTAGEMIN              ((3025ul << 10) / 1000)
 #define VOLTAGEMAX              ((4250ul << 10) / 1000)
 
-#define NUM_OF_CELL_CONFIGS     3   // supporting 1, 2 or 3 cells in series
+#define NUM_OF_CELL_CONFIGS     3                           // supporting 1, 2 or 3 cells in series
 
-#define OUTPUTMAX1CELL          0//UINT8_MAX               // max. output (= 3A with correct calibrated driver)
-#define OUTPUTMAX2CELL          UINT8_MAX               // max. output (= 3A with correct calibrated driver
-#define OUTPUTMAX3CELL          0//(UINT8_MAX * 24/30)     // for 3cell out has to be limited to 2.4A
-#define OUTPUT_DEFAULT_LIMT     (UINT8_MAX * 85/100)    // default configurable current limit is set to 85%
+#define OUTPUTMAX1CELL          0//UINT8_MAX                // max. output (= 3A with correct calibrated driver)
+#define OUTPUTMAX2CELL          UINT8_MAX                   // max. output (= 3A with correct calibrated driver
+#define OUTPUTMAX3CELL          0//((UINT8_MAX * 24) / 30)  // for 3cell out has to be limited to 2.4A
+#define OUTPUT_DEFAULT_LIMT     ((UINT8_MAX * 85) / 100)    // default configurable current limit is set to 85%
 
-#define TEMPERATUREMAX          ((75+273) << 4)         // 75 °C in q12_4_t K
+#define TEMPERATUREMAX          ((75 + 273) << 4)           // 75 °C in q12_4_t K
 
 #define LUTSIZE                 256     // size of look up table for pitch<->comp mapping, must be power of two
 #define CROSSINGSIZE            16      // size of look up table for crossing between spot and flood, must be power of two
@@ -238,6 +238,7 @@ static uint8_t currentLimits[2];        // current current limits
 static volatile bool updateFlag;        // flags indication if status has to be updated
 APP_TIMER_DEF(updateTimerId);           // timer for timebase
 static storageData_t storage;           // information stored into flash
+static volatile bool flashInitialized;  // indicating if the flash data storage module is initialized
 
 /* Private functions ---------------------------------------------------------*/
 /** @brief handler for timebase timer event
@@ -579,6 +580,9 @@ static void fdsEventHandler(ret_code_t errCode, fds_cmd_id_t cmd, fds_record_id_
         else
             APP_ERROR_CHECK(errCode);
     }
+
+    if (cmd == FDS_CMD_INIT)
+        flashInitialized = true;
 }
 
 static void validateLedConfig(light_driverConfig_t* pLedConfig)
@@ -706,6 +710,8 @@ static light_driverRevision_t driverRevCheck()
 /* Public functions ----------------------------------------------------------*/
 uint32_t light_Init(uint8_t supplyCellCnt, light_driverConfig_t* pLedConfig)
 {
+    nrf_delay_ms(250);  // wait 250ms to let the driver leave the bootloader
+
     // create timer for timebase
     VERIFY_NRF_ERROR_CODE(app_timer_create(&updateTimerId, APP_TIMER_MODE_REPEATED, updateTimerHandler));
 
@@ -715,21 +721,22 @@ uint32_t light_Init(uint8_t supplyCellCnt, light_driverConfig_t* pLedConfig)
     // enable workaround for TWI lock up in rev2 ICs
     i2c_EnableAutoRecover(true);
 
-    lightState = STATEOFF;
+    // save cell count
+    cellCnt = supplyCellCnt;
 
-    // check driver revision;
-    storage.drvConfig.rev = driverRevCheck();
+    lightState = STATEOFF;
 
     // register to fds module
     VERIFY_NRF_ERROR_CODE(fds_register(fdsEventHandler));
     VERIFY_NRF_ERROR_CODE(fds_init());
-
-    // save cell count
-    cellCnt = supplyCellCnt;
+    while (!flashInitialized) {}    // wait for fds
 
     // read led configuration
     readStorage();
     *pLedConfig = storage.drvConfig;
+
+    // check driver revision;
+    storage.drvConfig.rev = driverRevCheck();
 
     return NRF_SUCCESS;
 }

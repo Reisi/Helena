@@ -58,8 +58,19 @@ typedef struct ble_lcs_s ble_lcs_t;
 /**@brief Light Control Service event handler type */
 typedef void (*ble_lcs_evt_handler_t)(ble_lcs_t * p_lcs, ble_lcs_evt_t * p_evt);
 
+/**@brief Light Control Service Light Setup Flags */
+typedef struct
+{
+    uint8_t flood             : 1;
+    uint8_t spot              : 1;
+    uint8_t pitchCompensation : 1;
+    uint8_t cloned            : 1;
+    uint8_t taillight         : 1;
+    uint8_t brakelight        : 1;
+} ble_lcs_light_setup_t;
+
 /**@brief Light Control Service Light Mode Types */
-typedef enum
+/*typedef enum
 {
     BLE_LCS_LIGHT_MODE_OFF = 0,
     BLE_LCS_LIGHT_MODE_FLOOD,
@@ -68,13 +79,13 @@ typedef enum
     BLE_LCS_LIGHT_MODE_FLOOD_PITCH_COMPENSATED,
     BLE_LCS_LIGHT_MODE_SPOT_PITCH_COMPENSATED,
     BLE_LCS_LIGHT_MODE_FLOOD_AND_SPOT_PITCH_COMPENSATED
-} ble_lcs_light_mode_type_t;
+} ble_lcs_light_mode_type_t;*/
 
 /**@brief Light Control Service Light Mode structure */
 typedef struct
 {
-    ble_lcs_light_mode_type_t type;
-    uint8_t                   intensity;
+    ble_lcs_light_setup_t setup;
+    uint8_t               intensity;
 } ble_lcs_light_mode_t;
 
 /**@brief Light feature structure. This contains the supported features */
@@ -89,6 +100,8 @@ typedef struct
     uint16_t led_config_check_supported     : 1;
     uint16_t sensor_calibration_supported   : 1;
     uint16_t current_limitation_supported   : 1;
+    uint16_t external_taillight_supported   : 1;
+    uint16_t external_brake_light_supported : 1;
 } ble_lcs_lf_t;
 
 // include control point header here, because its using feature and light mode structures

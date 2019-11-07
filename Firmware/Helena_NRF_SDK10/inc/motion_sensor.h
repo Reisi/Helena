@@ -15,11 +15,9 @@
 /* Includes ------------------------------------------------------------------*/
 #include <stdbool.h>
 #include <stdint.h>
+#include "fpint.h"
 
 /* Exported types ------------------------------------------------------------*/
-typedef int16_t q15_t;
-typedef int16_t q3_12_t;
-
 typedef struct
 {
     q3_12_t x;

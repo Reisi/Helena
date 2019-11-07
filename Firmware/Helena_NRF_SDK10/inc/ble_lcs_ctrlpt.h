@@ -39,11 +39,11 @@
 typedef enum
 {
     BLE_LCS_CTRLPT_EVT_REQ_MODE_CNT,    /**< Operator to request mode count */
-    BLE_LCS_CTRLPT_EVT_REQ_GRP_CNFG,    /**< Operator to request number of mode groups */
-    BLE_LCS_CTRLPT_EVT_REQ_MODE_CNFG,   /**< Operator to request a list of mode configurations */
     BLE_LCS_CTRLPT_EVT_SET_MODE,        /**< Operator to set a specific mode */
-    BLE_LCS_CTRLPT_EVT_CNFG_MODE,       /**< Operator to configure a specific mode */
+    BLE_LCS_CTRLPT_EVT_REQ_GRP_CNFG,    /**< Operator to request number of mode groups */
     BLE_LCS_CTRLPT_EVT_CNFG_GROUP,      /**< Operator to configure grouping */
+    BLE_LCS_CTRLPT_EVT_REQ_MODE_CNFG,   /**< Operator to request a list of mode configurations */
+    BLE_LCS_CTRLPT_EVT_CNFG_MODE,       /**< Operator to configure a specific mode */
     BLE_LCS_CTRLPT_EVT_REQ_LED_CNFG,    /**< Operator to request current led configuration */
     BLE_LCS_CTRLPT_EVT_CHK_LED_CNFG,    /**< Operator to start the check procedure for led configuration */
     BLE_LCS_CTRLPT_EVT_REQ_SENS_OFF,    /**< Operator to request the current sensor offset values */
@@ -88,11 +88,11 @@ typedef struct
 typedef enum
 {
     BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNT     = 1,
-    BLE_LCS_CTRLPT_OP_CODE_REQ_GRP_CNFG     = 2,
-    BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNFG    = 3,
-    BLE_LCS_CTRLPT_OP_CODE_SET_MODE         = 4,
-    BLE_LCS_CTRLPT_OP_CODE_CNFG_MODE        = 5,
-    BLE_LCS_CTRLPT_OP_CODE_CNFG_GROUP       = 6,
+    BLE_LCS_CTRLPT_OP_CODE_SET_MODE         = 2,
+    BLE_LCS_CTRLPT_OP_CODE_REQ_GRP_CNFG     = 3,
+    BLE_LCS_CTRLPT_OP_CODE_CNFG_GROUP       = 4,
+    BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNFG    = 5,
+    BLE_LCS_CTRLPT_OP_CODE_CNFG_MODE        = 6,
     BLE_LCS_CTRLPT_OP_CODE_REQ_LED_CNFG     = 7,
     BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG     = 8,
     BLE_LCS_CTRLPT_OP_CODE_REQ_SENS_OFF     = 9,

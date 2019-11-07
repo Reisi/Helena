@@ -2,8 +2,6 @@
   ******************************************************************************
   * @file    btle.c
   * @author  Thomas Reisnecker
-  * @version V1.0
-  * @date    16/11/08
   * @brief   helenas bluetooth module
   ******************************************************************************
   */
@@ -39,11 +37,11 @@
 /* External variables --------------------------------------------------------*/
 
 /* Private typedef -----------------------------------------------------------*/
-typedef struct
+/*typedef struct
 {
     uint8_t     * pData;
     uint16_t      dataLen;
-} advDataStruct;
+} advData_t;*/
 
 /* Private macros ------------------------------------------------------------*/
 #define UUID16_EXTRACT(DST, SRC) \
@@ -96,9 +94,9 @@ static ble_lcs_t lcsGattsData;          /**< gatt server handles for the light c
 static ble_db_discovery_t discDatabase; /**< database for service discovery */
 static ble_hids_c_t hidsGattcData;      /**< gatt client handles for the hid service */
 
-static btle_EventHandler pEventHandler; /**< ble event handler */
+static btle_eventHandler_t pEventHandler; /**< ble event handler */
 
-static btle_ScanModeEnum scanConfig;    /**< actual requested scan mode configuration */
+static btle_scanMode_t scanConfig;    /**< actual requested scan mode configuration */
 static ble_scan_mode_t scanMode;        /**< actual Scan mode */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -108,7 +106,7 @@ static ble_scan_mode_t scanMode;        /**< actual Scan mode */
  */
 static void onCentralEvt(ble_evt_t * pBleEvt)
 {
-    btle_EventStruct evt;
+    btle_event_t evt;
     uint32_t errCode;
 
     switch (pBleEvt->header.evt_id)
@@ -152,7 +150,7 @@ static void onCentralEvt(ble_evt_t * pBleEvt)
  */
 static void onPeriphEvt(ble_evt_t * pBleEvt)
 {
-    btle_EventStruct evt;
+    btle_event_t evt;
 
     switch (pBleEvt->header.evt_id)
     {
@@ -397,7 +395,7 @@ static void cgwDataHandler(ble_cgw_t * pCgw, com_MessageStruct * pMessageRx)
 static void lcsCpEventHandler(ble_lcs_ctrlpt_t * pLcsCtrlpt,
                                                    ble_lcs_ctrlpt_evt_t * pEvt)
 {
-    btle_EventStruct evt;
+    btle_event_t evt;
     evt.evt = BTLE_EVT_LCS_CTRL_POINT;
 
     switch (pEvt->evt_type)
@@ -424,7 +422,7 @@ static void lcsCpEventHandler(ble_lcs_ctrlpt_t * pLcsCtrlpt,
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_CONFIG_MODE;
         evt.lcscpEventParams.modeToConfig.modeNumber = pEvt->p_params->mode_config.mode_number_start;
         evt.lcscpEventParams.modeToConfig.listEntries = pEvt->p_params->mode_config.mode_entries;
-        evt.lcscpEventParams.modeToConfig.pConfig = (btle_LightModeConfig*)pEvt->p_params->mode_config.config;
+        evt.lcscpEventParams.modeToConfig.pConfig = (btle_LcsModeConfig_t*)pEvt->p_params->mode_config.config;
         pEventHandler(&evt);
         break;
     case BLE_LCS_CTRLPT_EVT_CNFG_GROUP:
@@ -454,8 +452,8 @@ static void lcsCpEventHandler(ble_lcs_ctrlpt_t * pLcsCtrlpt,
         break;
     case BLE_LCS_CTRLPT_EVT_SET_LIMITS:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_SET_LIMITS;
-        evt.lcscpEventParams.currentLimits.flood = pEvt->p_params->current_limits.flood;
-        evt.lcscpEventParams.currentLimits.spot = pEvt->p_params->current_limits.spot;
+        evt.lcscpEventParams.currentLimits.floodInPercent = pEvt->p_params->current_limits.flood;
+        evt.lcscpEventParams.currentLimits.spotInPercent = pEvt->p_params->current_limits.spot;
         pEventHandler(&evt);
         break;
     default:
@@ -475,7 +473,7 @@ static void lcsErrorHandler(uint32_t errCode)
 
 /**@brief Function for initializing services that will be used by the application.
  */
-static void servicesInit(btle_LightFeatureStruct* pFeature)
+static void servicesInit(btle_lcsFeature_t* pFeature)
 {
     uint32_t errCode;
 
@@ -627,7 +625,7 @@ static void hidsCEventHandler(ble_hids_c_t * pBleHidsC, ble_hids_c_evt_t * pEvt)
             if (pEvt->params.report.p_report[0] == 0)
             {
                 uint32_t timestamp;
-                btle_EventStruct evt;
+                btle_event_t evt;
                 (void)app_timer_cnt_get(&timestamp);
                 if (lastPressVolUp != 0)
                 {
@@ -866,7 +864,7 @@ void btle_StackInit()
     APP_ERROR_CHECK(errCode);
 }
 
-void btle_Init(bool deleteBonds, btle_LightFeatureStruct* pFeature, btle_EventHandler pEvtHandler)
+void btle_Init(bool deleteBonds, btle_lcsFeature_t* pFeature, btle_eventHandler_t pEvtHandler)
 {
     pEventHandler = pEvtHandler;
 
@@ -880,7 +878,7 @@ void btle_Init(bool deleteBonds, btle_LightFeatureStruct* pFeature, btle_EventHa
     scanningInit();
 }
 
-void btle_SetScanConfig(btle_ScanModeEnum newScanConfig)
+void btle_SetScanConfig(btle_scanMode_t newScanConfig)
 {
     uint32_t errCode;
 
@@ -911,15 +909,10 @@ uint32_t btle_ComGatewayCheck(const com_MessageStruct * pMessageIn)
     return NRF_SUCCESS;
 }
 
-uint32_t btle_UpdateLightMeasurements(const btle_lightDataStruct * pData)
+uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData)
 {
     static uint32_t lastTimeSent;
     ble_lcs_lm_t notifyData;
-    union
-    {
-        ble_lcs_lm_status_flags_t out;
-        btle_lightStatusFlags     in;
-    } statusFlags;
     uint32_t timestamp;
 
     (void)app_timer_cnt_get(&timestamp);
@@ -937,31 +930,36 @@ uint32_t btle_UpdateLightMeasurements(const btle_lightDataStruct * pData)
         return NRF_ERROR_INVALID_STATE;
 
     memset(&notifyData, 0, sizeof(ble_lcs_lm_t));
-    notifyData.mode.type = pData->mode;
-    if (pData->mode != BTLE_LIGHT_MODE_OFF)
+    notifyData.mode.setup.flood = pData->mode.setup.flood ? 1 : 0;
+    notifyData.mode.setup.spot = pData->mode.setup.spot ? 1 : 0;
+    notifyData.mode.setup.pitchCompensation = pData->mode.setup.pitchCompensation ? 1 : 0;
+    notifyData.mode.setup.cloned = pData->mode.setup.cloned ? 1 : 0;
+    notifyData.mode.setup.taillight = pData->mode.setup.taillight ? 1 : 0;
+    notifyData.mode.setup.brakelight = pData->mode.setup.brakelight ? 1 : 0;
+    if (pData->mode.setup.flood || pData->mode.setup.spot)
     {
         notifyData.flags.intensity_present = 1;
-        notifyData.mode.intensity = pData->intensity;
+        notifyData.mode.intensity = pData->mode.intensityInPercent;  // don't care if pitch compensated or not, variables share same location
     }
-    if (pData->mode == BTLE_LIGHT_MODE_FLOOD || pData->mode == BTLE_LIGHT_MODE_FLOOD_AND_SPOT ||
-        pData->mode == BTLE_LIGHT_MODE_FLOOD_PITCH_COMPENSATED || pData->mode == BTLE_LIGHT_MODE_FLOOD_AND_SPOT_PITCH_COMPENSATED ||
-        pData->mode == BTLE_LIGHT_MODE_FLOOD_CLONED || pData->mode == BTLE_LIGHT_MODE_FLOOD_PITCH_COMPENSATED_CLONED)
+    if (pData->mode.setup.flood)
     {
         notifyData.flags.flood_power_present = 1;
         notifyData.flags.flood_status_present = 1;
         notifyData.flood_power = pData->powerFlood;
-        statusFlags.in = pData->statusFlood;
-        notifyData.flood_status = statusFlags.out;
+        notifyData.flood_status.overcurrent = pData->statusFlood.overcurrent ? 1 : 0;
+        notifyData.flood_status.voltage = pData->statusFlood.inputVoltage ? 1 : 0;
+        notifyData.flood_status.temperature = pData->statusFlood.temperature ? 1 : 0;
+        notifyData.flood_status.dutycycle = pData->statusFlood.dutyCycleLimit ? 1 : 0;
     }
-    if (pData->mode == BTLE_LIGHT_MODE_SPOT || pData->mode == BTLE_LIGHT_MODE_FLOOD_AND_SPOT ||
-        pData->mode == BTLE_LIGHT_MODE_SPOT_PITCH_COMPENSATED || pData->mode == BTLE_LIGHT_MODE_FLOOD_AND_SPOT_PITCH_COMPENSATED ||
-        pData->mode == BTLE_LIGHT_MODE_SPOT_CLONED || pData->mode == BTLE_LIGHT_MODE_SPOT_PITCH_COMPENSATED_CLONED)
+    if (pData->mode.setup.spot)
     {
         notifyData.flags.spot_power_present = 1;
         notifyData.flags.spot_status_present = 1;
         notifyData.spot_power = pData->powerSpot;
-        statusFlags.in = pData->statusSpot;
-        notifyData.spot_status = statusFlags.out;
+        notifyData.spot_status.overcurrent = pData->statusSpot.overcurrent ? 1 : 0;
+        notifyData.spot_status.voltage = pData->statusSpot.inputVoltage ? 1 : 0;
+        notifyData.spot_status.temperature = pData->statusSpot.temperature ? 1 : 0;
+        notifyData.spot_status.dutycycle = pData->statusSpot.dutyCycleLimit ? 1 : 0;
     }
     if (pData->temperature != 0)
     {
@@ -973,9 +971,7 @@ uint32_t btle_UpdateLightMeasurements(const btle_lightDataStruct * pData)
         notifyData.flags.input_voltage_present = 1;
         notifyData.input_voltage = pData->inputVoltage;;
     }
-    if (pData->mode == BTLE_LIGHT_MODE_FLOOD_PITCH_COMPENSATED || pData->mode == BTLE_LIGHT_MODE_SPOT_PITCH_COMPENSATED ||
-        pData->mode == BTLE_LIGHT_MODE_FLOOD_PITCH_COMPENSATED_CLONED || pData->mode == BTLE_LIGHT_MODE_SPOT_PITCH_COMPENSATED_CLONED ||
-        pData->mode == BTLE_LIGHT_MODE_FLOOD_AND_SPOT_PITCH_COMPENSATED)
+    if (pData->mode.setup.pitchCompensation)
     {
         notifyData.flags.pitch_present = 1;
         notifyData.pitch = pData->pitch;
@@ -986,7 +982,7 @@ uint32_t btle_UpdateLightMeasurements(const btle_lightDataStruct * pData)
     return ble_lcs_light_measurement_send(&lcsGattsData, &notifyData);
 }
 
-uint32_t btle_SendEventResponse(const btle_LcscpEventResponseStruct *pRsp)
+uint32_t btle_SendEventResponse(const btle_LcscpEventResponse_t *pRsp)
 {
     ble_lcs_ctrlpt_rsp_t rsp;
 
@@ -1020,8 +1016,8 @@ uint32_t btle_SendEventResponse(const btle_LcscpEventResponseStruct *pRsp)
         rsp.params.sens_offset.z = pRsp->responseParams.sensOffset.z;
         break;
     case BTLE_EVT_LCSCP_REQ_LIMITS:
-        rsp.params.current_limits.flood = pRsp->responseParams.currentLimits.flood;
-        rsp.params.current_limits.spot = pRsp->responseParams.currentLimits.spot;
+        rsp.params.current_limits.flood = pRsp->responseParams.currentLimits.floodInPercent;
+        rsp.params.current_limits.spot = pRsp->responseParams.currentLimits.spotInPercent;
         break;
     default:
         break;
