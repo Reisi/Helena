@@ -22,6 +22,7 @@
 /* Private typedef -----------------------------------------------------------*/
 
 /* Private variables ---------------------------------------------------------*/
+static uint8_t m_num_of_clients;
 
 /* Private functions ---------------------------------------------------------*/
 static uint32_t light_measurement_char_add(ble_lcs_t * p_lcs, const ble_lcs_init_t * p_lcs_init)
@@ -127,38 +128,122 @@ static uint32_t light_feature_char_add(ble_lcs_t * p_lcs, const ble_lcs_init_t *
                                            &p_lcs->lf_handles);
 }
 
+static ble_lcs_client_spec_t * get_client_data_by_conn_handle(uint16_t conn_handle, ble_lcs_client_spec_t * p_context)
+{
+    uint_fast8_t index = m_num_of_clients;
+
+    while (index)
+    {
+        if (p_context[index - 1].conn_handle == conn_handle)
+        {
+            return &p_context[index - 1];
+        }
+        index--;
+    }
+
+    return NULL;
+}
+
 static void on_connect(ble_lcs_t * p_lcs, ble_evt_t * p_ble_evt)
 {
-    p_lcs->conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
+    uint32_t                err_code;
+    ble_lcs_evt_t           evt;
+    ble_gatts_value_t       gatts_val;
+    uint8_t                 cccd_value[2];
+    ble_lcs_client_spec_t * p_client;
+
+    p_client = get_client_data_by_conn_handle(BLE_CONN_HANDLE_INVALID, p_lcs->p_client);
+    if (p_client == NULL)
+    {
+        return; /// TODO: add error handler and report NRF_ERROR_NO_MEM
+    }
+    p_client->conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
+
+    // check the hosts CCCD value to inform the application if it has to send notifications
+    memset(&gatts_val, 0, sizeof(ble_gatts_value_t));
+    gatts_val.p_value = cccd_value;
+    gatts_val.len     = sizeof(cccd_value);
+    gatts_val.offset  = 0;
+    err_code = sd_ble_gatts_value_get(p_ble_evt->evt.gap_evt.conn_handle,
+                                      p_lcs->lm_handles.cccd_handle,
+                                      &gatts_val);
+    if (err_code == NRF_SUCCESS &&
+        p_lcs->evt_handler != NULL &&
+        ble_srv_is_notification_enabled(gatts_val.p_value))
+    {
+        p_client->is_lm_notfy_enabled = true;
+
+        memset(&evt, 0, sizeof(ble_lcs_evt_t));
+        evt.evt_type    = BLE_LCS_EVT_LM_NOTIVICATION_ENABLED;
+        evt.p_lcs       = p_lcs;
+        evt.conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
+        evt.p_client    = p_client;
+
+        p_lcs->evt_handler(&evt);
+    }
 }
 
 static void on_disconnect(ble_lcs_t * p_lcs, ble_evt_t * p_ble_evt)
 {
-    (void)p_ble_evt;
-    p_lcs->conn_handle = BLE_CONN_HANDLE_INVALID;
+    ble_lcs_evt_t evt;
+    ble_lcs_client_spec_t * p_client;
+
+    p_client = get_client_data_by_conn_handle(p_ble_evt->evt.gap_evt.conn_handle, p_lcs->p_client);
+    if (p_client == NULL)
+    {
+        return; /// TODO: add error handler and report NRF_ERROR_NOT_FOUND
+    }
+
+    p_client->is_lm_notfy_enabled = false;
+
+    if (p_lcs->evt_handler != NULL)
+    {
+        memset(&evt, 0, sizeof(ble_lcs_evt_t));
+        evt.evt_type    = BLE_LCS_EVT_LM_NOTIVICATION_DISABLED;
+        evt.p_lcs       = p_lcs;
+        evt.conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
+        evt.p_client    = p_client;
+
+        p_lcs->evt_handler(&evt);
+    }
+
+    p_client->conn_handle = BLE_CONN_HANDLE_INVALID;
 }
 
-static void on_lm_cccd_write(ble_lcs_t * p_lcs, ble_gatts_evt_write_t * p_evt_write)
+static void on_lm_cccd_write(ble_lcs_t * p_lcs, ble_gatts_evt_write_t * p_evt_write, uint16_t conn_handle)
 {
+    ble_lcs_evt_t evt;
+    ble_lcs_client_spec_t * p_client;
+
+    p_client = get_client_data_by_conn_handle(conn_handle, p_lcs->p_client);
+    if (p_client == NULL)
+    {
+        return; /// TODO: add error handler and report NRF_ERROR_NOT_FOUND
+    }
+
     if (p_evt_write->len == 2)
     {
         // CCCD written, update notification state
-        ble_lcs_evt_t evt;
+        memset(&evt, 0, sizeof(ble_lcs_evt_t));
+        evt.p_lcs       = p_lcs;
+        evt.conn_handle = conn_handle;
+        evt.p_client    = p_client;
+
 
         if (ble_srv_is_notification_enabled(p_evt_write->data))
         {
-            p_lcs->is_lm_notfy_enabled = true;
+            p_client->is_lm_notfy_enabled = true;
             evt.evt_type = BLE_LCS_EVT_LM_NOTIVICATION_ENABLED;
         }
         else
         {
-            p_lcs->is_lm_notfy_enabled = false;
+            p_client->is_lm_notfy_enabled = false;
             evt.evt_type = BLE_LCS_EVT_LM_NOTIVICATION_DISABLED;
         }
 
         if (p_lcs->evt_handler != NULL)
         {
-            p_lcs->evt_handler(p_lcs, &evt);
+            p_lcs->evt_handler(&evt);
         }
     }
 }
@@ -169,7 +254,7 @@ static void on_write(ble_lcs_t * p_lcs, ble_evt_t * p_ble_evt)
 
     if (p_evt_write->handle == p_lcs->lm_handles.cccd_handle)
     {
-        on_lm_cccd_write(p_lcs, p_evt_write);
+        on_lm_cccd_write(p_lcs, p_evt_write, p_ble_evt->evt.gatts_evt.conn_handle);
     }
 }
 
@@ -271,7 +356,7 @@ static uint8_t lm_encode(const ble_lcs_lm_t * p_lcs_lm, const ble_lcs_lf_t * p_f
 }
 
 /* Public functions ----------------------------------------------------------*/
-uint32_t ble_lcs_init(ble_lcs_t * p_lcs, const ble_lcs_init_t * p_lcs_init)
+uint32_t ble_lcs_init(ble_lcs_t * p_lcs, uint8_t max_clients, const ble_lcs_init_t * p_lcs_init)
 {
     uint32_t err_code;
     ble_uuid_t ble_uuid;
@@ -282,10 +367,21 @@ uint32_t ble_lcs_init(ble_lcs_t * p_lcs, const ble_lcs_init_t * p_lcs_init)
         return NRF_ERROR_NULL;
     }
 
+    if (max_clients == 0)
+    {
+        return NRF_ERROR_INVALID_PARAM;
+    }
+    m_num_of_clients = max_clients;
+
     // Initialize service structure
     p_lcs->evt_handler = p_lcs_init->evt_handler;
-    p_lcs->conn_handle = BLE_CONN_HANDLE_INVALID;
     p_lcs->features    = p_lcs_init->features;
+
+    while (max_clients)
+    {
+        p_lcs->p_client[max_clients - 1].conn_handle = BLE_CONN_HANDLE_INVALID;
+        max_clients--;
+    }
 
     // add custom base uuid
     err_code = sd_ble_uuid_vs_add(&lcs_base_uuid, &p_lcs->uuid_type);
@@ -331,7 +427,11 @@ uint32_t ble_lcs_init(ble_lcs_t * p_lcs, const ble_lcs_init_t * p_lcs_init)
     ctrlpt_init.evt_handler        = p_lcs_init->cp_evt_handler;
     ctrlpt_init.error_handler      = p_lcs_init->error_handler;
 
-    return ble_lcs_ctrlpt_init(&p_lcs->ctrl_pt, &ctrlpt_init);
+    err_code = ble_lcs_ctrlpt_init(&p_lcs->ctrl_pt, m_num_of_clients, &ctrlpt_init);
+    if (err_code != NRF_SUCCESS)
+    {
+        return err_code;
+    }
 
     return NRF_SUCCESS;
 }
@@ -364,12 +464,19 @@ void ble_lcs_on_ble_evt(ble_lcs_t * p_lcs, ble_evt_t * p_ble_evt)
     }
 }
 
-uint32_t ble_lcs_light_measurement_send(const ble_lcs_t * p_lcs, const ble_lcs_lm_t * p_lcs_lm)
+uint32_t ble_lcs_light_measurement_send(const ble_lcs_t * p_lcs, uint16_t conn_handle, const ble_lcs_lm_t * p_lcs_lm)
 {
     uint32_t err_code;
+    ble_lcs_client_spec_t * p_client;
+
+    p_client = get_client_data_by_conn_handle(conn_handle, p_lcs->p_client);
+    if (p_client == NULL)
+    {
+        return NRF_ERROR_INVALID_STATE;
+    }
 
     // send data if connected and notifying
-    if (p_lcs->conn_handle != BLE_CONN_HANDLE_INVALID && p_lcs->is_lm_notfy_enabled)
+    if (p_client->is_lm_notfy_enabled)
     {
         uint8_t                encoded_data[BLE_LCS_LM_MAX_CHAR_LEN];
         uint16_t               len;
@@ -386,7 +493,7 @@ uint32_t ble_lcs_light_measurement_send(const ble_lcs_t * p_lcs, const ble_lcs_l
         hvx_params.p_len  = &hvx_len;
         hvx_params.p_data = encoded_data;
 
-        err_code = sd_ble_gatts_hvx(p_lcs->conn_handle, &hvx_params);
+        err_code = sd_ble_gatts_hvx(conn_handle, &hvx_params);
         if (err_code == NRF_SUCCESS && hvx_len != len)
         {
             err_code = NRF_ERROR_DATA_SIZE;

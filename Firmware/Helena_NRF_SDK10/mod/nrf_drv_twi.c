@@ -17,7 +17,7 @@
 #include "nrf_gpio.h"
 
 /**@brief Determine how long driver will be wait for event (in blocking mode). */
-#define BUSY_LOOP_TIMEOUT   0x3FFF
+#define BUSY_LOOP_TIMEOUT   0xFFF
 
 #define DISABLE_MASK        UINT32_MAX
 
@@ -684,8 +684,8 @@ __STATIC_INLINE void nrf_drv_twi_int_handler(NRF_TWI_Type * p_reg, uint32_t inst
     bool error_occured   = nrf_twi_event_check(p_reg, NRF_TWI_EVENTS_ERROR);
     bool end_evt_occured = nrf_twi_event_check(p_reg, p_transfer->end_event);
 
-    if (nrf_twi_event_check(p_reg, NRF_TWI_EVENTS_RXDREADY))
-        nrf_delay_us(8);
+    //if (nrf_twi_event_check(p_reg, NRF_TWI_EVENTS_RXDREADY))
+    //    nrf_delay_us(8);
 
     nrf_twi_event_clear(p_reg, NRF_TWI_EVENTS_ERROR);
     nrf_twi_event_clear(p_reg, NRF_TWI_EVENTS_TXDSENT);

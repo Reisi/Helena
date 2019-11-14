@@ -46,17 +46,26 @@ typedef enum
     BLE_LCS_EVT_LM_NOTIVICATION_DISABLED,   /**< Light Measurements notification disabled event */
 } ble_lcs_evt_type_t;
 
-/**@brief Light Control Service Event */
 typedef struct
 {
-    ble_lcs_evt_type_t evt_type;
-} ble_lcs_evt_t;
+    uint16_t conn_handle;                           /**< Handle if the current connection (as provided by the BLE stack) */
+    bool is_lm_notfy_enabled;                       /**< Indicator if light measurement notifications are enabled */
+} ble_lcs_client_spec_t;
 
 // Forward declaration of the ble_lcs_t type.
 typedef struct ble_lcs_s ble_lcs_t;
 
+/**@brief Light Control Service Event */
+typedef struct
+{
+    ble_lcs_evt_type_t      evt_type;       /**< the type of the event */
+    ble_lcs_t             * p_lcs;          /**< a pointer to the instance */
+    uint16_t                conn_handle;    /**< connection handle */
+    ble_lcs_client_spec_t * p_client;       /**< a pointer to the client data */
+} ble_lcs_evt_t;
+
 /**@brief Light Control Service event handler type */
-typedef void (*ble_lcs_evt_handler_t)(ble_lcs_t * p_lcs, ble_lcs_evt_t * p_evt);
+typedef void (*ble_lcs_evt_handler_t)(ble_lcs_evt_t * p_evt);
 
 /**@brief Light Control Service Light Setup Flags */
 typedef struct
@@ -68,18 +77,6 @@ typedef struct
     uint8_t taillight         : 1;
     uint8_t brakelight        : 1;
 } ble_lcs_light_setup_t;
-
-/**@brief Light Control Service Light Mode Types */
-/*typedef enum
-{
-    BLE_LCS_LIGHT_MODE_OFF = 0,
-    BLE_LCS_LIGHT_MODE_FLOOD,
-    BLE_LCS_LIGHT_MODE_SPOT,
-    BLE_LCS_LIGHT_MODE_FLOOD_AND_SPOT,
-    BLE_LCS_LIGHT_MODE_FLOOD_PITCH_COMPENSATED,
-    BLE_LCS_LIGHT_MODE_SPOT_PITCH_COMPENSATED,
-    BLE_LCS_LIGHT_MODE_FLOOD_AND_SPOT_PITCH_COMPENSATED
-} ble_lcs_light_mode_type_t;*/
 
 /**@brief Light Control Service Light Mode structure */
 typedef struct
@@ -126,14 +123,13 @@ typedef struct
 struct ble_lcs_s
 {
     uint8_t                     uuid_type;          /**< UUID type for Light Control Service Base UUID. */
-    uint16_t                    conn_handle;        /**< Handle if the current connection (as provided by the BLE stack) */
     uint16_t                    service_handle;     /**< Handle of the Light Control Service (as provided by the BLE stack) */
     ble_gatts_char_handles_t    lm_handles;         /**< Handles related to the Light Measurement characteristic */
     ble_gatts_char_handles_t    lf_handles;         /**< Handles related to the Light feature characteristic */
     ble_lcs_evt_handler_t       evt_handler;        /**< Event handler to be called for handling events in the Light Control Service */
-    bool                        is_lm_notfy_enabled;/**< Indicator if light measurement notifications are enabled */
     ble_lcs_lf_t                features;           /**< supported features by this light */
     ble_lcs_ctrlpt_t            ctrl_pt;            /**< data for light control control point */
+    ble_lcs_client_spec_t *     p_client;           /**< client specific data */
 };
 
 /**@brief Light Measurement Flags structure. This contains information which
@@ -178,6 +174,17 @@ typedef struct
     int8_t                    pitch;        /**< pitch angle in degree with a resolution of 1 */
 } ble_lcs_lm_t;
 
+/* Exported macros ---------------------------------------------------------- */
+#define GLUE(X, Y)  X ## Y
+#define BLE_LCS_DEF(_name, _lcs_max_clients)                                        \
+static ble_lcs_client_spec_t        GLUE(_name, _client_data)[_lcs_max_clients];    \
+static ble_lcs_ctrlpt_client_spec_t GLUE(_name, _cp_client_data)[_lcs_max_clients]; \
+static ble_lcs_t _name =                                                            \
+{                                                                                   \
+    .p_client = GLUE(_name, _client_data),                                          \
+    .ctrl_pt.p_client = GLUE(_name, _cp_client_data),                               \
+}
+
 /* Exported functions ------------------------------------------------------- */
 /** @brief Function for initializing the Light Control Service
  *
@@ -185,12 +192,13 @@ typedef struct
  *                          have to be supplied by the application. It will be
  *                          initialized by this function, and will later be used
  *                          to identify this particular service instance
+ * @param[in]   max_clients Number of maximum connected clients
  * @param[in]   p_lcs_init  Information needed to initialize th service
  * @return      NRF_SUCCESS on successful initialization of service, otherwise
  *              an error code
  *
  */
-uint32_t ble_lcs_init(ble_lcs_t * p_lcs, const ble_lcs_init_t * p_lcs_init);
+uint32_t ble_lcs_init(ble_lcs_t * p_lcs, uint8_t max_clients, const ble_lcs_init_t * p_lcs_init);
 
 /** @brief Function for handling the Applications's BLE stack events.
  *
@@ -210,7 +218,7 @@ void ble_lcs_on_ble_evt(ble_lcs_t * p_lcs, ble_evt_t * p_ble_evt);
  * @return uint32_t
  *
  */
-uint32_t ble_lcs_light_measurement_send(const ble_lcs_t * p_lcs, const ble_lcs_lm_t * p_lcs_lm);
+uint32_t ble_lcs_light_measurement_send(const ble_lcs_t * p_lcs, uint16_t conn_handle, const ble_lcs_lm_t * p_lcs_lm);
 
 #endif /* BLE_LCS_H_INCLUDED */
 

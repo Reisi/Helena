@@ -74,6 +74,7 @@ SRC_FILES += \
 	./src/ble_cgw.c \
 	./src/ble_hids_c.c \
 	./src/ble_lcs.c \
+	./src/ble_lcs_c.c \
 	./src/ble_lcs_ctrlpt.c \
 	./src/ble_scanning.h \
 	./src/btle.c \

@@ -86,7 +86,21 @@ uint32_t i2c_read(uint8_t device_address, uint8_t register_address, uint8_t leng
 
     nrf_drv_twi_enable(&twi_instance);
     errCode = nrf_drv_twi_tx(&twi_instance, device_address, &register_address, 1, true);
-    if (errCode == NRF_ERROR_INTERNAL && autoRecover)
+    if (autoRecover)
+    {
+        uint32_t loop = 1;
+        while (errCode == NRF_ERROR_INTERNAL && loop--)
+        {
+            errCode = i2c_Recover();
+            if (errCode == NRF_SUCCESS)
+            {
+                nrf_drv_twi_enable(&twi_instance);
+                errCode = nrf_drv_twi_tx(&twi_instance, device_address, &register_address, 1, true);
+            }
+        }
+    }
+
+    /*if (errCode == NRF_ERROR_INTERNAL && autoRecover)
     {
         //APP_ERROR_HANDLER(0);
         errCode = i2c_Recover();
@@ -95,22 +109,36 @@ uint32_t i2c_read(uint8_t device_address, uint8_t register_address, uint8_t leng
             nrf_drv_twi_enable(&twi_instance);
             errCode = nrf_drv_twi_tx(&twi_instance, device_address, &register_address, 1, true);
         }
-    }
+    }*/
 
     if (errCode != NRF_SUCCESS)
         return errCode;
 
     errCode = nrf_drv_twi_rx(&twi_instance, device_address, data, length, false);
-    if (errCode == NRF_ERROR_INTERNAL && autoRecover)
+    if (autoRecover)
+    {
+        uint32_t loop = 1;
+        while (errCode == NRF_ERROR_INTERNAL && loop--)
+        {
+            errCode = i2c_Recover();
+            if (errCode == NRF_SUCCESS)
+            {
+                nrf_drv_twi_enable(&twi_instance);
+                errCode = nrf_drv_twi_tx(&twi_instance, device_address, &register_address, 1, true);
+            }
+        }
+    }
+
+    /*if (errCode == NRF_ERROR_INTERNAL && autoRecover)
     {
         //APP_ERROR_HANDLER(0);
         errCode = i2c_Recover();
         if (errCode == NRF_SUCCESS)
         {
             nrf_drv_twi_enable(&twi_instance);
-            errCode = nrf_drv_twi_rx(&twi_instance, device_address, data, length, false);
+            errCode = nrf_drv_twi_tx(&twi_instance, device_address, &register_address, 1, true);
         }
-    }
+    }*/
     nrf_drv_twi_disable(&twi_instance);
     return errCode;
 }
@@ -127,16 +155,30 @@ uint32_t i2c_write(uint8_t device_address, uint8_t register_address, uint8_t len
 
     nrf_drv_twi_enable(&twi_instance);
     errCode = nrf_drv_twi_tx(&twi_instance, device_address, buffer, length+1, false);
-    if (errCode == NRF_ERROR_INTERNAL && autoRecover)
+    if (autoRecover)
+    {
+        uint32_t loop = 1;
+        while (errCode == NRF_ERROR_INTERNAL && loop--)
+        {
+            errCode = i2c_Recover();
+            if (errCode == NRF_SUCCESS)
+            {
+                nrf_drv_twi_enable(&twi_instance);
+                errCode = nrf_drv_twi_tx(&twi_instance, device_address, &register_address, 1, true);
+            }
+        }
+    }
+
+    /*if (errCode == NRF_ERROR_INTERNAL && autoRecover)
     {
         //APP_ERROR_HANDLER(0);
         errCode = i2c_Recover();
         if (errCode == NRF_SUCCESS)
         {
             nrf_drv_twi_enable(&twi_instance);
-            errCode = nrf_drv_twi_tx(&twi_instance, device_address, buffer, length+1, false);
+            errCode = nrf_drv_twi_tx(&twi_instance, device_address, &register_address, 1, true);
         }
-    }
+    }*/
     nrf_drv_twi_disable(&twi_instance);
     return errCode;
 }

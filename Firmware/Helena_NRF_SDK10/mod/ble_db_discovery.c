@@ -9,17 +9,28 @@
  * the file.
  */
 
+/* This module is an modified version of the original Database Discovery
+ * provided by Nordic Semiconductors. The original module stores the
+ * information for all registered services in the provided ble_db_discovery_t.
+ * Therefore this database needs separate storage for each registered service.
+ * This modified version doesn't persistently store this information. After a
+ * service discovery is complete and the appropriate service handler was called
+ * the database is cleared and reused for the discovery of the next service. It
+ * is up to the user to save gatt information if the application needs them.
+ */
+
 #include "ble_db_discovery.h"
 #include <stdlib.h>
 #include <string.h>
 #include "nrf_error.h"
 #include "ble.h"
-#include "app_trace.h"
+//#include "app_trace.h"
 #include "nordic_common.h"
 
 #define SRV_DISC_START_HANDLE  0x0001                    /**< The start handle value used during service discovery. */
 #define DB_DISCOVERY_MAX_USERS BLE_DB_DISCOVERY_MAX_SRV  /**< The maximum number of users/registrations allowed by this module. */
-#define DB_LOG                 app_trace_log             /**< A debug logger macro that can be used in this file to do logging information over UART. */
+//#define DB_LOG                 app_trace_log             /**< A debug logger macro that can be used in this file to do logging information over UART. */
+#define DB_LOG(...)
 
 /**@brief Array of structures containing information about the registered application modules. */
 static struct
@@ -34,14 +45,14 @@ static struct
  *          in this array first. When all services needed to be discovered have been
  *          discovered, all pending events will be sent to the corresponding user modules.
  **/
-static struct
-{
-    ble_db_discovery_evt_t         evt;          /**< The pending event. */
-    ble_db_discovery_evt_handler_t evt_handler;  /**< The event handler which should be called to raise this event. */
-} m_pending_user_evts[DB_DISCOVERY_MAX_USERS];
+//static struct
+//{
+//    ble_db_discovery_evt_t         evt;          /**< The pending event. */
+//    ble_db_discovery_evt_handler_t evt_handler;  /**< The event handler which should be called to raise this event. */
+//} m_pending_user_evts[DB_DISCOVERY_MAX_USERS];
 
-static uint32_t m_pending_usr_evt_index;    /**< The index to the pending user event array, pointing to the last added pending user event. */
-static uint32_t m_num_of_handlers_reg;      /**< The number of handlers registered with the DB Discovery module. */
+//static uint32_t m_pending_usr_evt_index;    /**< The index to the pending user event array, pointing to the last added pending user event. */
+static uint8_t m_num_of_handlers_reg;      /**< The number of handlers registered with the DB Discovery module. */
 static bool     m_initialized = false;      /**< This variable Indicates if the module is initialized or not. */
 
 /**@brief     Function for fetching the event handler provided by a registered application module.
@@ -53,7 +64,7 @@ static bool     m_initialized = false;      /**< This variable Indicates if the 
  */
 static ble_db_discovery_evt_handler_t registered_handler_get(ble_uuid_t * p_srv_uuid)
 {
-    uint32_t i;
+    uint_fast8_t i;
 
     for (i = 0; i < m_num_of_handlers_reg; i++)
     {
@@ -96,18 +107,19 @@ static uint32_t registered_handler_set(const ble_uuid_t * const       p_srv_uuid
 
 /**@brief Function for sending all pending discovery events to the corresponding user modules.
  */
-static void pending_user_evts_send(void)
+/*static void pending_user_evts_send(void)
 {
     uint32_t i;
 
-    for (i = 0; i < m_num_of_handlers_reg; i++)
+//    for (i = 0; i < m_num_of_handlers_reg; i++)
+    for (i = 0; i < m_pending_usr_evt_index; i++)
     {
         // Pass the event to the corresponding event handler.
         m_pending_user_evts[i].evt_handler(&(m_pending_user_evts[i].evt));
     }
-    
+
     m_pending_usr_evt_index = 0;
-}
+}*/
 
 
 /**@brief     Function for indicating error to the application.
@@ -127,13 +139,21 @@ static void discovery_error_evt_trigger(ble_db_discovery_t * const p_db_discover
     ble_db_discovery_evt_handler_t p_evt_handler;
     ble_gatt_db_srv_t            * p_srv_being_discovered;
 
-    p_srv_being_discovered = &(p_db_discovery->services[p_db_discovery->curr_srv_ind]);
+    p_srv_being_discovered = &(p_db_discovery->service);
 
     p_evt_handler = registered_handler_get(&(p_srv_being_discovered->srv_uuid));
 
     if (p_evt_handler != NULL)
     {
-        if (m_pending_usr_evt_index < DB_DISCOVERY_MAX_USERS)
+        ble_db_discovery_evt_t evt;
+
+        evt.conn_handle = p_db_discovery->conn_handle;
+        evt.evt_type = BLE_DB_DISCOVERY_ERROR;
+        evt.params.err_code = err_code;
+
+        p_evt_handler(&evt);
+
+        /*if (m_pending_usr_evt_index < DB_DISCOVERY_MAX_USERS)
         {
             // Insert an event into the pending event list.
             m_pending_user_evts[m_pending_usr_evt_index].evt.conn_handle     =
@@ -155,7 +175,7 @@ static void discovery_error_evt_trigger(ble_db_discovery_t * const p_db_discover
         else
         {
             // Too many events pending. Do nothing. (Ideally this should not happen.)
-        }
+        }*/
     }
 }
 
@@ -177,13 +197,30 @@ static void discovery_complete_evt_trigger(ble_db_discovery_t * const p_db_disco
     ble_db_discovery_evt_handler_t p_evt_handler;
     ble_gatt_db_srv_t            * p_srv_being_discovered;
 
-    p_srv_being_discovered = &(p_db_discovery->services[p_db_discovery->curr_srv_ind]);
+    p_srv_being_discovered = &(p_db_discovery->service);
 
     p_evt_handler = registered_handler_get(&(p_srv_being_discovered->srv_uuid));
 
     if (p_evt_handler != NULL)
     {
-        if (m_pending_usr_evt_index < DB_DISCOVERY_MAX_USERS)
+        ble_db_discovery_evt_t evt;
+
+        evt.conn_handle = p_db_discovery->conn_handle;
+
+        if (is_srv_found)
+        {
+            evt.evt_type = BLE_DB_DISCOVERY_COMPLETE;
+            evt.params.p_discovered_db = p_srv_being_discovered;
+        }
+        else
+        {
+            evt.evt_type = BLE_DB_DISCOVERY_SRV_NOT_FOUND;
+        }
+
+        p_evt_handler(&evt);
+
+
+        /*if (m_pending_usr_evt_index < DB_DISCOVERY_MAX_USERS)
         {
             // Insert an event into the pending event list.
             m_pending_user_evts[m_pending_usr_evt_index].evt.conn_handle =
@@ -216,7 +253,7 @@ static void discovery_complete_evt_trigger(ble_db_discovery_t * const p_db_disco
             {
                 // Too many events pending. Do nothing. (Ideally this should not happen.)
             }
-        }
+        }*/
     }
 }
 
@@ -243,7 +280,10 @@ static void on_srv_disc_completion(ble_db_discovery_t * p_db_discovery)
 
         ble_gatt_db_srv_t * p_srv_being_discovered;
 
-        p_srv_being_discovered = &(p_db_discovery->services[p_db_discovery->curr_srv_ind]);
+        p_srv_being_discovered = &(p_db_discovery->service);
+
+        // Clear database struct before reading the next service
+        memset(p_srv_being_discovered, 0, sizeof(ble_gatt_db_srv_t));
 
         p_srv_being_discovered->srv_uuid =
             m_registered_handlers[p_db_discovery->curr_srv_ind].srv_uuid;
@@ -294,15 +334,15 @@ static void on_srv_disc_completion(ble_db_discovery_t * p_db_discovery)
  * @param[in] p_db_discovery The pointer to the DB Discovery structure.
  * @param[in] p_after_char   The pointer to the last discovered characteristic.
  *
- * @retval    True if a characteristic discovery is required. 
- * @retval    False if a characteristic discovery is NOT required.  
+ * @retval    True if a characteristic discovery is required.
+ * @retval    False if a characteristic discovery is NOT required.
  */
 static bool is_char_discovery_reqd(ble_db_discovery_t * const p_db_discovery,
                                    ble_gattc_char_t         * p_after_char)
 {
     if (
         p_after_char->handle_value <
-        p_db_discovery->services[p_db_discovery->curr_srv_ind].handle_range.end_handle
+        p_db_discovery->service.handle_range.end_handle
        )
     {
         // Handle value of the characteristic being discovered is less than the end handle of
@@ -310,7 +350,7 @@ static bool is_char_discovery_reqd(ble_db_discovery_t * const p_db_discovery,
         // present. Hence a characteristic discovery is required.
         return true;
     }
-    
+
     return false;
 }
 
@@ -320,7 +360,7 @@ static bool is_char_discovery_reqd(ble_db_discovery_t * const p_db_discovery,
  * @details    This function finds out if there is a possibility of existence of descriptors between
  *             current characteristic and the next characteristic. If so, this function will compute
  *             the handle range on which the descriptors may be present and will return it.
- *             If the current characteristic is the last known characteristic, then this function 
+ *             If the current characteristic is the last known characteristic, then this function
  *             will use the service end handle to find out if the current characteristic can have
  *             descriptors.
  *
@@ -346,7 +386,7 @@ static bool is_desc_discovery_reqd(ble_db_discovery_t       * p_db_discovery,
         // handle of the current characteristic is equal to the service end handle.
         if (
             p_curr_char->characteristic.handle_value ==
-            p_db_discovery->services[p_db_discovery->curr_srv_ind].handle_range.end_handle
+            p_db_discovery->service.handle_range.end_handle
            )
         {
             // No descriptors can be present for the current characteristic. p_curr_char is the last
@@ -355,11 +395,11 @@ static bool is_desc_discovery_reqd(ble_db_discovery_t       * p_db_discovery,
         }
 
         p_handle_range->start_handle = p_curr_char->characteristic.handle_value + 1;
-        
+
         // Since the current characteristic is the last characteristic in the service, the end
         // handle should be the end handle of the service.
         p_handle_range->end_handle =
-            p_db_discovery->services[p_db_discovery->curr_srv_ind].handle_range.end_handle;
+            p_db_discovery->service.handle_range.end_handle;
 
         return true;
     }
@@ -392,7 +432,7 @@ static uint32_t characteristics_discover(ble_db_discovery_t * const p_db_discove
     ble_gatt_db_srv_t      * p_srv_being_discovered;
     ble_gattc_handle_range_t handle_range;
 
-    p_srv_being_discovered = &(p_db_discovery->services[p_db_discovery->curr_srv_ind]);
+    p_srv_being_discovered = &(p_db_discovery->service);
 
     if (p_db_discovery->curr_char_ind != 0)
     {
@@ -401,7 +441,7 @@ static uint32_t characteristics_discover(ble_db_discovery_t * const p_db_discove
         ble_gattc_char_t * p_prev_char;
         uint8_t            prev_char_ind = p_db_discovery->curr_char_ind - 1;
 
-        p_srv_being_discovered = &(p_db_discovery->services[p_db_discovery->curr_srv_ind]);
+        p_srv_being_discovered = &(p_db_discovery->service);
 
         p_prev_char = &(p_srv_being_discovered->charateristics[prev_char_ind].characteristic);
 
@@ -443,9 +483,9 @@ static uint32_t descriptors_discover(ble_db_discovery_t * const p_db_discovery,
     ble_gattc_handle_range_t   handle_range;
     ble_gatt_db_char_t       * p_curr_char_being_discovered;
     ble_gatt_db_srv_t        * p_srv_being_discovered;
-    bool                       is_discovery_reqd = false;    
+    bool                       is_discovery_reqd = false;
 
-    p_srv_being_discovered = &(p_db_discovery->services[p_db_discovery->curr_srv_ind]);
+    p_srv_being_discovered = &(p_db_discovery->service);
 
     p_curr_char_being_discovered =
         &(p_srv_being_discovered->charateristics[p_db_discovery->curr_char_ind]);
@@ -529,7 +569,7 @@ static void on_primary_srv_discovery_rsp(ble_db_discovery_t * const    p_db_disc
         const ble_gattc_evt_prim_srvc_disc_rsp_t * p_prim_srvc_disc_rsp_evt;
         ble_gatt_db_srv_t                        * p_srv_being_discovered;
 
-        p_srv_being_discovered = &(p_db_discovery->services[p_db_discovery->curr_srv_ind]);
+        p_srv_being_discovered = &(p_db_discovery->service);
 
         p_prim_srvc_disc_rsp_evt = &(p_ble_gattc_evt->params.prim_srvc_disc_rsp);
 
@@ -567,9 +607,9 @@ static void on_characteristic_discovery_rsp(ble_db_discovery_t * const    p_db_d
 {
     uint32_t                 err_code;
     ble_gatt_db_srv_t      * p_srv_being_discovered;
-    bool                     perform_desc_discov = false;    
+    bool                     perform_desc_discov = false;
 
-    p_srv_being_discovered = &(p_db_discovery->services[p_db_discovery->curr_srv_ind]);
+    p_srv_being_discovered = &(p_db_discovery->service);
 
     if (p_ble_gattc_evt->gatt_status == BLE_GATT_STATUS_SUCCESS)
     {
@@ -580,7 +620,7 @@ static void on_characteristic_discovery_rsp(ble_db_discovery_t * const    p_db_d
         // Find out the number of characteristics that were previously discovered (in earlier
         // characteristic discovery responses, if any).
         uint8_t num_chars_prev_disc = p_srv_being_discovered->char_count;
-        
+
         // Find out the number of characteristics that are currently discovered (in the
         // characteristic discovery response being handled).
         uint8_t num_chars_curr_disc = p_char_disc_rsp_evt->count;
@@ -608,9 +648,9 @@ static void on_characteristic_discovery_rsp(ble_db_discovery_t * const    p_db_d
 
             p_srv_being_discovered->charateristics[i].cccd_handle = BLE_GATT_HANDLE_INVALID;
         }
-        
+
         ble_gattc_char_t * p_last_known_char;
-        
+
         p_last_known_char = &(p_srv_being_discovered->charateristics[i - 1].characteristic);
 
         // If no more characteristic discovery is required, or if the maximum number of supported
@@ -690,7 +730,7 @@ static void on_descriptor_discovery_rsp(ble_db_discovery_t * const    p_db_disco
     const ble_gattc_evt_desc_disc_rsp_t * p_desc_disc_rsp_evt;
     ble_gatt_db_srv_t                   * p_srv_being_discovered;
 
-    p_srv_being_discovered = &(p_db_discovery->services[p_db_discovery->curr_srv_ind]);
+    p_srv_being_discovered = &(p_db_discovery->service);
 
     p_desc_disc_rsp_evt = &(p_ble_gattc_evt->params.desc_disc_rsp);
 
@@ -766,7 +806,7 @@ uint32_t ble_db_discovery_init(void)
 {
     m_num_of_handlers_reg      = 0;
     m_initialized              = true;
-    m_pending_usr_evt_index    = 0;
+    //m_pending_usr_evt_index    = 0;
 
     return NRF_SUCCESS;
 }
@@ -776,7 +816,7 @@ uint32_t ble_db_discovery_close()
 {
     m_num_of_handlers_reg      = 0;
     m_initialized              = false;
-    m_pending_usr_evt_index    = 0;
+    //m_pending_usr_evt_index    = 0;
 
     return NRF_SUCCESS;
 }
@@ -829,21 +869,24 @@ uint32_t ble_db_discovery_start(ble_db_discovery_t * const p_db_discovery,
         return NRF_ERROR_BUSY;
     }
 
+    // Clear database
+    memset(p_db_discovery, 0, sizeof(ble_db_discovery_t));
+
     ble_gatt_db_srv_t * p_srv_being_discovered;
 
-    m_pending_usr_evt_index   = 0;
+    //m_pending_usr_evt_index   = 0;
 
     p_db_discovery->conn_handle  = conn_handle;
     p_db_discovery->discoveries_count = 0;
     p_db_discovery->curr_srv_ind = 0;
 
-    p_srv_being_discovered = &(p_db_discovery->services[p_db_discovery->curr_srv_ind]);
+    p_srv_being_discovered = &(p_db_discovery->service);
 
     p_srv_being_discovered->srv_uuid = m_registered_handlers[p_db_discovery->curr_srv_ind].srv_uuid;
 
     DB_LOG("[DB]: Starting discovery of service with UUID 0x%x for Connection handle %d\r\n",
            p_srv_being_discovered->srv_uuid.uuid, p_db_discovery->conn_handle);
-    
+
     uint32_t err_code;
 
     err_code = sd_ble_gattc_primary_services_discover(p_db_discovery->conn_handle,
@@ -857,6 +900,94 @@ uint32_t ble_db_discovery_start(ble_db_discovery_t * const p_db_discovery,
 
     return NRF_SUCCESS;
 }
+
+/*uint32_t ble_db_discovery_database_get(pm_peer_data_remote_gatt_db_t * p_database)
+{
+    if (p_database == NULL || p_database->p_data == NULL)
+    {
+        return NRF_ERROR_NULL;
+    }
+
+    if (!m_initialized)
+    {
+        return NRF_ERROR_INVALID_STATE;
+    }
+
+    if (m_num_of_handlers_reg == 0)
+    {
+        return NRF_ERROR_INVALID_STATE;
+    }
+
+    uint_fast8_t size = p_database->service_count;
+    p_database->service_count = 0;
+    for (uint_fast8_t i = 0; i < m_num_of_handlers_reg; i++)
+    {
+        if (m_pending_user_evts[i].evt.evt_type == BLE_DB_DISCOVERY_COMPLETE)
+        {
+            p_database->p_data[i] = m_pending_user_evts[i].evt.params.discovered_db;
+            if (++p_database->service_count == size)
+            {
+                break;
+            }
+        }
+    }
+    return NRF_SUCCESS;
+}
+
+uint32_t ble_db_discovery_database_process(uint16_t conn_handle, const pm_peer_data_remote_gatt_db_t * p_database)
+{
+    if (p_database == NULL || p_database->p_data == NULL)
+    {
+        return NRF_ERROR_NULL;
+    }
+
+    if (!m_initialized)
+    {
+        return NRF_ERROR_INVALID_STATE;
+    }
+
+    if (m_num_of_handlers_reg == 0 || m_pending_usr_evt_index != 0)
+    {
+        return NRF_ERROR_INVALID_STATE;
+    }
+
+    if (p_database->service_count == 0)
+    {
+        return NRF_ERROR_INVALID_PARAM;
+    }
+
+    if (p_database->service_count > m_num_of_handlers_reg)
+    {
+        return NRF_ERROR_DATA_SIZE;
+    }
+
+    ble_db_discovery_evt_handler_t p_evt_handler;
+    ble_gatt_db_srv_t            * p_srv_being_discovered;
+    for (uint_fast8_t i = 0; i < p_database->service_count; i++)
+    {
+        p_srv_being_discovered = &p_database->p_data[i];
+        p_evt_handler = registered_handler_get(&(p_srv_being_discovered->srv_uuid));
+
+        if (p_evt_handler != NULL && m_pending_usr_evt_index < DB_DISCOVERY_MAX_USERS)
+        {
+            m_pending_user_evts[m_pending_usr_evt_index].evt.conn_handle = conn_handle;
+
+            m_pending_user_evts[m_pending_usr_evt_index].evt.evt_type =
+                BLE_DB_DISCOVERY_COMPLETE;
+
+            m_pending_user_evts[m_pending_usr_evt_index].evt.params.discovered_db =
+                *p_srv_being_discovered;
+
+            m_pending_user_evts[m_pending_usr_evt_index].evt_handler = p_evt_handler;
+
+            m_pending_usr_evt_index++;
+        }
+    }
+
+    pending_user_evts_send();
+
+    return NRF_SUCCESS;
+}*/
 
 
 void ble_db_discovery_on_ble_evt(ble_db_discovery_t * const p_db_discovery,
@@ -878,10 +1009,13 @@ void ble_db_discovery_on_ble_evt(ble_db_discovery_t * const p_db_discovery,
         case BLE_GAP_EVT_CONNECTED:
             p_db_discovery->conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
             break;
-        
+
         case BLE_GAP_EVT_DISCONNECTED:
-            memset(p_db_discovery, 0, sizeof(ble_db_discovery_t));
-            p_db_discovery->conn_handle = BLE_CONN_HANDLE_INVALID;
+            if (p_ble_evt->evt.gap_evt.conn_handle == p_db_discovery->conn_handle)
+            {
+                memset(p_db_discovery, 0, sizeof(ble_db_discovery_t));
+                p_db_discovery->conn_handle = BLE_CONN_HANDLE_INVALID;
+            }
             break;
 
         case BLE_GATTC_EVT_PRIM_SRVC_DISC_RSP:

@@ -22,6 +22,7 @@
 #include "ble_cgw.h"
 #include "ble_lcs.h"
 #include "ble_hids_c.h"
+#include "ble_lcs_c.h"
 #include "ble_advertising.h"
 #include "ble_db_discovery.h"
 #include "ble_scanning.h"
@@ -37,67 +38,41 @@
 /* External variables --------------------------------------------------------*/
 
 /* Private typedef -----------------------------------------------------------*/
-/*typedef struct
+typedef struct
 {
-    uint8_t     * pData;
-    uint16_t      dataLen;
-} advData_t;*/
+    btle_eventHandler_t handler;    // event handler given at initialization
+    btle_scanMode_t scanConfig;     // current scan configuration
+    ble_scan_mode_t scanMode;       // current scan mode
+    uint16_t connHandleCentral;     // connection handle related to central connection
+    uint16_t connHandlePeriph;      // connection handle related to peripheral connection
+    bool discoverOnCentralConn;     // flag indicating, if a database discovery shall be started on a connection as central
+} state_t;
 
 /* Private macros ------------------------------------------------------------*/
-#define UUID16_EXTRACT(DST, SRC) \
-    do                           \
-    {                            \
-        (*(DST))   = (SRC)[1];   \
-        (*(DST)) <<= 8;          \
-        (*(DST))  |= (SRC)[0];   \
-    } while (0)
+#define COUNT_OF(x)                     (sizeof(x)/sizeof(x[0]))
 
 /* Private defines -----------------------------------------------------------*/
+#define NUM_OF_PERIPH_CONNECTIONS       1
+#define NUM_OF_CENTRAL_CONNECTIONS      1
+#define NUM_OF_CONNECTIONS              (NUM_OF_PERIPH_CONNECTIONS + NUM_OF_CENTRAL_CONNECTIONS)
+
 #define UUID16_SIZE                     2
+#define UUID128_SIZE                    16
 
 #define DEVICE_NAME                     "Helena"
 #define DEVICE_APPEARANCE               BLE_APPEARANCE_GENERIC_CYCLING
-#define MANUFACTURER_NAME               "insert_name_here"
-
-#define MIN_CONN_INTERVAL               MSEC_TO_UNITS(50, UNIT_1_25_MS)
-#define MAX_CONN_INTERVAL               MSEC_TO_UNITS(100, UNIT_1_25_MS)
-#define SLAVE_LATENCY                   0
-#define CONN_SUP_TIMEOUT                MSEC_TO_UNITS(4000, UNIT_10_MS)
-#define FIRST_CONN_PARAMS_UPDATE_DELAY  APP_TIMER_TICKS(5000, APP_TIMER_PRESCALER)
-#define NEXT_CONN_PARAMS_UPDATE_DELAY   APP_TIMER_TICKS(30000, APP_TIMER_PRESCALER)
-#define MAX_CONN_PARAMS_UPDATE_COUNT    3
-
-#define ADV_INTERVAL_FAST               MSEC_TO_UNITS(40, UNIT_0_625_MS)
-#define ADV_INTERVAL_SLOW               MSEC_TO_UNITS(1280, UNIT_0_625_MS)
-#define ADV_TIMEOUT_IN_SECONDS          180
-
-#define SCAN_INTERVAL_FAST              MSEC_TO_UNITS(22.5, UNIT_0_625_MS)
-#define SCAN_WINDOW_FAST                MSEC_TO_UNITS(11.25, UNIT_0_625_MS)
-#define SCAN_TIMEOUT_FAST               180
-#define SCAN_INTERVAL_SLOW              MSEC_TO_UNITS(1280, UNIT_0_625_MS)
-#define SCAN_WINDOW_SLOW                MSEC_TO_UNITS(11.25, UNIT_0_625_MS)
-#define SCAN_TIMEOUT_SLOW               0
-
-#define SEC_PARAM_BOND                  1                       /**< Perform bonding. */
-#define SEC_PARAM_MITM                  0                       /**< Man In The Middle protection not required. */
-#define SEC_PARAM_IO_CAPABILITIES       BLE_GAP_IO_CAPS_NONE    /**< No I/O capabilities. */
-#define SEC_PARAM_OOB                   0                       /**< Out Of Band data not available. */
-#define SEC_PARAM_MIN_KEY_SIZE          7                       /**< Minimum encryption key size. */
-#define SEC_PARAM_MAX_KEY_SIZE          16                      /**< Maximum encryption key size. */
 
 #define LCS_NOTIFY_PERIOD               APP_TIMER_TICKS(1000, APP_TIMER_PRESCALER)
 
 /* Private variables ---------------------------------------------------------*/
-static ble_cgw_t cgwGattsData;          /**< gatt server handles for the com gateway service */
-static ble_lcs_t lcsGattsData;          /**< gatt server handles for the light control service  */
+static ble_cgw_t cgwGattsData;                  // gatt server handles for the com gateway service
+BLE_LCS_DEF(lcsGattsData, NUM_OF_CONNECTIONS);  // gatt server handles for the light control service
 
-static ble_db_discovery_t discDatabase; /**< database for service discovery */
-static ble_hids_c_t hidsGattcData;      /**< gatt client handles for the hid service */
+static ble_db_discovery_t discDatabase;         // database for service discovery
+static ble_hids_c_t hidsGattcData;              // gatt client handles for the hid service
+BLE_LCS_C_DEF(lcsGattcData, NUM_OF_CONNECTIONS);// gatt client handles for the lcs service
 
-static btle_eventHandler_t pEventHandler; /**< ble event handler */
-
-static btle_scanMode_t scanConfig;    /**< actual requested scan mode configuration */
-static ble_scan_mode_t scanMode;        /**< actual Scan mode */
+static state_t state;                           // current state
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -112,20 +87,27 @@ static void onCentralEvt(ble_evt_t * pBleEvt)
     switch (pBleEvt->header.evt_id)
     {
     case BLE_GAP_EVT_CONNECTED:
+        state.connHandleCentral = pBleEvt->evt.gap_evt.conn_handle;
+
         evt.evt = BTLE_EVT_CONNECTION;
         evt.subEvt.conn = BTLE_EVT_CONN_CENTRAL_CONNECTED;
-        pEventHandler(&evt);
+        evt.connHandle = pBleEvt->evt.gap_evt.conn_handle;
+        state.handler(&evt);
 
         // start database discovery
-        memset(&discDatabase, 0, sizeof(discDatabase));
-        errCode = ble_db_discovery_start(&discDatabase, pBleEvt->evt.gap_evt.conn_handle);
-        APP_ERROR_CHECK(errCode);
-
-        // enable bonding if device is not bonded yet
-        pm_peer_id_t peerId;
-        if (pm_peer_id_get(pBleEvt->evt.gap_evt.conn_handle, &peerId) == NRF_ERROR_NOT_FOUND)
+        if (discDatabase.discovery_in_progress == false)
         {
-            errCode = pm_link_secure(pBleEvt->evt.gap_evt.conn_handle, true);
+            memset(&discDatabase, 0, sizeof(discDatabase));
+            errCode = ble_db_discovery_start(&discDatabase, state.connHandleCentral);
+            APP_ERROR_CHECK(errCode);
+        }
+
+        // secure link if device is not bonded yet
+        pm_link_status_t linkStatus;
+        (void)pm_link_status_get(state.connHandleCentral, &linkStatus);
+        if (linkStatus.connected && !linkStatus.bonded && !linkStatus.encrypted)
+        {
+            errCode = pm_link_secure(state.connHandleCentral, true);
             APP_ERROR_CHECK(errCode);
         }
         break;
@@ -133,7 +115,10 @@ static void onCentralEvt(ble_evt_t * pBleEvt)
     case BLE_GAP_EVT_DISCONNECTED:
         evt.evt = BTLE_EVT_CONNECTION;
         evt.subEvt.conn = BTLE_EVT_CONN_CENTRAL_DISCONNECTED;
-        pEventHandler(&evt);
+        evt.connHandle = pBleEvt->evt.gap_evt.conn_handle;
+        state.handler(&evt);
+
+        state.connHandleCentral = BLE_CONN_HANDLE_INVALID;
         break;
 
     case BLE_GAP_EVT_CONN_PARAM_UPDATE_REQUEST:
@@ -155,15 +140,29 @@ static void onPeriphEvt(ble_evt_t * pBleEvt)
     switch (pBleEvt->header.evt_id)
     {
     case BLE_GAP_EVT_CONNECTED:
+        state.connHandlePeriph = pBleEvt->evt.gap_evt.conn_handle;
+
         evt.evt = BTLE_EVT_CONNECTION;
         evt.subEvt.conn = BTLE_EVT_CONN_PERIPH_CONNECTED;
-        pEventHandler(&evt);
+        evt.connHandle = pBleEvt->evt.gap_evt.conn_handle;
+        state.handler(&evt);
+
+        // start database discovery
+        if (discDatabase.discovery_in_progress == false)
+        {
+            memset(&discDatabase, 0, sizeof(discDatabase));
+            uint32_t errCode = ble_db_discovery_start(&discDatabase, state.connHandlePeriph);
+            APP_ERROR_CHECK(errCode);
+        }
         break;
 
     case BLE_GAP_EVT_DISCONNECTED:
         evt.evt = BTLE_EVT_CONNECTION;
         evt.subEvt.conn = BTLE_EVT_CONN_PERIPH_DISCONNECTED;
-        pEventHandler(&evt);
+        evt.connHandle = pBleEvt->evt.gap_evt.conn_handle;
+        state.handler(&evt);
+
+        state.connHandlePeriph = BLE_CONN_HANDLE_INVALID;
         break;
 
     default:
@@ -180,12 +179,16 @@ static void bleEvtDispatch(ble_evt_t * pBleEvt)
 
     uint8_t role = ble_conn_state_role(pBleEvt->evt.gap_evt.conn_handle);
 
+    // database discovery and light control service (client and server) are used in both directions
+    ble_db_discovery_on_ble_evt(&discDatabase, pBleEvt);
+    ble_lcs_on_ble_evt(&lcsGattsData, pBleEvt);
+    ble_lcs_c_on_ble_evt(&lcsGattcData, pBleEvt);
+
     if (role == BLE_GAP_ROLE_PERIPH || role == BLE_GAP_ROLE_INVALID)
     {
         ble_conn_params_on_ble_evt(pBleEvt);
         ble_advertising_on_ble_evt(pBleEvt);
-        ble_cgw_on_ble_evt(&cgwGattsData, pBleEvt);
-        ble_lcs_on_ble_evt(&lcsGattsData, pBleEvt);
+        ble_cgw_on_ble_evt(&cgwGattsData, pBleEvt); // the com gateway is only used in peripheral connections
 #ifdef HELENA_DEBUG_FIELD_TESTING
         debug_OnBleEvt(pBleEvt);
 #endif
@@ -194,8 +197,7 @@ static void bleEvtDispatch(ble_evt_t * pBleEvt)
     if (role == BLE_GAP_ROLE_CENTRAL || role == BLE_GAP_ROLE_INVALID)
     {
         ble_scanning_on_ble_evt(pBleEvt);
-        ble_db_discovery_on_ble_evt(&discDatabase, pBleEvt);
-        ble_hids_c_on_ble_evt(&hidsGattcData, pBleEvt);
+        ble_hids_c_on_ble_evt(&hidsGattcData, pBleEvt); // the hid server client is only used in central connections
         onCentralEvt(pBleEvt);
     }
 }
@@ -222,68 +224,71 @@ static void pmEvtHandler(pm_evt_t const * pEvt)
 
     switch(pEvt->evt_id)
     {
-        case PM_EVT_LINK_SECURE_FAILED:
-            /** In some cases, when securing fails, it can be restarted directly. Sometimes it can
-             *  be restarted, but only after changing some Security Parameters. Sometimes, it cannot
-             *  be restarted until the link is disconnected and reconnected. Sometimes it is
-             *  impossible, to secure the link, or the peer device does not support it. How to
-             *  handle this error is highly application dependent. */
-            if (pEvt->params.link_secure_failed_evt.error.error_type == PM_ERROR_TYPE_PM_SEC_ERROR)
+    case PM_EVT_LINK_SECURED:
+        break;
+
+    case PM_EVT_LINK_SECURE_FAILED:
+        /** In some cases, when securing fails, it can be restarted directly. Sometimes it can
+         *  be restarted, but only after changing some Security Parameters. Sometimes, it cannot
+         *  be restarted until the link is disconnected and reconnected. Sometimes it is
+         *  impossible, to secure the link, or the peer device does not support it. How to
+         *  handle this error is highly application dependent. */
+        if (pEvt->params.link_secure_failed_evt.error.error_type == PM_ERROR_TYPE_PM_SEC_ERROR)
+        {
+            switch (pEvt->params.link_secure_failed_evt.error.error.pm_sec_error)
             {
-                switch (pEvt->params.link_secure_failed_evt.error.error.pm_sec_error)
-                {
-                    case PM_SEC_ERROR_CODE_PIN_OR_KEY_MISSING:
-                        // Rebond if one party has lost its keys.
-                        errCode = pm_link_secure(pEvt->conn_handle, true);
-                        if (errCode != NRF_ERROR_INVALID_STATE)
-                        {
-                            APP_ERROR_CHECK(errCode);
-                        }
-                        break;
+                case PM_SEC_ERROR_CODE_PIN_OR_KEY_MISSING:
+                    // Rebond if one party has lost its keys.
+                    errCode = pm_link_secure(pEvt->conn_handle, true);
+                    if (errCode != NRF_ERROR_INVALID_STATE)
+                    {
+                        APP_ERROR_CHECK(errCode);
+                    }
+                    break;
 
-                    default:
-                        break;
-                }
+                default:
+                    break;
             }
-            else if (pEvt->params.link_secure_failed_evt.error.error_type == PM_ERROR_TYPE_SEC_STATUS)
+        }
+        else if (pEvt->params.link_secure_failed_evt.error.error_type == PM_ERROR_TYPE_SEC_STATUS)
+        {
+            switch (pEvt->params.link_secure_failed_evt.error.error.sec_status)
             {
-                switch (pEvt->params.link_secure_failed_evt.error.error.sec_status)
-                {
-                    default:
-                        break;
-                }
+                default:
+                    break;
             }
-            break;
+        }
+        break;
 
-        case PM_EVT_STORAGE_FULL:
-            // Run garbage collection on the flash.
-            errCode = fds_gc();
-            if (errCode != NRF_ERROR_BUSY)
-            {
-                APP_ERROR_CHECK(errCode);
-            }
-            break;
+    case PM_EVT_STORAGE_FULL:
+        // Run garbage collection on the flash.
+        errCode = fds_gc();
+        if (errCode != NRF_ERROR_BUSY)
+        {
+            APP_ERROR_CHECK(errCode);
+        }
+        break;
 
-        case PM_EVT_ERROR_UNEXPECTED:
-            // A likely fatal error occurred. Assert.
-            APP_ERROR_CHECK(pEvt->params.error_unexpected_evt.error);
-            break;
+    case PM_EVT_ERROR_UNEXPECTED:
+        // A likely fatal error occurred. Assert.
+        APP_ERROR_CHECK(pEvt->params.error_unexpected_evt.error);
+        break;
 
-        //case PM_EVT_PEER_DATA_UPDATED:
-        //    APP_ERROR_CHECK_BOOL(false);
-        //    break;
+    //case PM_EVT_PEER_DATA_UPDATED:
+    //    APP_ERROR_CHECK_BOOL(false);
+    //    break;
 
-        case PM_EVT_PEER_DATA_UPDATE_FAILED:
-            APP_ERROR_CHECK_BOOL(false);
-            break;
+    case PM_EVT_PEER_DATA_UPDATE_FAILED:
+        APP_ERROR_CHECK_BOOL(false);
+        break;
 
-        case PM_EVT_ERROR_LOCAL_DB_CACHE_APPLY:
-            // The local database has likely changed, send service changed indications.
-            pm_local_database_has_changed();
-            break;
+    case PM_EVT_ERROR_LOCAL_DB_CACHE_APPLY:
+        // The local database has likely changed, send service changed indications.
+        pm_local_database_has_changed();
+        break;
 
-        default:
-            break;
+    default:
+        break;
     }
 }
 
@@ -307,17 +312,17 @@ static void peerManagerInit(bool eraseBonds)
     ble_gap_sec_params_t secParam;
     memset(&secParam, 0, sizeof(ble_gap_sec_params_t));
 
-    // Security parameters to be used for all security procedures.
-    secParam.bond              = SEC_PARAM_BOND;
-    secParam.mitm              = SEC_PARAM_MITM;
-    secParam.io_caps           = SEC_PARAM_IO_CAPABILITIES;
-    secParam.oob               = SEC_PARAM_OOB;
-    secParam.min_key_size      = SEC_PARAM_MIN_KEY_SIZE;
-    secParam.max_key_size      = SEC_PARAM_MAX_KEY_SIZE;
+    // just works Security parameters to be used for all security procedures.
+    secParam.bond              = true;
+    secParam.mitm              = false;
+    secParam.io_caps           = BLE_GAP_IO_CAPS_NONE;
+    secParam.oob               = false;
+    secParam.min_key_size      = 7;
+    secParam.max_key_size      = 16;
     secParam.kdist_periph.enc  = 1;
-    secParam.kdist_periph.id   = 1;
+    secParam.kdist_periph.id   = 0;
     secParam.kdist_central.enc = 1;
-    secParam.kdist_central.id  = 1;
+    secParam.kdist_central.id  = 0;
 
     errCode = pm_sec_params_set(&secParam);
     APP_ERROR_CHECK(errCode);
@@ -345,10 +350,10 @@ static void gapParamsInit(void)
 
     ble_gap_conn_params_t gapConnParams;
     memset(&gapConnParams, 0, sizeof(ble_gap_conn_params_t));
-    gapConnParams.min_conn_interval = MIN_CONN_INTERVAL;
-    gapConnParams.max_conn_interval = MAX_CONN_INTERVAL;
-    gapConnParams.slave_latency     = SLAVE_LATENCY;
-    gapConnParams.conn_sup_timeout  = CONN_SUP_TIMEOUT;
+    gapConnParams.min_conn_interval = MSEC_TO_UNITS(50, UNIT_1_25_MS);
+    gapConnParams.max_conn_interval = MSEC_TO_UNITS(100, UNIT_1_25_MS);
+    gapConnParams.slave_latency     = 0;
+    gapConnParams.conn_sup_timeout  = MSEC_TO_UNITS(4000, UNIT_10_MS);
 
     errCode = sd_ble_gap_ppcp_set(&gapConnParams);
     APP_ERROR_CHECK(errCode);
@@ -371,10 +376,10 @@ static void connParamsInit(void)
     memset(&connParamInit, 0, sizeof(connParamInit));
 
     connParamInit.p_conn_params                  = NULL;    // use default connection parameter
-    connParamInit.first_conn_params_update_delay = FIRST_CONN_PARAMS_UPDATE_DELAY;
-    connParamInit.next_conn_params_update_delay  = NEXT_CONN_PARAMS_UPDATE_DELAY;
-    connParamInit.max_conn_params_update_count   = MAX_CONN_PARAMS_UPDATE_COUNT;
-    connParamInit.start_on_notify_cccd_handle    = cgwGattsData.rx_handles.cccd_handle;
+    connParamInit.first_conn_params_update_delay = APP_TIMER_TICKS(5000, APP_TIMER_PRESCALER);
+    connParamInit.next_conn_params_update_delay  = APP_TIMER_TICKS(30000, APP_TIMER_PRESCALER);
+    connParamInit.max_conn_params_update_count   = 3;
+    connParamInit.start_on_notify_cccd_handle    = BLE_GATT_HANDLE_INVALID;//cgwGattsData.rx_handles.cccd_handle;
     connParamInit.disconnect_on_fail             = true;
     connParamInit.evt_handler                    = NULL;
     connParamInit.error_handler                  = connParamsErrorHandler;
@@ -395,70 +400,63 @@ static void cgwDataHandler(ble_cgw_t * pCgw, com_MessageStruct * pMessageRx)
 static void lcsCpEventHandler(ble_lcs_ctrlpt_t * pLcsCtrlpt,
                                                    ble_lcs_ctrlpt_evt_t * pEvt)
 {
+    if (state.handler == NULL)
+        return;
+
     btle_event_t evt;
     evt.evt = BTLE_EVT_LCS_CTRL_POINT;
+    evt.connHandle = pEvt->conn_handle;
 
     switch (pEvt->evt_type)
     {
     case BLE_LCS_CTRLPT_EVT_REQ_MODE_CNT:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_REQ_MODE_CNT;
-        pEventHandler(&evt);
         break;
     case BLE_LCS_CTRLPT_EVT_REQ_GRP_CNFG:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_REQ_GROUP_CNT;
-        pEventHandler(&evt);
         break;
     case BLE_LCS_CTRLPT_EVT_REQ_MODE_CNFG:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_REQ_MODE_CONFIG;
         evt.lcscpEventParams.modeConfigStart = pEvt->p_params->mode_list_start;
-        pEventHandler(&evt);
         break;
     case BLE_LCS_CTRLPT_EVT_SET_MODE:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_SET_MODE;
         evt.lcscpEventParams.modeToSet = pEvt->p_params->set_mode;
-        pEventHandler(&evt);
         break;
     case BLE_LCS_CTRLPT_EVT_CNFG_MODE:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_CONFIG_MODE;
         evt.lcscpEventParams.modeToConfig.modeNumber = pEvt->p_params->mode_config.mode_number_start;
         evt.lcscpEventParams.modeToConfig.listEntries = pEvt->p_params->mode_config.mode_entries;
         evt.lcscpEventParams.modeToConfig.pConfig = (btle_LcsModeConfig_t*)pEvt->p_params->mode_config.config;
-        pEventHandler(&evt);
         break;
     case BLE_LCS_CTRLPT_EVT_CNFG_GROUP:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_CONFIG_GROUP;
         evt.lcscpEventParams.groupConfig = pEvt->p_params->group_config;
-        pEventHandler(&evt);
         break;
     case BLE_LCS_CTRLPT_EVT_REQ_LED_CNFG:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_REQ_LED_CONFIG;
-        pEventHandler(&evt);
         break;
     case BLE_LCS_CTRLPT_EVT_CHK_LED_CNFG:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_CHECK_LED_CONFIG;
-        pEventHandler(&evt);
         break;
     case BLE_LCS_CTRLPT_EVT_REQ_SENS_OFF:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_REQ_SENS_OFFSET;
-        pEventHandler(&evt);
         break;
     case BLE_LCS_CTRLPT_EVT_CALIB_SENS_OFF:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_CALIB_SENS_OFFSET;
-        pEventHandler(&evt);
         break;
     case BLE_LCS_CTRLPT_EVT_REQ_LIMITS:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_REQ_LIMITS;
-        pEventHandler(&evt);
         break;
     case BLE_LCS_CTRLPT_EVT_SET_LIMITS:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_SET_LIMITS;
         evt.lcscpEventParams.currentLimits.floodInPercent = pEvt->p_params->current_limits.flood;
         evt.lcscpEventParams.currentLimits.spotInPercent = pEvt->p_params->current_limits.spot;
-        pEventHandler(&evt);
         break;
     default:
-        break;
+        return;
     }
+    state.handler(&evt);
 }
 
 /** @brief Error handler for the light control service
@@ -479,19 +477,19 @@ static void servicesInit(btle_lcsFeature_t* pFeature)
 
     //initialize device information service
     ble_dis_init_t disInit;
-    char versionString[24];
+    char versionString[48];
     uint_fast8_t i = 0;
-    versionString[i++] = VERSION_MAJOR + '0';
+    if (VERSION_MAJOR / 10)
+        versionString[i++] = (VERSION_MAJOR / 10) + '0';
+    versionString[i++] = (VERSION_MAJOR % 10) + '0';
     versionString[i++] = '.';
-    if (VERSION_MINOR < 10)
-        versionString[i++] = VERSION_MINOR + '0';
-    else
-        versionString[i++] = VERSION_MINOR - 10 + 'A';
+    if (VERSION_MINOR / 10)
+        versionString[i++] = (VERSION_MINOR / 10) + '0';
+    versionString[i++] = (VERSION_MINOR % 10) + '0';
     versionString[i++] = '.';
-    if (VERSION_PATCH < 10)
-        versionString[i++] = VERSION_PATCH + '0';
-    else
-        versionString[i++] = VERSION_PATCH - 10 + 'A';
+    if (VERSION_PATCH / 10)
+        versionString[i++] = (VERSION_PATCH / 10) + '0';
+    versionString[i++] = (VERSION_PATCH % 10) + '0';
     versionString[i++] = '-';
     strcpy(&versionString[i], VERSION_LEVEL);
     i = strlen(versionString);
@@ -516,7 +514,7 @@ static void servicesInit(btle_lcsFeature_t* pFeature)
     ble_lcs_init_t lcsInit;
     memset(&lcsInit, 0, sizeof(ble_lcs_init_t));
     lcsInit.evt_handler = NULL;
-    if (pEventHandler != NULL)                      // control point can not be
+    if (state.handler != NULL)                      // control point can not be
         lcsInit.cp_evt_handler = lcsCpEventHandler; // included without event handler
     lcsInit.error_handler = lcsErrorHandler;
     lcsInit.features.flood_supported = pFeature->floodSupported;
@@ -532,7 +530,7 @@ static void servicesInit(btle_lcsFeature_t* pFeature)
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lf_attr_md.read_perm);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lcp_attr_md.cccd_write_perm);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lcp_attr_md.write_perm);
-    errCode = ble_lcs_init(&lcsGattsData, &lcsInit);
+    errCode = ble_lcs_init(&lcsGattsData, NUM_OF_CONNECTIONS, &lcsInit);
     APP_ERROR_CHECK(errCode);
 }
 
@@ -548,28 +546,31 @@ void advertisingErrorHandler(uint32_t errCode)
 static void advertisingInit(void)
 {
     uint32_t errCode;
-    ble_uuid_t advUuids[1];
+    ble_uuid_t advUuid[2];
     ble_advdata_t advData, scanRsp;
     ble_adv_modes_config_t options;
 
-    advUuids[0].uuid = BLE_UUID_CGW_SERVICE;
-    advUuids[0].type = cgwGattsData.uuid_type;
-
+    advUuid[0].uuid = BLE_UUID_LCS_SERVICE;
+    advUuid[0].type = lcsGattsData.uuid_type;
     memset(&advData, 0, sizeof(ble_advdata_t));
-    advData.name_type               = BLE_ADVDATA_FULL_NAME;
-    advData.include_appearance      = true;
-    advData.flags                   = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
+    advData.name_type                     = BLE_ADVDATA_FULL_NAME;
+    advData.include_appearance            = false;
+    advData.flags                         = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
+    advData.uuids_more_available.uuid_cnt = 1;
+    advData.uuids_more_available.p_uuids  = &advUuid[0];
 
+    advUuid[1].uuid = BLE_UUID_CGW_SERVICE;
+    advUuid[1].type = cgwGattsData.uuid_type;
     memset(&scanRsp, 0, sizeof(ble_advdata_t));
-    scanRsp.uuids_complete.uuid_cnt = sizeof(advUuids) / sizeof(advUuids[0]);
-    scanRsp.uuids_complete.p_uuids  = advUuids;
+    scanRsp.uuids_more_available.uuid_cnt = 1;
+    scanRsp.uuids_more_available.p_uuids  = &advUuid[1];
 
     memset(&options, 0, sizeof(ble_adv_modes_config_t));
     options.ble_adv_fast_enabled    = BLE_ADV_FAST_ENABLED;
-    options.ble_adv_fast_interval   = ADV_INTERVAL_FAST;
-    options.ble_adv_fast_timeout    = ADV_TIMEOUT_IN_SECONDS;
+    options.ble_adv_fast_interval   = MSEC_TO_UNITS(40, UNIT_0_625_MS);
+    options.ble_adv_fast_timeout    = 180;
     options.ble_adv_slow_enabled    = BLE_ADV_SLOW_ENABLED;
-    options.ble_adv_slow_interval   = ADV_INTERVAL_SLOW;
+    options.ble_adv_slow_interval   = MSEC_TO_UNITS(1000, UNIT_0_625_MS);
     options.ble_adv_slow_timeout    = 0;
 
     errCode = ble_advertising_init(&advData, &scanRsp, &options, NULL, advertisingErrorHandler);
@@ -626,6 +627,7 @@ static void hidsCEventHandler(ble_hids_c_t * pBleHidsC, ble_hids_c_evt_t * pEvt)
             {
                 uint32_t timestamp;
                 btle_event_t evt;
+                evt.connHandle = pBleHidsC->conn_handle;
                 (void)app_timer_cnt_get(&timestamp);
                 if (lastPressVolUp != 0)
                 {
@@ -636,7 +638,7 @@ static void hidsCEventHandler(ble_hids_c_t * pBleHidsC, ble_hids_c_evt_t * pEvt)
                         evt.subEvt.hid = BTLE_EVT_HID_VOL_UP_LONG;
                     else
                         evt.subEvt.hid = BTLE_EVT_HID_VOL_UP_SHORT;
-                    pEventHandler(&evt);
+                    state.handler(&evt);
                 }
                 if (lastPressVolDown != 0)
                 {
@@ -647,10 +649,22 @@ static void hidsCEventHandler(ble_hids_c_t * pBleHidsC, ble_hids_c_evt_t * pEvt)
                         evt.subEvt.hid = BTLE_EVT_HID_VOL_DOWN_LONG;
                     else
                         evt.subEvt.hid = BTLE_EVT_HID_VOL_DOWN_SHORT;
-                    pEventHandler(&evt);
+                    state.handler(&evt);
                 }
             }
         }
+        break;
+    default:
+        break;
+    }
+}
+
+void lcsCEventHandler(ble_lcs_c_t * pBleLcsC, ble_lcs_c_evt_t * pEvt)
+{
+    switch (pEvt->evt_type)
+    {
+    case BLE_LCS_C_EVT_DISCOVERY_COMPLETE:
+        ble_lcs_c_cp_indic_enable(pBleLcsC, pEvt->p_server->conn_handle, true);
         break;
     default:
         break;
@@ -664,9 +678,13 @@ static void serviceCollectorInit()
     uint32_t errCode;
 
     ble_hids_c_init_t hidsCInit;
-
     hidsCInit.evt_handler = hidsCEventHandler;
     errCode = ble_hids_c_init(&hidsGattcData, &hidsCInit);
+    APP_ERROR_CHECK(errCode);
+
+    ble_lcs_c_init_t lcsCInit;
+    lcsCInit.evt_handler = lcsCEventHandler;
+    errCode = ble_lcs_c_init(&lcsGattcData, COUNT_OF(lcsGattcData_server_data), &lcsCInit);
     APP_ERROR_CHECK(errCode);
 }
 
@@ -677,7 +695,7 @@ static void scanningErrorHandler(uint32_t errCode)
     APP_ERROR_CHECK(errCode);
 }
 
-/** @brief Function to parse an advertising report
+/** @brief Function to parse an advertising report and check if it is an HID device
  *
  * @param[in] pAdvData Advertising report to parse
  * @return    NRF_SUCCESS if a hid service uuid was found, otherwise NRF_ERROR_NOT_FOUND
@@ -698,8 +716,42 @@ static uint32_t isHidDevice(const ble_gap_evt_adv_report_t * pAdvData)
             for (uint_fast8_t i = 0; i < length/UUID16_SIZE; i++)
             {
                 uint16_t uuid;
-                UUID16_EXTRACT(&uuid, &pAdvData->data[index + i * UUID16_SIZE]);
+                uuid = uint16_decode(&pAdvData->data[index + i * UUID16_SIZE]);
                 if (uuid == BLE_UUID_HUMAN_INTERFACE_DEVICE_SERVICE)
+                    return NRF_SUCCESS;
+            }
+            return NRF_ERROR_NOT_FOUND;
+        }
+        index += length + 1;
+    }
+    return NRF_ERROR_NOT_FOUND;
+}
+
+/** @brief Function to parse an advertising report and check if it is a Light Control device
+ *
+ * @param[in] pAdvData Advertising report to parse
+ * @return    NRF_SUCCESS if a Light Control service uuid was found, otherwise NRF_ERROR_NOT_FOUND
+ */
+static uint32_t isLcsDevice(const ble_gap_evt_adv_report_t * pAdvData)
+{
+    uint_fast8_t index = 0;
+
+    while (index < pAdvData->dlen)
+    {
+        uint8_t length = pAdvData->data[index];
+        uint8_t type   = pAdvData->data[index+1];
+
+        if (type == BLE_GAP_AD_TYPE_128BIT_SERVICE_UUID_MORE_AVAILABLE ||
+            type == BLE_GAP_AD_TYPE_128BIT_SERVICE_UUID_COMPLETE)
+        {
+            index += 2;
+            for (uint_fast8_t i = 0; i < length/UUID128_SIZE; i++)
+            {
+                ble_uuid128_t lcsServiceUuid;
+                memcpy(&lcsServiceUuid, &ble_lcs_c_base_uuid, sizeof(lcsServiceUuid));
+                lcsServiceUuid.uuid128[13] = (BLE_UUID_LCS_SERVICE >> 8) & 0xFF;
+                lcsServiceUuid.uuid128[12] = BLE_UUID_LCS_SERVICE & 0xFF;
+                if (memcmp(lcsServiceUuid.uuid128, &pAdvData->data[index + i * UUID128_SIZE], sizeof(lcsServiceUuid.uuid128)) == 0)
                     return NRF_SUCCESS;
             }
             return NRF_ERROR_NOT_FOUND;
@@ -725,38 +777,41 @@ static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
     {
     case BLE_SCAN_EVT_IDLE:
     case BLE_SCAN_EVT_PAUSE:
-        scanMode = BLE_SCAN_MODE_IDLE;
+        state.scanMode = BLE_SCAN_MODE_IDLE;
         break;
     case BLE_SCAN_EVT_FAST:
     case BLE_SCAN_EVT_FAST_WHITELIST:
-        scanMode = BLE_SCAN_MODE_FAST;
+        state.scanMode = BLE_SCAN_MODE_FAST;
         break;
     case BLE_SCAN_EVT_SLOW:
     case BLE_SCAN_EVT_SLOW_WHITELIST:
-        scanMode = BLE_SCAN_MODE_SLOW;
-        if (scanConfig == BTLE_SCAN_MODE_LOW_LATENCY)
+        state.scanMode = BLE_SCAN_MODE_SLOW;
+        if (state.scanConfig == BTLE_SCAN_MODE_LOW_LATENCY)
         {
             errCode = ble_scanning_start(BLE_SCAN_MODE_FAST);
             APP_ERROR_CHECK(errCode);
         }
         break;
     case BLE_SCAN_EVT_ADV_REPORT_RECEIVED:
+    {
+        bool isHid = isHidDevice(pScanEvt->p_ble_adv_report) == NRF_SUCCESS;
+        bool isLcs = isLcsDevice(pScanEvt->p_ble_adv_report) == NRF_SUCCESS;
         // check if the device is advertising as hid device
-        if (isHidDevice(pScanEvt->p_ble_adv_report) == NRF_SUCCESS)
+        if (isHid || isLcs)
         {
             static const ble_gap_scan_params_t scanParams =
             {
                 .active      = 0,
                 .selective   = 0,
                 .p_whitelist = NULL,
-                .interval    = SCAN_INTERVAL_FAST,
-                .window      = SCAN_WINDOW_FAST,
-                .timeout     = SCAN_TIMEOUT_FAST,
+                .interval    = MSEC_TO_UNITS(22.5, UNIT_0_625_MS),
+                .window      = MSEC_TO_UNITS(11.25, UNIT_0_625_MS),
+                .timeout     = 180,
             };
             static const ble_gap_conn_params_t connParams =
             {
                 MSEC_TO_UNITS(50, UNIT_1_25_MS),
-                MSEC_TO_UNITS(50, UNIT_1_25_MS),
+                MSEC_TO_UNITS(100, UNIT_1_25_MS),
                 0,
                 MSEC_TO_UNITS(4000, UNIT_10_MS)
             };
@@ -764,10 +819,11 @@ static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
             errCode = ble_scanning_start(BLE_SCAN_MODE_IDLE);
             APP_ERROR_CHECK(errCode);
             // and connect to device
+            state.discoverOnCentralConn = isHid;    // start discovery only if connecting to a hid device
             errCode = sd_ble_gap_connect(&pScanEvt->p_ble_adv_report->peer_addr, &scanParams, &connParams);
             APP_ERROR_CHECK(errCode);
         }
-        break;
+    }   break;
     case BLE_SCAN_EVT_WHITELIST_REQUEST:
     {
         ble_gap_irk_t * irks[1];
@@ -814,13 +870,13 @@ static void scanningInit()
     options.ble_scan_active_scanning    = true;
     options.ble_scan_whitelist_enabled  = true;
     options.ble_scan_fast_enabled       = true;
-    options.ble_scan_fast_interval      = SCAN_INTERVAL_FAST;
-    options.ble_scan_fast_timeout       = SCAN_TIMEOUT_FAST;
-    options.ble_scan_fast_window        = SCAN_WINDOW_FAST;
+    options.ble_scan_fast_interval      = MSEC_TO_UNITS(22.5, UNIT_0_625_MS);
+    options.ble_scan_fast_window        = MSEC_TO_UNITS(11.25, UNIT_0_625_MS);
+    options.ble_scan_fast_timeout       = 180;
     options.ble_scan_slow_enabled       = true;
-    options.ble_scan_slow_interval      = SCAN_INTERVAL_SLOW;
-    options.ble_scan_slow_timeout       = SCAN_TIMEOUT_SLOW;
-    options.ble_scan_slow_window        = SCAN_WINDOW_SLOW;
+    options.ble_scan_slow_interval      = MSEC_TO_UNITS(1280, UNIT_0_625_MS);
+    options.ble_scan_slow_window        = MSEC_TO_UNITS(11.25, UNIT_0_625_MS);
+    options.ble_scan_slow_timeout       = 0;
 
     errCode = ble_scanning_init(&options, scanningEventHandler, scanningErrorHandler);
     APP_ERROR_CHECK(errCode);
@@ -866,7 +922,9 @@ void btle_StackInit()
 
 void btle_Init(bool deleteBonds, btle_lcsFeature_t* pFeature, btle_eventHandler_t pEvtHandler)
 {
-    pEventHandler = pEvtHandler;
+    state.handler = pEvtHandler;
+    state.connHandleCentral = BLE_CONN_HANDLE_INVALID;
+    state.connHandlePeriph = BLE_CONN_HANDLE_INVALID;
 
     peerManagerInit(deleteBonds);
     gapParamsInit();
@@ -882,13 +940,13 @@ void btle_SetScanConfig(btle_scanMode_t newScanConfig)
 {
     uint32_t errCode;
 
-    scanConfig = newScanConfig;
-    if (scanConfig == BTLE_SCAN_MODE_LOW_LATENCY && scanMode == BLE_SCAN_MODE_SLOW)
+    state.scanConfig = newScanConfig;
+    if (state.scanConfig == BTLE_SCAN_MODE_LOW_LATENCY && state.scanMode == BLE_SCAN_MODE_SLOW)
     {
         errCode = ble_scanning_start(BLE_SCAN_MODE_FAST);
         APP_ERROR_CHECK(errCode);
     }
-    if (scanConfig == BTLE_SCAN_MODE_LOW_POWER && scanMode == BLE_SCAN_MODE_FAST)
+    if (state.scanConfig == BTLE_SCAN_MODE_LOW_POWER && state.scanMode == BLE_SCAN_MODE_FAST)
     {
         errCode = ble_scanning_start(BLE_SCAN_MODE_SLOW);
         APP_ERROR_CHECK(errCode);
@@ -913,21 +971,30 @@ uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData)
 {
     static uint32_t lastTimeSent;
     ble_lcs_lm_t notifyData;
-    uint32_t timestamp;
-
-    (void)app_timer_cnt_get(&timestamp);
-    (void)app_timer_cnt_diff_compute(timestamp, lastTimeSent, &timestamp);
-
-    if (timestamp < LCS_NOTIFY_PERIOD ||
-        lcsGattsData.conn_handle == BLE_CONN_HANDLE_INVALID ||
-        lcsGattsData.is_lm_notfy_enabled == false)
-        return NRF_SUCCESS;
+    uint32_t timestamp, errCode = NRF_SUCCESS;
+    bool isEnabled = false;
 
     if (pData == NULL)
         return NRF_ERROR_NULL;
 
-    if (lcsGattsData.conn_handle == BLE_CONN_HANDLE_INVALID || lcsGattsData.is_lm_notfy_enabled == false)
+    for (uint_fast8_t i = 0; i < COUNT_OF(lcsGattsData_client_data); i++)
+    {
+        if (lcsGattsData_client_data[i].conn_handle != BLE_CONN_HANDLE_INVALID &&
+            lcsGattsData_client_data[i].is_lm_notfy_enabled == true)
+        {
+            isEnabled = true;
+            break;
+        }
+    }
+
+    if (!isEnabled)
         return NRF_ERROR_INVALID_STATE;
+
+    (void)app_timer_cnt_get(&timestamp);
+    (void)app_timer_cnt_diff_compute(timestamp, lastTimeSent, &timestamp);
+
+    if (timestamp < LCS_NOTIFY_PERIOD)
+        return NRF_SUCCESS;
 
     memset(&notifyData, 0, sizeof(ble_lcs_lm_t));
     notifyData.mode.setup.flood = pData->mode.setup.flood ? 1 : 0;
@@ -979,10 +1046,22 @@ uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData)
 
     (void)app_timer_cnt_get(&lastTimeSent);
 
-    return ble_lcs_light_measurement_send(&lcsGattsData, &notifyData);
+    for (uint_fast8_t i = 0; i < COUNT_OF(lcsGattsData_client_data); i++)
+    {
+        if (lcsGattsData_client_data[i].conn_handle != BLE_CONN_HANDLE_INVALID &&
+            lcsGattsData_client_data[i].is_lm_notfy_enabled == true)
+        {
+            if (errCode == NRF_SUCCESS)
+                errCode = ble_lcs_light_measurement_send(&lcsGattsData, lcsGattsData_client_data[i].conn_handle, &notifyData);
+            else
+                (void)ble_lcs_light_measurement_send(&lcsGattsData, lcsGattsData_client_data[i].conn_handle, &notifyData);
+        }
+    }
+
+    return errCode;
 }
 
-uint32_t btle_SendEventResponse(const btle_LcscpEventResponse_t *pRsp)
+uint32_t btle_SendEventResponse(const btle_LcscpEventResponse_t *pRsp, uint16_t connHandle)
 {
     ble_lcs_ctrlpt_rsp_t rsp;
 
@@ -1023,7 +1102,7 @@ uint32_t btle_SendEventResponse(const btle_LcscpEventResponse_t *pRsp)
         break;
     }
 
-    return ble_lcs_ctrlpt_mode_resp(&lcsGattsData.ctrl_pt, &rsp);
+    return ble_lcs_ctrlpt_mode_resp(&lcsGattsData.ctrl_pt, connHandle, &rsp);
 }
 
 uint32_t btle_DeleteBonds()
@@ -1037,9 +1116,9 @@ uint32_t btle_DeleteBonds()
         return errCode;
     }
 
-    if (lcsGattsData.conn_handle != BLE_CONN_HANDLE_INVALID)
+    if (state.connHandleCentral != BLE_CONN_HANDLE_INVALID)
     {
-        errCode = sd_ble_gap_disconnect(lcsGattsData.conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+        errCode = sd_ble_gap_disconnect(state.connHandleCentral, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
         if (errCode != NRF_SUCCESS)
         {
             APP_ERROR_CHECK(errCode);
@@ -1047,9 +1126,9 @@ uint32_t btle_DeleteBonds()
         }
     }
 
-    if (hidsGattcData.conn_handle != BLE_CONN_HANDLE_INVALID)
+    if (state.connHandlePeriph != BLE_CONN_HANDLE_INVALID)
     {
-        errCode = sd_ble_gap_disconnect(hidsGattcData.conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+        errCode = sd_ble_gap_disconnect(state.connHandlePeriph, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
         if (errCode != NRF_SUCCESS)
         {
             APP_ERROR_CHECK(errCode);
@@ -1072,6 +1151,33 @@ uint32_t btle_DeleteBonds()
 uint32_t btle_SearchForRemote()
 {
     return ble_scanning_start_without_whitelist(BLE_SCAN_MODE_FAST);
+}
+
+uint32_t btle_SetMode(uint8_t mode, uint16_t connHandle)
+{
+    ble_lcs_c_cp_write_t cmd;
+    uint32_t errCode = NRF_SUCCESS;
+
+    cmd.command = BLE_LCS_C_CP_CMD_SET_MODE;
+    cmd.params.mode_to_set = mode;
+
+    if (connHandle == BTLE_CONN_HANDLE_ALL)
+    {
+        for (uint_fast8_t i = 0; i < COUNT_OF(lcsGattcData_server_data); i++)
+        {
+            if (lcsGattcData_server_data[i].conn_handle != BLE_CONN_HANDLE_INVALID)
+            {
+                if (errCode == NRF_SUCCESS)
+                    errCode = ble_lcs_c_cp_write(&lcsGattcData, lcsGattcData_server_data[i].conn_handle, &cmd);
+                else
+                    (void)ble_lcs_c_cp_write(&lcsGattcData, lcsGattcData_server_data[i].conn_handle, &cmd);
+            }
+        }
+    }
+    else
+        errCode = ble_lcs_c_cp_write(&lcsGattcData, connHandle, &cmd);
+
+    return errCode;
 }
 
 void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)

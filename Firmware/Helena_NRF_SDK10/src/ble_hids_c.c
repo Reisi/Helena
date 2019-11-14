@@ -19,7 +19,7 @@
 /* Private defines -----------------------------------------------------------*/
 #define HID_INFO_FLAG_REMOTE_WAKE   (1<<0)
 #define HID_INFO_FLAG_NORM_CONN     (1<<1)
-#define TX_BUFFER_MASK       0x07                  /**< TX Buffer mask, must be a mask of contiguous zeroes, followed by contiguous sequence of ones: 000...111. */
+#define TX_BUFFER_MASK       0x03                  /**< TX Buffer mask, must be a mask of contiguous zeroes, followed by contiguous sequence of ones: 000...111. */
 #define TX_BUFFER_SIZE       (TX_BUFFER_MASK + 1)  /**< Size of the send buffer, which is 1 higher than the mask. */
 #define WRITE_MESSAGE_LENGTH BLE_CCCD_VALUE_LEN    /**< Length of the write message for CCCD. */
 
@@ -76,39 +76,47 @@ static uint32_t      m_tx_index        = 0;        /**< Current index in the tra
 {
     // Check if HID Service was discovered.
     if (p_evt->evt_type == BLE_DB_DISCOVERY_COMPLETE &&
-        p_evt->params.discovered_db.srv_uuid.uuid == BLE_UUID_HUMAN_INTERFACE_DEVICE_SERVICE &&
-        p_evt->params.discovered_db.srv_uuid.type == BLE_UUID_TYPE_BLE)
+        p_evt->params.p_discovered_db->srv_uuid.uuid == BLE_UUID_HUMAN_INTERFACE_DEVICE_SERVICE &&
+        p_evt->params.p_discovered_db->srv_uuid.type == BLE_UUID_TYPE_BLE)
     {
-        mp_ble_hids_c->conn_handle = p_evt->conn_handle;
+        if (mp_ble_hids_c->conn_handle == p_evt->conn_handle ||
+            mp_ble_hids_c->conn_handle == BLE_CONN_HANDLE_INVALID)
+        {
+            mp_ble_hids_c->conn_handle = p_evt->conn_handle;
+        }
+        else
+        {
+            return; // instance already in use
+        }
 
         // Find the HID information characteristic
-        for (uint_fast8_t i = 0; i < p_evt->params.discovered_db.char_count; i++)
+        for (uint_fast8_t i = 0; i < p_evt->params.p_discovered_db->char_count; i++)
         {
-            if (p_evt->params.discovered_db.charateristics[i].characteristic.uuid.uuid ==
+            if (p_evt->params.p_discovered_db->charateristics[i].characteristic.uuid.uuid ==
                 BLE_UUID_HID_INFORMATION_CHAR)
             {
                 // Found HID information characteristic. Store handle and break
                 mp_ble_hids_c->hid_info_handle =
-                    p_evt->params.discovered_db.charateristics[i].characteristic.handle_value;
+                    p_evt->params.p_discovered_db->charateristics[i].characteristic.handle_value;
                 break;
             }
         }
         // Find the report map characteristic
-        for (uint_fast8_t i = 0; i < p_evt->params.discovered_db.char_count; i++)
+        for (uint_fast8_t i = 0; i < p_evt->params.p_discovered_db->char_count; i++)
         {
-            if (p_evt->params.discovered_db.charateristics[i].characteristic.uuid.uuid ==
+            if (p_evt->params.p_discovered_db->charateristics[i].characteristic.uuid.uuid ==
                 BLE_UUID_REPORT_MAP_CHAR)
             {
                 // Found report map characteristic. Store handle and break
                 mp_ble_hids_c->report_map_handle =
-                    p_evt->params.discovered_db.charateristics[i].characteristic.handle_value;
+                    p_evt->params.p_discovered_db->charateristics[i].characteristic.handle_value;
                 break;
             }
         }
         // Find the report characteristic
-        for (uint_fast8_t i = 0; i < p_evt->params.discovered_db.char_count; i++)
+        for (uint_fast8_t i = 0; i < p_evt->params.p_discovered_db->char_count; i++)
         {
-            if (p_evt->params.discovered_db.charateristics[i].characteristic.uuid.uuid ==
+            if (p_evt->params.p_discovered_db->charateristics[i].characteristic.uuid.uuid ==
                 BLE_UUID_REPORT_CHAR)
             {
                 // Found report characteristic. Store in first empty array member
@@ -117,11 +125,11 @@ static uint32_t      m_tx_index        = 0;        /**< Current index in the tra
                     if (mp_ble_hids_c->report_handles[j].report_handle == BLE_GATT_HANDLE_INVALID)
                     {
                         mp_ble_hids_c->report_handles[j].report_handle =
-                            p_evt->params.discovered_db.charateristics[i].characteristic.handle_value;
+                            p_evt->params.p_discovered_db->charateristics[i].characteristic.handle_value;
                         mp_ble_hids_c->report_handles[j].cccd_handle =
-                            p_evt->params.discovered_db.charateristics[i].cccd_handle;
+                            p_evt->params.p_discovered_db->charateristics[i].cccd_handle;
                         ///mp_ble_hids_c->report_handles[j].report_reference_handle =
-                        ///    p_evt->params.discovered_db.charateristics[i].report_reference_handle;
+                        ///    p_evt->params.p_discovered_db->charateristics[i].report_reference_handle;
                         break;
                     }
                 }
@@ -133,6 +141,38 @@ static uint32_t      m_tx_index        = 0;        /**< Current index in the tra
         if (mp_ble_hids_c->evt_handler != NULL)
         {
             mp_ble_hids_c->evt_handler(mp_ble_hids_c, &evt);
+        }
+    }
+}
+
+/**@brief     Function for handling disconnect events
+ *
+ * @param[in] p_ble_hids_c Pointer to the HID Service Client structure.
+ * @param[in] p_ble_evt    Pointer to the BLE event received.
+ */
+static void on_disconnect(ble_hids_c_t * p_ble_hids_c, const ble_evt_t * p_ble_evt)
+{
+    // check if this disconnect event belongs to our connection
+    if (p_ble_evt->evt.gap_evt.conn_handle == p_ble_hids_c->conn_handle)
+    {
+        p_ble_hids_c->conn_handle = BLE_CONN_HANDLE_INVALID;
+    }
+
+    // Check if this notification is a report notification.
+    for (uint_fast8_t i = 0; i < NUM_OF_REPORT_HANDLES; i++)
+    {
+        if (p_ble_evt->evt.gattc_evt.params.hvx.handle == p_ble_hids_c->report_handles[i].report_handle)
+        {
+            ble_hids_c_evt_t evt;
+            evt.evt_type = BLE_HIDS_C_EVT_REPORT_NOTIFICATION;
+            evt.params.report.index = i;
+            evt.params.report.p_report = p_ble_evt->evt.gattc_evt.params.hvx.data;
+            evt.params.report.len = p_ble_evt->evt.gattc_evt.params.hvx.len;
+            if (p_ble_hids_c->evt_handler != NULL)
+            {
+                p_ble_hids_c->evt_handler(p_ble_hids_c, &evt);
+            }
+            break;
         }
     }
 }
@@ -354,11 +394,12 @@ void ble_hids_c_on_ble_evt(ble_hids_c_t * p_ble_hids_c, const ble_evt_t * p_ble_
     switch (p_ble_evt->header.evt_id)
     {
         case BLE_GAP_EVT_CONNECTED:
-            p_ble_hids_c->conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
+            // nothing to do, connection handle will be assigned in db discovery handler
             break;
 
         case BLE_GAP_EVT_DISCONNECTED:
-            p_ble_hids_c->conn_handle = BLE_CONN_HANDLE_INVALID;
+            on_disconnect(p_ble_hids_c, p_ble_evt);
+            //p_ble_hids_c->conn_handle = BLE_CONN_HANDLE_INVALID;
             break;
 
         case BLE_GATTC_EVT_HVX:

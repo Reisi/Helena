@@ -25,33 +25,61 @@ typedef struct
 /* Private macros ------------------------------------------------------------*/
 
 /* Private variables ---------------------------------------------------------*/
+static uint8_t m_num_of_clients;
 
 /* Private functions ---------------------------------------------------------*/
+static ble_lcs_ctrlpt_client_spec_t * get_client_data_by_conn_handle(uint16_t conn_handle, ble_lcs_ctrlpt_client_spec_t * p_context)
+{
+    uint_fast8_t index = m_num_of_clients;
+
+    while (index)
+    {
+        if (p_context[index - 1].conn_handle == conn_handle)
+        {
+            return &p_context[index - 1];
+        }
+        index--;
+    }
+
+    return NULL;
+}
+
 /**@brief sends a control point indication.
  *
  * @param[in]   p_lcs_ctrlpt      LC Ctrlpt structure.
  */
-static void lcs_ctrlpt_resp_send(ble_lcs_ctrlpt_t * p_lcs_ctrlpt)
+static void lcs_ctrlpt_resp_send(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, uint16_t conn_handle)
 {
-    uint16_t               hvx_len;
-    ble_gatts_hvx_params_t hvx_params;
-    uint32_t               err_code;
+    uint16_t                       hvx_len;
+    ble_gatts_hvx_params_t         hvx_params;
+    uint32_t                       err_code;
+    ble_lcs_ctrlpt_client_spec_t * p_client;
 
-    if ((p_lcs_ctrlpt->procedure_status == BLE_LCS_CTRLPT_RSP_CODE_IND_PENDING))
+    p_client = get_client_data_by_conn_handle(conn_handle, p_lcs_ctrlpt->p_client);
+    if (p_client == NULL)
     {
-        hvx_len = p_lcs_ctrlpt->response.len;
+        if (p_lcs_ctrlpt->error_handler != NULL)
+        {
+            p_lcs_ctrlpt->error_handler(NRF_ERROR_NOT_FOUND);
+            return;
+        }
+    }
+
+    if ((p_client->procedure_status == BLE_LCS_CTRLPT_RSP_CODE_IND_PENDING))
+    {
+        hvx_len = p_client->response.len;
         memset(&hvx_params, 0, sizeof(hvx_params));
 
         hvx_params.handle = p_lcs_ctrlpt->lc_ctrlpt_handles.value_handle;
         hvx_params.type   = BLE_GATT_HVX_INDICATION;
         hvx_params.offset = 0;
         hvx_params.p_len  = &hvx_len;
-        hvx_params.p_data = p_lcs_ctrlpt->response.encoded_rsp;
+        hvx_params.p_data = p_client->response.encoded_rsp;
 
-        err_code = sd_ble_gatts_hvx(p_lcs_ctrlpt->conn_handle, &hvx_params);
+        err_code = sd_ble_gatts_hvx(conn_handle, &hvx_params);
 
         // Error handling
-        if ((err_code == NRF_SUCCESS) && (hvx_len != p_lcs_ctrlpt->response.len))
+        if ((err_code == NRF_SUCCESS) && (hvx_len != p_client->response.len))
         {
             err_code = NRF_ERROR_DATA_SIZE;
         }
@@ -59,18 +87,18 @@ static void lcs_ctrlpt_resp_send(ble_lcs_ctrlpt_t * p_lcs_ctrlpt)
         switch (err_code)
         {
             case NRF_SUCCESS:
-                p_lcs_ctrlpt->procedure_status = BLE_LCS_CTRLPT_RSP_CODE_IND_CONFIRM_PENDING;
+                p_client->procedure_status = BLE_LCS_CTRLPT_RSP_CODE_IND_CONFIRM_PENDING;
                 // Wait for HVC event
                 break;
 
             case BLE_ERROR_NO_TX_BUFFERS:
                 // Wait for TX_COMPLETE event to retry transmission
-                p_lcs_ctrlpt->procedure_status = BLE_LCS_CTRLPT_RSP_CODE_IND_PENDING;
+                p_client->procedure_status = BLE_LCS_CTRLPT_RSP_CODE_IND_PENDING;
                 break;
 
             default:
                 // Report error to application
-                p_lcs_ctrlpt->procedure_status = BLE_LCS_CTRLPT_PROC_STATUS_FREE;
+                p_client->procedure_status = BLE_LCS_CTRLPT_PROC_STATUS_FREE;
                 if (p_lcs_ctrlpt->error_handler != NULL)
                 {
                     p_lcs_ctrlpt->error_handler(err_code);
@@ -85,7 +113,7 @@ static void lcs_ctrlpt_resp_send(ble_lcs_ctrlpt_t * p_lcs_ctrlpt)
  * @param[in]   p_lcs_ctrlpt      SC Ctrlpt structure.
  * @return  true if the sc_control point's cccd is correctly configured, false otherwise.
  */
-static bool is_cccd_configured(ble_lcs_ctrlpt_t * p_lcs_ctrlpt)
+static bool is_cccd_configured(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, uint16_t conn_handle)
 {
     uint32_t err_code;
     uint8_t  cccd_value_buf[BLE_CCCD_VALUE_LEN];
@@ -99,7 +127,7 @@ static bool is_cccd_configured(ble_lcs_ctrlpt_t * p_lcs_ctrlpt)
     gatts_value.offset  = 0;
     gatts_value.p_value = cccd_value_buf;
 
-    err_code = sd_ble_gatts_value_get(p_lcs_ctrlpt->conn_handle,
+    err_code = sd_ble_gatts_value_get(conn_handle,
                                       p_lcs_ctrlpt->lc_ctrlpt_handles.cccd_handle,
                                       &gatts_value);
     if (err_code != NRF_SUCCESS)
@@ -196,13 +224,11 @@ static uint32_t lcs_ctrlpt_decode(uint8_t             * p_rcvd_val,
 
 /**@brief encode a control point response indication.
  *
- * @param[in]   p_lcs_ctrlpt      LC Ctrlpt structure.
  * @param[in]   p_ctrlpt_rsp  structure containing response data to be encoded
  * @param[out]  p_data        pointer where data needs to be written
  * @return                    size of encoded data
  */
-static int ctrlpt_rsp_encode(ble_lcs_ctrlpt_t      * p_lcs_ctrlpt,
-                             const ble_lcs_ctrlpt_rsp_t  * p_ctrlpt_rsp,
+static int ctrlpt_rsp_encode(const ble_lcs_ctrlpt_rsp_t  * p_ctrlpt_rsp,
                              uint8_t               * p_data)
 {
     uint8_t len = 0;
@@ -340,22 +366,27 @@ static bool is_feature_supported(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_lcs_ctrlpt
  * @param[in]   p_evt_write      WRITE event to be handled.
  */
 static void on_ctrlpt_write(ble_lcs_ctrlpt_t       * p_lcs_ctrlpt,
-                            ble_gatts_evt_write_t * p_evt_write)
+                            ble_gatts_evt_write_t * p_evt_write,
+                            uint16_t conn_handle)
 {
-    //ble_sc_ctrlpt_val_t                   rcvd_ctrlpt =
-    //{ BLE_SCPT_RESPONSE_CODE , 0, BLE_SENSOR_LOCATION_OTHER };
-
-    //ble_sc_ctrlpt_rsp_t                   rsp;
     uint32_t                              err_code;
     ble_gatts_rw_authorize_reply_params_t auth_reply;
-    //ble_sc_ctrlpt_evt_t                   evt;
+    ble_lcs_ctrlpt_client_spec_t        * p_client;
+
+    p_client = get_client_data_by_conn_handle(conn_handle, p_lcs_ctrlpt->p_client);
+    if (p_client == NULL)
+    {
+        if (p_lcs_ctrlpt->error_handler != NULL)
+        {
+            p_lcs_ctrlpt->error_handler(NRF_ERROR_NOT_FOUND);
+        }
+    }
 
     auth_reply.type                     = BLE_GATTS_AUTHORIZE_TYPE_WRITE;
-    //auth_reply.params.write.gatt_status = BLE_GATT_STATUS_SUCCESS;
 
-    if (is_cccd_configured(p_lcs_ctrlpt))
+    if (is_cccd_configured(p_lcs_ctrlpt, conn_handle))
     {
-        if (p_lcs_ctrlpt->procedure_status == BLE_LCS_CTRLPT_PROC_STATUS_FREE)
+        if (p_client != NULL && p_client->procedure_status == BLE_LCS_CTRLPT_PROC_STATUS_FREE)
         {
             auth_reply.params.write.gatt_status = BLE_GATT_STATUS_SUCCESS;
         }
@@ -369,7 +400,7 @@ static void on_ctrlpt_write(ble_lcs_ctrlpt_t       * p_lcs_ctrlpt,
         auth_reply.params.write.gatt_status = BLE_GATT_STATUS_ATTERR_CPS_CCCD_CONFIG_ERROR;
     }
 
-    err_code = sd_ble_gatts_rw_authorize_reply(p_lcs_ctrlpt->conn_handle, &auth_reply);
+    err_code = sd_ble_gatts_rw_authorize_reply(conn_handle, &auth_reply);
     if (err_code != NRF_SUCCESS)
     {
         // Report error to application.
@@ -379,7 +410,7 @@ static void on_ctrlpt_write(ble_lcs_ctrlpt_t       * p_lcs_ctrlpt,
         }
     }
 
-    if (auth_reply.params.write.gatt_status != BLE_GATT_STATUS_SUCCESS)
+    if (auth_reply.params.write.gatt_status != BLE_GATT_STATUS_SUCCESS || p_client == NULL)
     {
         return;
     }
@@ -397,11 +428,14 @@ static void on_ctrlpt_write(ble_lcs_ctrlpt_t       * p_lcs_ctrlpt,
         return;
     }
 
-    p_lcs_ctrlpt->procedure_status = BLE_LCS_CTRLPT_PROC_IN_PROGRESS;
+    p_client->procedure_status = BLE_LCS_CTRLPT_PROC_IN_PROGRESS;
 
     if (p_lcs_ctrlpt->evt_handler != NULL && is_feature_supported(p_lcs_ctrlpt, rcvd_ctrlpt.opcode))
     {
         ble_lcs_ctrlpt_evt_t evt;
+
+        evt.conn_handle = conn_handle;
+        evt.p_client = p_client;
 
         switch (rcvd_ctrlpt.opcode)
         {
@@ -486,7 +520,7 @@ static void on_ctrlpt_write(ble_lcs_ctrlpt_t       * p_lcs_ctrlpt,
         ble_lcs_ctrlpt_rsp_t rsp;
         rsp.status = BLE_LCS_CTRLPT_RSP_CODE_NOT_SUPPORTED;
         rsp.opcode = rcvd_ctrlpt.opcode;
-        err_code = ble_lcs_ctrlpt_mode_resp(p_lcs_ctrlpt, &rsp);
+        err_code = ble_lcs_ctrlpt_mode_resp(p_lcs_ctrlpt, conn_handle, &rsp);
         if (err_code != NRF_SUCCESS)
         {
             // Report error to application.
@@ -505,8 +539,19 @@ static void on_ctrlpt_write(ble_lcs_ctrlpt_t       * p_lcs_ctrlpt,
  */
 static void on_connect(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_evt_t * p_ble_evt)
 {
-    p_lcs_ctrlpt->conn_handle      = p_ble_evt->evt.gap_evt.conn_handle;
-    p_lcs_ctrlpt->procedure_status = BLE_LCS_CTRLPT_PROC_STATUS_FREE;
+    ble_lcs_ctrlpt_client_spec_t * p_client;
+
+    p_client = get_client_data_by_conn_handle(BLE_CONN_HANDLE_INVALID, p_lcs_ctrlpt->p_client);
+    if (p_client == NULL)
+    {
+        if (p_lcs_ctrlpt->error_handler != NULL)
+        {
+            p_lcs_ctrlpt->error_handler(NRF_ERROR_NO_MEM);
+        }
+        return;
+    }
+    p_client->conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
+    p_client->procedure_status = BLE_LCS_CTRLPT_PROC_STATUS_FREE;
 }
 
 
@@ -517,9 +562,19 @@ static void on_connect(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_evt_t * p_ble_evt)
  */
 static void on_disconnect(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_evt_t * p_ble_evt)
 {
-    (void)p_ble_evt;
-    p_lcs_ctrlpt->conn_handle      = BLE_CONN_HANDLE_INVALID;
-    p_lcs_ctrlpt->procedure_status = BLE_LCS_CTRLPT_PROC_STATUS_FREE;
+    ble_lcs_ctrlpt_client_spec_t * p_client;
+
+    p_client = get_client_data_by_conn_handle(p_ble_evt->evt.gap_evt.conn_handle, p_lcs_ctrlpt->p_client);
+    if (p_client == NULL)
+    {
+        if (p_lcs_ctrlpt->error_handler != NULL)
+        {
+            p_lcs_ctrlpt->error_handler(NRF_ERROR_NOT_FOUND);
+        }
+        return;
+    }
+    p_client->conn_handle = BLE_CONN_HANDLE_INVALID;
+    p_client->procedure_status = BLE_LCS_CTRLPT_PROC_STATUS_FREE;
 }
 
 /**@brief Authorize WRITE request event handler.
@@ -545,7 +600,7 @@ static void on_rw_authorize_request(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_gatts_e
         {
             if (p_auth_req->request.write.handle == p_lcs_ctrlpt->lc_ctrlpt_handles.value_handle)
             {
-                on_ctrlpt_write(p_lcs_ctrlpt, &p_auth_req->request.write);
+                on_ctrlpt_write(p_lcs_ctrlpt, &p_auth_req->request.write, p_gatts_evt->conn_handle);
             }
         }
     }
@@ -558,11 +613,23 @@ static void on_rw_authorize_request(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_gatts_e
  */
 static void on_sc_hvc_confirm(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_evt_t * p_ble_evt)
 {
+    ble_lcs_ctrlpt_client_spec_t * p_client;
+
+    p_client = get_client_data_by_conn_handle(p_ble_evt->evt.gatts_evt.conn_handle, p_lcs_ctrlpt->p_client);
+    if (p_client == NULL)
+    {
+        if (p_lcs_ctrlpt->error_handler != NULL)
+        {
+            p_lcs_ctrlpt->error_handler(NRF_ERROR_NOT_FOUND);
+        }
+        return;
+    }
+
     if (p_ble_evt->evt.gatts_evt.params.hvc.handle == p_lcs_ctrlpt->lc_ctrlpt_handles.value_handle)
     {
-        if (p_lcs_ctrlpt->procedure_status == BLE_LCS_CTRLPT_RSP_CODE_IND_CONFIRM_PENDING)
+        if (p_client->procedure_status == BLE_LCS_CTRLPT_RSP_CODE_IND_CONFIRM_PENDING)
         {
-            p_lcs_ctrlpt->procedure_status = BLE_LCS_CTRLPT_PROC_STATUS_FREE;
+            p_client->procedure_status = BLE_LCS_CTRLPT_PROC_STATUS_FREE;
         }
     }
 }
@@ -577,14 +644,20 @@ static void on_sc_hvc_confirm(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_evt_t * p_ble
  */
 static void on_tx_complete(ble_lcs_ctrlpt_t * p_lcs_ctrlpt)
 {
-    if (p_lcs_ctrlpt->procedure_status == BLE_LCS_CTRLPT_RSP_CODE_IND_PENDING)
+    int_fast8_t index = m_num_of_clients;
+
+    while(index)
     {
-        lcs_ctrlpt_resp_send(p_lcs_ctrlpt);
+        if(p_lcs_ctrlpt->p_client[index - 1].procedure_status == BLE_LCS_CTRLPT_RSP_CODE_IND_PENDING)
+        {
+            lcs_ctrlpt_resp_send(p_lcs_ctrlpt, p_lcs_ctrlpt->p_client[index - 1].conn_handle);
+        }
+        index--;
     }
 }
 
 /* Public functions ----------------------------------------------------------*/
-uint32_t ble_lcs_ctrlpt_init(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_lcs_ctrlpt_init_t * p_lcs_ctrlpt_init)
+uint32_t ble_lcs_ctrlpt_init(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, uint8_t max_clients, ble_lcs_ctrlpt_init_t * p_lcs_ctrlpt_init)
 {
     ble_gatts_char_md_t char_md;
     ble_gatts_attr_md_t cccd_md;
@@ -592,13 +665,29 @@ uint32_t ble_lcs_ctrlpt_init(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_lcs_ctrlpt_ini
     ble_uuid_t          ble_uuid;
     ble_gatts_attr_md_t attr_md;
 
+    if (p_lcs_ctrlpt == NULL || p_lcs_ctrlpt_init == NULL)
+    {
+        return NRF_ERROR_NULL;
+    }
+
+    if (max_clients == 0)
+    {
+        return NRF_ERROR_INVALID_PARAM;
+    }
+    m_num_of_clients = max_clients;
+
     p_lcs_ctrlpt->uuid_type          = p_lcs_ctrlpt_init->uuid_type;
     p_lcs_ctrlpt->supported_features = p_lcs_ctrlpt_init->supported_features;
     p_lcs_ctrlpt->service_handle     = p_lcs_ctrlpt_init->service_handle;
-    p_lcs_ctrlpt->conn_handle        = BLE_CONN_HANDLE_INVALID;
     p_lcs_ctrlpt->evt_handler        = p_lcs_ctrlpt_init->evt_handler;
-    p_lcs_ctrlpt->procedure_status   = BLE_LCS_CTRLPT_PROC_STATUS_FREE;
     p_lcs_ctrlpt->error_handler      = p_lcs_ctrlpt_init->error_handler;
+
+    while (max_clients)
+    {
+        p_lcs_ctrlpt->p_client[max_clients - 1].conn_handle      = BLE_CONN_HANDLE_INVALID;
+        p_lcs_ctrlpt->p_client[max_clients - 1].procedure_status = BLE_LCS_CTRLPT_PROC_STATUS_FREE;
+        max_clients--;
+    }
 
     memset(&cccd_md, 0, sizeof(ble_gatts_attr_md_t));
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&cccd_md.read_perm);
@@ -669,24 +758,32 @@ void ble_lcs_ctrlpt_on_ble_evt(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_evt_t * p_bl
     }
 }
 
-uint32_t ble_lcs_ctrlpt_mode_resp(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, const ble_lcs_ctrlpt_rsp_t * p_rsps)
+uint32_t ble_lcs_ctrlpt_mode_resp(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, uint16_t conn_handle, const ble_lcs_ctrlpt_rsp_t * p_rsps)
 {
+    ble_lcs_ctrlpt_client_spec_t * p_client;
+
+    p_client = get_client_data_by_conn_handle(conn_handle, p_lcs_ctrlpt->p_client);
+    if (p_client == NULL)
+    {
+        return NRF_ERROR_NOT_FOUND;
+    }
+
     if (p_lcs_ctrlpt == NULL || p_rsps == NULL)
     {
         return NRF_ERROR_NULL;
     }
 
-    if (p_lcs_ctrlpt->procedure_status != BLE_LCS_CTRLPT_PROC_IN_PROGRESS)
+    if (p_client->procedure_status != BLE_LCS_CTRLPT_PROC_IN_PROGRESS)
     {
         return NRF_ERROR_INVALID_STATE;
     }
 
-    p_lcs_ctrlpt->procedure_status = BLE_LCS_CTRLPT_RSP_CODE_IND_PENDING;
+    p_client->procedure_status = BLE_LCS_CTRLPT_RSP_CODE_IND_PENDING;
 
-    p_lcs_ctrlpt->response.len = ctrlpt_rsp_encode(p_lcs_ctrlpt, p_rsps,
-                                                  p_lcs_ctrlpt->response.encoded_rsp);
+    p_client->response.len = ctrlpt_rsp_encode(p_rsps,
+                                               p_client->response.encoded_rsp);
 
-    lcs_ctrlpt_resp_send(p_lcs_ctrlpt);
+    lcs_ctrlpt_resp_send(p_lcs_ctrlpt, conn_handle);
 
     return NRF_SUCCESS;
 }

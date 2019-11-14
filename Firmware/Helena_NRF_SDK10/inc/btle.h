@@ -15,8 +15,12 @@
 /* Includes ------------------------------------------------------------------*/
 #include <stdbool.h>
 #include "comreloaded.h"
+#include "ble.h"
 
 /* Exported defines ----------------------------------------------------------*/
+#define BTLE_CONN_HANDLE_INVALID    BLE_CONN_HANDLE_INVALID
+#define BTLE_CONN_HANDLE_ALL        BLE_CONN_HANDLE_ALL
+
 /*#define BTLE_LIGHT_FLAG_OVERCURRENT     (1<<0)
 #define BTLE_LIGHT_FLAG_TEMPERATURE     (1<<1)
 #define BTLE_LIGHT_FLAG_INPUTVOLTAGE    (1<<2)
@@ -97,6 +101,7 @@ typedef struct
         btle_hidEventType_t        hid;
         btle_LcsCtrlPtEventTypes_t lcscp;
     } subEvt;
+    uint16_t connHandle;                /**< the connection handle this event is related to, use the same to send response */
     union
     {
         uint8_t modeConfigStart;        /**< parameter for event type BTLE_EVT_REQ_MODE_CONFIG */
@@ -236,10 +241,11 @@ uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData);
 
 /** @brief Function for sending response parameters for incoming btle events
  *
- * @param[in]   pRsp    Return parameters
+ * @param[in]   pRsp       Return parameters
+ * @param[in]   connHandle the connection handle this response is related to
  * @return      NRF_SUCCESS o an error code
  */
-uint32_t btle_SendEventResponse(const btle_LcscpEventResponse_t *pRsp);
+uint32_t btle_SendEventResponse(const btle_LcscpEventResponse_t *pRsp, uint16_t connHandle);
 
 /** @brief Function for deleting all bonds
  *
@@ -252,6 +258,15 @@ uint32_t btle_DeleteBonds(void);
  * @return      NRF_SUCCESS or an error code
  */
 uint32_t btle_SearchForRemote(void);
+
+/** @brief Function set the mode of a remote Light Control Device
+ *
+ * @param[in]   mode mode to set the device to
+ * @param[in]   connection handle to send command to, BTLE_CONN_HANDLE_ALL for all connected devices
+ * @return      NRF_SUCCESS
+ *              NRF_ERROR_INVALID_STATE if no device connected
+ */
+uint32_t btle_SetMode(uint8_t mode, uint16_t connHandle);
 
 #endif /* BTLE_H_INCLUDED */
 

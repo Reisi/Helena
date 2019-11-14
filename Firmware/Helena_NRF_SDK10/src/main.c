@@ -71,12 +71,12 @@
  */
 typedef struct
 {
-    bool isPeriphConnected          : 1;    // indicating if in a connection as peripheral
-    bool isCentralConnected         : 1;    // indicating if in a connection as central
-    bool isModeConfigWritePending   : 1;    // indicating if a mode configure write response is pending
-    bool isGroupCountPending        : 1;    // indicating if a group configuration write response is pending
-    bool isLedConfigCheckPending    : 1;    // indication if a led check procedure was requested
-    bool isSensorCalibrationPending : 1;    // indication if sensor offset calibration was requested
+    uint16_t isPeriphConnected;             // hold a valid connection handle if in a connection as peripheral
+    uint16_t isCentralConnected;            // hold a valid connection handle if in a connection as central
+    uint16_t isModeConfigWritePending;      // hold a valid connection handle if a mode configure write response is pending
+    uint16_t isGroupCountPending;           // hold a valid connection handle if a group configuration write response is pending
+    uint16_t isLedConfigCheckPending;       // hold a valid connection handle if a led check procedure was requested
+    uint16_t isSensorCalibrationPending;    // hold a valid connection handle if sensor offset calibration was requested
 } btleStatus_t;
 
 /** @brief power state
@@ -198,11 +198,16 @@ static void btleConnEvtHandler(btle_event_t * pEvt)
     switch (pEvt->subEvt.conn)
     {
     case BTLE_EVT_CONN_CENTRAL_CONNECTED:
-        state.btle.isCentralConnected = true;
+        state.btle.isCentralConnected = pEvt->connHandle;
         break;
     case BTLE_EVT_CONN_CENTRAL_DISCONNECTED:
-        state.btle.isCentralConnected = false;
+        state.btle.isCentralConnected = BTLE_CONN_HANDLE_INVALID;
         break;
+    case BTLE_EVT_CONN_PERIPH_CONNECTED:
+        state.btle.isPeriphConnected = pEvt->connHandle;
+        break;
+    case BTLE_EVT_CONN_PERIPH_DISCONNECTED:
+        state.btle.isPeriphConnected = BTLE_CONN_HANDLE_INVALID;
     default:
         break;
     }
@@ -379,10 +384,26 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
             state.pMode->currentMode = MODE_OFF;
         else
             state.pMode->currentMode = pEvt->lcscpEventParams.modeToSet;
+        uint16_t connHandle = BTLE_CONN_HANDLE_INVALID;;
+        if (pEvt->connHandle == state.btle.isPeriphConnected)
+            connHandle = state.btle.isCentralConnected;
+        else if (pEvt->connHandle == state.btle.isCentralConnected)
+            connHandle = state.btle.isPeriphConnected;
+        if (connHandle != BTLE_CONN_HANDLE_INVALID)
+            APP_ERROR_CHECK(btle_SetMode(state.pMode->currentMode, connHandle));
         rsp.retCode = BTLE_RET_SUCCESS;
         break;
     case BTLE_EVT_LCSCP_CONFIG_MODE:        // mode configuration request
     {
+        if (state.btle.isGroupCountPending != BTLE_CONN_HANDLE_INVALID ||
+            state.btle.isModeConfigWritePending != BTLE_CONN_HANDLE_INVALID ||
+            state.btle.isLedConfigCheckPending != BTLE_CONN_HANDLE_INVALID ||
+            state.btle.isSensorCalibrationPending != BTLE_CONN_HANDLE_INVALID)
+        {
+            rsp.retCode = BTLE_RET_FAILED;
+            break;
+        }
+
         uint8_t start = pEvt->lcscpEventParams.modeToConfig.modeNumber;
         uint8_t numOfModes = pEvt->lcscpEventParams.modeToConfig.listEntries;
         if (numOfModes > MAX_NUM_OF_MODES - start ||
@@ -391,11 +412,12 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
             rsp.retCode = BTLE_RET_INVALID;
             break;
         }
+
         memcpy(&modeConfig.mode[start], modes.main, sizeof(helenaMode_t) * numOfModes);
         errCode = updateModeConfig();
         if (errCode == NRF_SUCCESS)
         {
-            state.btle.isModeConfigWritePending = true;
+            state.btle.isModeConfigWritePending = pEvt->connHandle;
             return;
         }
         else
@@ -403,20 +425,29 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
         APP_ERROR_CHECK(errCode);
     }   break;
     case BTLE_EVT_LCSCP_CONFIG_GROUP:       // group configuration request
-        if (!isGroupConfigValid(pEvt->lcscpEventParams.groupConfig))
-            rsp.retCode = BTLE_RET_INVALID;
-        else
+        if (state.btle.isGroupCountPending != BTLE_CONN_HANDLE_INVALID ||
+            state.btle.isModeConfigWritePending != BTLE_CONN_HANDLE_INVALID ||
+            state.btle.isLedConfigCheckPending != BTLE_CONN_HANDLE_INVALID ||
+            state.btle.isSensorCalibrationPending != BTLE_CONN_HANDLE_INVALID)
         {
-            modeConfig.groups = pEvt->lcscpEventParams.groupConfig;
-            errCode = updateModeConfig();
-            if (errCode == NRF_SUCCESS)
-            {
-                state.btle.isGroupCountPending = true;
-                return;
-            }
-            else
-                rsp.retCode = BTLE_RET_FAILED;
+            rsp.retCode = BTLE_RET_FAILED;
+            break;
         }
+        if (!isGroupConfigValid(pEvt->lcscpEventParams.groupConfig))
+        {
+            rsp.retCode = BTLE_RET_INVALID;
+            break;
+        }
+
+        modeConfig.groups = pEvt->lcscpEventParams.groupConfig;
+        errCode = updateModeConfig();
+        if (errCode == NRF_SUCCESS)
+        {
+            state.btle.isGroupCountPending = pEvt->connHandle;
+            return;
+        }
+        else
+            rsp.retCode = BTLE_RET_FAILED;
         break;
     case BTLE_EVT_LCSCP_REQ_LED_CONFIG:
         rsp.retCode = BTLE_RET_SUCCESS;
@@ -424,9 +455,18 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
         rsp.responseParams.ledConfig.spotCnt = ledConfiguration.spotCount;
         break;
     case BTLE_EVT_LCSCP_CHECK_LED_CONFIG:
+        if (state.btle.isGroupCountPending != BTLE_CONN_HANDLE_INVALID ||
+            state.btle.isModeConfigWritePending != BTLE_CONN_HANDLE_INVALID ||
+            state.btle.isLedConfigCheckPending != BTLE_CONN_HANDLE_INVALID ||
+            state.btle.isSensorCalibrationPending != BTLE_CONN_HANDLE_INVALID)
+        {
+            rsp.retCode = BTLE_RET_FAILED;
+            break;
+        }
+
         if (state.power != POWER_ON)
         {
-            state.btle.isLedConfigCheckPending = true;
+            state.btle.isLedConfigCheckPending = pEvt->connHandle;
             return;
         }
         else
@@ -438,7 +478,15 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
             rsp.retCode = BTLE_RET_INVALID;
         break;
     case BTLE_EVT_LCSCP_CALIB_SENS_OFFSET:
-        state.btle.isSensorCalibrationPending = true;
+        if (state.btle.isGroupCountPending != BTLE_CONN_HANDLE_INVALID ||
+            state.btle.isModeConfigWritePending != BTLE_CONN_HANDLE_INVALID ||
+            state.btle.isLedConfigCheckPending != BTLE_CONN_HANDLE_INVALID ||
+            state.btle.isSensorCalibrationPending != BTLE_CONN_HANDLE_INVALID)
+        {
+            rsp.retCode = BTLE_RET_FAILED;
+            break;
+        }
+        state.btle.isSensorCalibrationPending = pEvt->connHandle;
         return;
     case BTLE_EVT_LCSCP_REQ_LIMITS:
     {
@@ -462,7 +510,7 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
         break;
     }
     // if this point is reached, send response immediately, otherwise it is not necessary or will be done later.
-    APP_ERROR_CHECK(btle_SendEventResponse(&rsp));
+    APP_ERROR_CHECK(btle_SendEventResponse(&rsp, pEvt->connHandle));
 }
 
 /** @brief event handler for incoming ble events
@@ -543,24 +591,24 @@ static void fdsEventHandler(ret_code_t errCode, fds_cmd_id_t cmd, fds_record_id_
         if (cmd == FDS_CMD_UPDATE || cmd == FDS_CMD_WRITE)
         {
             // send notification if necessary
-            if (state.btle.isGroupCountPending || state.btle.isModeConfigWritePending)
+            if (state.btle.isGroupCountPending != BTLE_CONN_HANDLE_INVALID)
             {
                 btle_LcscpEventResponse_t rsp;
-                if (state.btle.isGroupCountPending)
-                {
-                    rsp.evt = BTLE_EVT_LCSCP_CONFIG_GROUP;
-                    state.btle.isGroupCountPending = false;
-                }
-                if (state.btle.isModeConfigWritePending)
-                {
-                    rsp.evt = BTLE_EVT_LCSCP_CONFIG_MODE;
-                    state.btle.isModeConfigWritePending = false;
-                }
-                if (errCode == NRF_SUCCESS)
-                    rsp.retCode = BTLE_RET_SUCCESS;
-                else
-                    rsp.retCode = BTLE_RET_FAILED;
-                APP_ERROR_CHECK(btle_SendEventResponse(&rsp));
+                rsp.evt = BTLE_EVT_LCSCP_CONFIG_GROUP;
+                rsp.retCode = errCode == NRF_SUCCESS ? BTLE_RET_SUCCESS : BTLE_RET_FAILED;
+                APP_ERROR_CHECK(btle_SendEventResponse(&rsp, state.btle.isGroupCountPending));
+
+                state.btle.isGroupCountPending = BTLE_CONN_HANDLE_INVALID;
+            }
+
+            if (state.btle.isModeConfigWritePending != BTLE_CONN_HANDLE_INVALID)
+            {
+                btle_LcscpEventResponse_t rsp;
+                rsp.evt = BTLE_EVT_LCSCP_CONFIG_MODE;
+                rsp.retCode = errCode == NRF_SUCCESS ? BTLE_RET_SUCCESS : BTLE_RET_FAILED;
+                APP_ERROR_CHECK(btle_SendEventResponse(&rsp, state.btle.isGroupCountPending));
+
+                state.btle.isGroupCountPending = BTLE_CONN_HANDLE_INVALID;
             }
             // run garbage collection if necessary
             if (errCode == NRF_ERROR_NO_MEM)
@@ -792,6 +840,13 @@ static void mainInit(void)
 
     APP_ERROR_CHECK(setHelenaState(POWER_IDLE));
     state.idleTimeout = IDLE_TIMEOUT;
+
+    state.btle.isPeriphConnected = BTLE_CONN_HANDLE_INVALID;
+    state.btle.isCentralConnected = BTLE_CONN_HANDLE_INVALID;
+    state.btle.isGroupCountPending = BTLE_CONN_HANDLE_INVALID;
+    state.btle.isModeConfigWritePending = BTLE_CONN_HANDLE_INVALID;
+    state.btle.isLedConfigCheckPending = BTLE_CONN_HANDLE_INVALID;
+    state.btle.isSensorCalibrationPending = BTLE_CONN_HANDLE_INVALID;
 }
 
 /** @brief helper function to check if a mode is enabled
@@ -823,7 +878,6 @@ static bool isGroupEnabled(uint8_t group, uint8_t modesPerGroup)
  */
 static void buttonHandling(hmi_ButtonEnum internal, hmi_ButtonEnum volumeUp, hmi_ButtonEnum volumeDown)
 {
-    /// TODO: watchdog resets when set to unused mode by ble and a button is pressed
     // ultra long press while off -> start searching for remote
     if (state.pMode->currentMode == MODE_OFF && internal == hmi_BUTTONULTRALONG)
     {
@@ -836,6 +890,7 @@ static void buttonHandling(hmi_ButtonEnum internal, hmi_ButtonEnum volumeUp, hmi
     if (state.pMode->currentMode != MODE_OFF && (volumeDown != hmi_BUTTONNOPRESS || internal == hmi_BUTTONULTRALONG))
     {
         state.pMode->currentMode = MODE_OFF;
+        (void)btle_SetMode(state.pMode->currentMode, BTLE_CONN_HANDLE_ALL);
         return;
     }
 
@@ -867,7 +922,10 @@ static void buttonHandling(hmi_ButtonEnum internal, hmi_ButtonEnum volumeUp, hmi
             for (uint_fast8_t j = 0; j < modesPerGroup; j++)
             {
                 if (isModeEnabled(&modeConfig.mode[state.pMode->currentMode]))
+                {
+                    (void)btle_SetMode(state.pMode->currentMode, BTLE_CONN_HANDLE_ALL);
                     return;
+                }
                 if (++state.pMode->currentMode % modesPerGroup == 0)
                     state.pMode->currentMode -= modesPerGroup;
             }
@@ -889,7 +947,7 @@ static void ledHandling(light_limiterActive_t flood, light_limiterActive_t spot,
     else
         hmi_SetLed(hmi_LEDRED, hmi_LEDOFF);
     // blue led indicating if a central connection (e.g. to a remote) is established
-    if (pBtleData->isCentralConnected)
+    if (pBtleData->isCentralConnected != BTLE_CONN_HANDLE_INVALID)
         hmi_SetLed(hmi_LEDBLUE, hmi_LEDON);
     else
         hmi_SetLed(hmi_LEDBLUE, hmi_LEDOFF);
@@ -1054,11 +1112,10 @@ int main(void)
         }
 
         // check if led config check is pending
-        if (state.btle.isLedConfigCheckPending)
+        if (state.btle.isLedConfigCheckPending != BTLE_CONN_HANDLE_INVALID)
         {
             btle_LcscpEventResponse_t rsp;
 
-            state.btle.isLedConfigCheckPending = false;
             rsp.evt = BTLE_EVT_LCSCP_CHECK_LED_CONFIG;
             if (light_CheckLedConfig(&ledConfiguration) == NRF_SUCCESS)
                 rsp.retCode = BTLE_RET_SUCCESS;
@@ -1066,21 +1123,24 @@ int main(void)
                 rsp.retCode = BTLE_RET_FAILED;
             rsp.responseParams.ledConfig.floodCnt = ledConfiguration.floodCount;
             rsp.responseParams.ledConfig.spotCnt = ledConfiguration.spotCount;
-            APP_ERROR_CHECK(btle_SendEventResponse(&rsp));
+            APP_ERROR_CHECK(btle_SendEventResponse(&rsp, state.btle.isLedConfigCheckPending));
+
+            state.btle.isLedConfigCheckPending = BTLE_CONN_HANDLE_INVALID;
         }
 
         // check if sensor calibration is pending
-        if (state.btle.isSensorCalibrationPending)
+        if (state.btle.isSensorCalibrationPending != BTLE_CONN_HANDLE_INVALID)
         {
             btle_LcscpEventResponse_t rsp;
 
-            state.btle.isSensorCalibrationPending = false;
             rsp.evt = BTLE_EVT_LCSCP_CALIB_SENS_OFFSET;
             if (ms_CalibrateSensorOffset((ms_AccelerationStruct*)&rsp.responseParams.sensOffset) == NRF_SUCCESS)
                 rsp.retCode = BTLE_RET_SUCCESS;
             else
                 rsp.retCode = BTLE_RET_FAILED;
-            APP_ERROR_CHECK(btle_SendEventResponse(&rsp));
+            APP_ERROR_CHECK(btle_SendEventResponse(&rsp, state.btle.isSensorCalibrationPending));
+
+            state.btle.isSensorCalibrationPending = BTLE_CONN_HANDLE_INVALID;
         }
 
         // periodic timebase checks

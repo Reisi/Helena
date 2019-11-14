@@ -77,11 +77,46 @@ typedef union
     ble_lcs_ctrlpt_set_limits_t current_limits;
 } ble_lcs_ctrlpt_write_val_t;
 
+/**@brief Light Control Control Point response parameter */
+typedef enum
+{
+    BLE_LCS_CTRLPT_RSP_CODE_SUCCESS       = 1,
+    BLE_LCS_CTRLPT_RSP_CODE_NOT_SUPPORTED = 2,
+    BLE_LCS_CTRLPT_RSP_CODE_INVALID       = 3,
+    BLE_LCS_CTRLPT_RSP_CODE_FAILED        = 4
+} ble_lcs_ctrlpt_rsp_code_t;
+
+/**@brief Light Control Control Point response indication structure */
+typedef struct
+{
+    ble_lcs_ctrlpt_rsp_code_t rsp_code;
+    uint8_t                   len;
+    uint8_t                   encoded_rsp[BLE_LCS_CTRLPT_MAX_LEN];
+} ble_lcs_ctrlpt_rsp_ind_t;
+
+/**@brief Light Control Control Point procedure status */
+typedef enum
+{
+    BLE_LCS_CTRLPT_PROC_STATUS_FREE             = 0,
+    BLE_LCS_CTRLPT_PROC_IN_PROGRESS             = 1,
+    BLE_LCS_CTRLPT_RSP_CODE_IND_PENDING         = 2,
+    BLE_LCS_CTRLPT_RSP_CODE_IND_CONFIRM_PENDING = 3
+} ble_lcs_ctrlpt_proc_status_t;
+
+typedef struct
+{
+    uint16_t                     conn_handle;       /**< Handle of the current connection (as provided by the BLE stack) */
+    ble_lcs_ctrlpt_proc_status_t procedure_status;  /**< status of possible procedure */
+    ble_lcs_ctrlpt_rsp_ind_t     response;          /**< pending response data */
+} ble_lcs_ctrlpt_client_spec_t;
+
 /**@brief Light Control Service Control Point event */
 typedef struct
 {
-    ble_lcs_ctrlpt_evt_type_t    evt_type;
-    ble_lcs_ctrlpt_write_val_t * p_params;
+    ble_lcs_ctrlpt_evt_type_t      evt_type;
+    uint16_t                       conn_handle;
+    ble_lcs_ctrlpt_client_spec_t * p_client;
+    ble_lcs_ctrlpt_write_val_t   * p_params;
 } ble_lcs_ctrlpt_evt_t;
 
 /**@brief Light Control Control Point operator codes */
@@ -101,24 +136,6 @@ typedef enum
     BLE_LCS_CTRLPT_OP_CODE_SET_LIMITS       = 12,
     BLE_LCS_CTRLPT_OP_CODE_RESPONSE         = 32
 } ble_lcs_ctrlpt_op_code_t;
-
-/**@brief Light Control Control Point response parameter */
-typedef enum
-{
-    BLE_LCS_CTRLPT_RSP_CODE_SUCCESS       = 1,
-    BLE_LCS_CTRLPT_RSP_CODE_NOT_SUPPORTED = 2,
-    BLE_LCS_CTRLPT_RSP_CODE_INVALID       = 3,
-    BLE_LCS_CTRLPT_RSP_CODE_FAILED        = 4
-} ble_lcs_ctrlpt_rsp_code_t;
-
-/**@brief Light Control Control Point procedure status */
-typedef enum
-{
-    BLE_LCS_CTRLPT_PROC_STATUS_FREE             = 0,
-    BLE_LCS_CTRLPT_PROC_IN_PROGRESS             = 1,
-    BLE_LCS_CTRLPT_RSP_CODE_IND_PENDING         = 2,
-    BLE_LCS_CTRLPT_RSP_CODE_IND_CONFIRM_PENDING = 3
-} ble_lcs_ctrlpt_proc_status_t;
 
 /**@brief Light Control Control Point Response parameter for BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNFG */
 typedef struct
@@ -188,27 +205,17 @@ typedef struct
     ble_srv_error_handler_t      error_handler;     /**< Function to be called in case of an error */
 } ble_lcs_ctrlpt_init_t;
 
-/**@brief Light Control Control Point response indication structure */
-typedef struct
-{
-    ble_lcs_ctrlpt_rsp_code_t rsp_code;
-    uint8_t                   len;
-    uint8_t                   encoded_rsp[BLE_LCS_CTRLPT_MAX_LEN];
-} ble_lcs_ctrlpt_rsp_ind_t;
-
 /**@brief Light Control Control Point structure. This contains various status
  *        information for the Light Control Control Point behavior. */
 struct ble_lcs_ctrlpt_s
 {
-    uint8_t                      uuid_type;         /**< UUID type for Light Control Service Base UUID. */
-    ble_lcs_lf_t                 supported_features;/**< supported control point features */
-    uint16_t                     service_handle;    /**< Handle of the parent service (as provided by the BLE stack) */
-    ble_gatts_char_handles_t     lc_ctrlpt_handles; /**< Handles related to the Light Control Control Point characteristic */
-    uint16_t                     conn_handle;       /**< Handle of the current connection (as provided by the BLE stack) */
-    ble_lcs_ctrlpt_evt_handler_t evt_handler;       /**< event handler */
-    ble_lcs_ctrlpt_proc_status_t procedure_status;  /**< status of possible procedure */
-    ble_srv_error_handler_t      error_handler;     /**< Function to be called in case of an error */
-    ble_lcs_ctrlpt_rsp_ind_t     response;          /**< pending response data */
+    uint8_t                        uuid_type;         /**< UUID type for Light Control Service Base UUID. */
+    ble_lcs_lf_t                   supported_features;/**< supported control point features */
+    uint16_t                       service_handle;    /**< Handle of the parent service (as provided by the BLE stack) */
+    ble_gatts_char_handles_t       lc_ctrlpt_handles; /**< Handles related to the Light Control Control Point characteristic */
+    ble_lcs_ctrlpt_evt_handler_t   evt_handler;       /**< event handler */
+    ble_srv_error_handler_t        error_handler;     /**< Function to be called in case of an error */
+    ble_lcs_ctrlpt_client_spec_t * p_client;          /**< client specific data */
 };
 
 /* Exported functions ------------------------------------------------------- */
@@ -218,7 +225,7 @@ struct ble_lcs_ctrlpt_s
  * @param[in]   p_lcs_ctrlpt_init   Information needed to initialize the Control Point behavior
  * @return      NRF_SUCCESS on successful initialization, otherwise an error code
  */
-uint32_t ble_lcs_ctrlpt_init(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_lcs_ctrlpt_init_t * p_lcs_ctrlpt_init);
+uint32_t ble_lcs_ctrlpt_init(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, uint8_t max_clients, ble_lcs_ctrlpt_init_t * p_lcs_ctrlpt_init);
 
 /** @brief Light Control Control Point BLE stack event handler
  *
@@ -236,7 +243,7 @@ void ble_lcs_ctrlpt_on_ble_evt(ble_lcs_ctrlpt_t * p_lcs_ctrlpt_t, ble_evt_t * p_
  * @param[in]   p_rsps          Response data structure
  * @return      NRF_SUCCESS on successful response, otherwise an error code
  */
-uint32_t ble_lcs_ctrlpt_mode_resp(ble_lcs_ctrlpt_t * p_lcs_ctrlpt_t, const ble_lcs_ctrlpt_rsp_t * p_rsps);
+uint32_t ble_lcs_ctrlpt_mode_resp(ble_lcs_ctrlpt_t * p_lcs_ctrlpt_t, uint16_t conn_handle, const ble_lcs_ctrlpt_rsp_t * p_rsps);
 
 #endif /* BLE_LCS_CTRLPT_H_INCLUDED */
 
