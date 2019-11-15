@@ -180,7 +180,7 @@ typedef struct
 
 /* Private variables ---------------------------------------------------------*/
 APP_TIMER_DEF(mainTimerId);                                         // timer instance for main timer
-static hmi_ButtonEnum buttonVolUp, buttonVolDown;                   // remote button states
+static hmi_buttonState_t buttonVolUp, buttonVolDown;                // remote button states
 static modeState_t modeState __attribute__((section(".noinit")));   // mode states
 static state_t state = {.pMode = &modeState};                       // device states
 static helenaConfig_t modeConfig = MODES_DEFAULT;                   // modes and grouping configuration
@@ -220,16 +220,16 @@ static void btleHidEvtHandler(btle_event_t * pEvt)
     switch (pEvt->subEvt.hid)
     {
     case BTLE_EVT_HID_VOL_UP_SHORT:
-        buttonVolUp = hmi_BUTTONSHORT;
+        buttonVolUp = HMI_BUTTONSHORT;
         break;
     case BTLE_EVT_HID_VOL_UP_LONG:
-        buttonVolUp = hmi_BUTTONLONG;
+        buttonVolUp = HMI_BUTTONLONG;
         break;
     case BTLE_EVT_HID_VOL_DOWN_SHORT:
-        buttonVolDown = hmi_BUTTONSHORT;
+        buttonVolDown = HMI_BUTTONSHORT;
         break;
     case BTLE_EVT_HID_VOL_DOWN_LONG:
-        buttonVolDown = hmi_BUTTONLONG;
+        buttonVolDown = HMI_BUTTONLONG;
         break;
     default:
         break;
@@ -391,6 +391,7 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
             connHandle = state.btle.isPeriphConnected;
         if (connHandle != BTLE_CONN_HANDLE_INVALID)
             APP_ERROR_CHECK(btle_SetMode(state.pMode->currentMode, connHandle));
+        (void)cmh_EnableTaillight(modeConfig.mode[state.pMode->currentMode].setup.comTaillight);
         rsp.retCode = BTLE_RET_SUCCESS;
         break;
     case BTLE_EVT_LCSCP_CONFIG_MODE:        // mode configuration request
@@ -535,7 +536,7 @@ static void btleEventHandler(btle_event_t * pEvt)
 
 /** @brief event handler for incoming com messages
  */
-static void lightMasterHandler(cmh_LightMasterDataStruct const* pMasterData)
+static void lightMasterHandler(cmh_lightMasterData_t const* pMasterData)
 {
     // com mode city/fog low
     /*if (pMasterData->mainBeam == cmh_LIGHTLOW &&
@@ -606,7 +607,7 @@ static void fdsEventHandler(ret_code_t errCode, fds_cmd_id_t cmd, fds_record_id_
                 btle_LcscpEventResponse_t rsp;
                 rsp.evt = BTLE_EVT_LCSCP_CONFIG_MODE;
                 rsp.retCode = errCode == NRF_SUCCESS ? BTLE_RET_SUCCESS : BTLE_RET_FAILED;
-                APP_ERROR_CHECK(btle_SendEventResponse(&rsp, state.btle.isGroupCountPending));
+                APP_ERROR_CHECK(btle_SendEventResponse(&rsp, state.btle.isModeConfigWritePending));
 
                 state.btle.isGroupCountPending = BTLE_CONN_HANDLE_INVALID;
             }
@@ -750,8 +751,8 @@ static uint32_t setHelenaState(powerState_t newState)
             APP_ERROR_CHECK(light_Enable(false));
             APP_ERROR_CHECK(ms_Enable(false));
         }
-        hmi_SetLed(hmi_LEDBLUE, hmi_LEDOFF);
-        hmi_SetLed(hmi_LEDRED, hmi_LEDOFF);
+        hmi_SetLed(HMI_LEDBLUE, HMI_LEDOFF);
+        hmi_SetLed(HMI_LEDRED, HMI_LEDOFF);
         APP_ERROR_CHECK(app_timer_stop(mainTimerId));
         nrf_gpio_cfg_default(pBoardConfig->bdepRX); // default config for com pin and button
         nrf_gpio_cfg_default(pBoardConfig->button); // to disable DETECT signal
@@ -761,6 +762,8 @@ static uint32_t setHelenaState(powerState_t newState)
         // shut down light and motion sensor
         APP_ERROR_CHECK(light_Enable(false));
         APP_ERROR_CHECK(ms_Enable(false));
+        hmi_SetLed(HMI_LEDBLUE, HMI_LEDOFF);
+        hmi_SetLed(HMI_LEDRED, HMI_LEDOFF);
         btle_SetScanConfig(BTLE_SCAN_MODE_LOW_POWER);
         (void)app_timer_stop(mainTimerId);
         APP_ERROR_CHECK(app_timer_start(mainTimerId, LIGHT_UPDATE_PERIOD_LONG, NULL));  // used to keep timer running, otherwise RTC will be stopped.
@@ -855,13 +858,12 @@ static void mainInit(void)
  * @return bool
  *
  */
-static bool isModeEnabled(helenaMode_t const* pMode)
+static bool isModeEnabled(helenaMode_t const* const pMode)
 {
-    if (pMode == NULL)
-        return false;
-    if (pMode->intensity || pMode->setup.comTaillight || pMode->setup.comBrakelight)
+    if (pMode != NULL && (pMode->intensity || pMode->setup.comTaillight || pMode->setup.comBrakelight))
         return true;
-    return false;
+    else
+        return false;
 }
 
 static bool isGroupEnabled(uint8_t group, uint8_t modesPerGroup)
@@ -876,10 +878,10 @@ static bool isGroupEnabled(uint8_t group, uint8_t modesPerGroup)
 
 /** @brief function for handling button events
  */
-static void buttonHandling(hmi_ButtonEnum internal, hmi_ButtonEnum volumeUp, hmi_ButtonEnum volumeDown)
+static void buttonHandling(hmi_buttonState_t internal, hmi_buttonState_t volumeUp, hmi_buttonState_t volumeDown)
 {
     // ultra long press while off -> start searching for remote
-    if (state.pMode->currentMode == MODE_OFF && internal == hmi_BUTTONULTRALONG)
+    if (state.pMode->currentMode == MODE_OFF && internal == HMI_BUTTONULTRALONG)
     {
         APP_ERROR_CHECK(btle_DeleteBonds());
         APP_ERROR_CHECK(btle_SearchForRemote());
@@ -887,16 +889,17 @@ static void buttonHandling(hmi_ButtonEnum internal, hmi_ButtonEnum volumeUp, hmi
     }
 
     // ultra long press or volume down button while light is on -> turn off
-    if (state.pMode->currentMode != MODE_OFF && (volumeDown != hmi_BUTTONNOPRESS || internal == hmi_BUTTONULTRALONG))
+    if (state.pMode->currentMode != MODE_OFF && (volumeDown != HMI_BUTTONNOPRESS || internal == HMI_BUTTONULTRALONG))
     {
         state.pMode->currentMode = MODE_OFF;
         (void)btle_SetMode(state.pMode->currentMode, BTLE_CONN_HANDLE_ALL);
+        (void)cmh_EnableTaillight(modeConfig.mode[state.pMode->currentMode].setup.comTaillight);
         return;
     }
 
     uint_fast8_t modesPerGroup = MAX_NUM_OF_MODES / modeConfig.groups;
     // increase to next mode for short button press
-    if (internal == hmi_BUTTONSHORT || volumeUp == hmi_BUTTONSHORT)
+    if (internal == HMI_BUTTONSHORT || volumeUp == HMI_BUTTONSHORT)
     {
         if (state.pMode->currentMode == MODE_OFF)
             state.pMode->currentMode = 0;
@@ -904,7 +907,7 @@ static void buttonHandling(hmi_ButtonEnum internal, hmi_ButtonEnum volumeUp, hmi
             state.pMode->currentMode -= modesPerGroup;
     }
     // switch to next group for long button press
-    else if (state.pMode->currentMode != MODE_OFF && (internal == hmi_BUTTONLONG || volumeUp == hmi_BUTTONLONG))
+    else if (state.pMode->currentMode != MODE_OFF && (internal == HMI_BUTTONLONG || volumeUp == HMI_BUTTONLONG))
     {
         state.pMode->currentMode += modesPerGroup;
         state.pMode->currentMode %= MAX_NUM_OF_MODES;
@@ -924,6 +927,7 @@ static void buttonHandling(hmi_ButtonEnum internal, hmi_ButtonEnum volumeUp, hmi
                 if (isModeEnabled(&modeConfig.mode[state.pMode->currentMode]))
                 {
                     (void)btle_SetMode(state.pMode->currentMode, BTLE_CONN_HANDLE_ALL);
+                    (void)cmh_EnableTaillight(modeConfig.mode[state.pMode->currentMode].setup.comTaillight);
                     return;
                 }
                 if (++state.pMode->currentMode % modesPerGroup == 0)
@@ -935,6 +939,8 @@ static void buttonHandling(hmi_ButtonEnum internal, hmi_ButtonEnum volumeUp, hmi
         state.pMode->currentMode %= MAX_NUM_OF_MODES;
     }
     state.pMode->currentMode = MODE_OFF;    // only reached if no valid modes available
+    (void)btle_SetMode(state.pMode->currentMode, BTLE_CONN_HANDLE_ALL);
+    (void)cmh_EnableTaillight(modeConfig.mode[state.pMode->currentMode].setup.comTaillight);
 }
 
 /** @brief function to handle the status led
@@ -942,24 +948,26 @@ static void buttonHandling(hmi_ButtonEnum internal, hmi_ButtonEnum volumeUp, hmi
 static void ledHandling(light_limiterActive_t flood, light_limiterActive_t spot, btleStatus_t *pBtleData)
 {
     // red led indicating if any voltage or temperature limiting is active
-    if (flood.voltage || flood.temperature || spot.voltage || spot.temperature)
-        hmi_SetLed(hmi_LEDRED, hmi_LEDON);
+    if (state.power >= POWER_IDLE &&
+        (flood.voltage || flood.temperature || spot.voltage || spot.temperature))
+        hmi_SetLed(HMI_LEDRED, HMI_LEDON);
     else
-        hmi_SetLed(hmi_LEDRED, hmi_LEDOFF);
+        hmi_SetLed(HMI_LEDRED, HMI_LEDOFF);
     // blue led indicating if a central connection (e.g. to a remote) is established
-    if (pBtleData->isCentralConnected != BTLE_CONN_HANDLE_INVALID)
-        hmi_SetLed(hmi_LEDBLUE, hmi_LEDON);
+    if (state.power >= POWER_IDLE &&
+        (pBtleData->isCentralConnected != BTLE_CONN_HANDLE_INVALID))
+        hmi_SetLed(HMI_LEDBLUE, HMI_LEDON);
     else
-        hmi_SetLed(hmi_LEDBLUE, hmi_LEDOFF);
+        hmi_SetLed(HMI_LEDBLUE, HMI_LEDOFF);
 }
 
 /** @brief function to update the light information data for the com module
  */
 static void updateLightMsgData(const light_status_t * pStatus)
 {
-    cmh_HelmetLightStruct helmetBeam;
+    cmh_helmetLight_t helmetBeam;
 
-    memset(&helmetBeam, 0, sizeof(cmh_HelmetLightStruct));
+    memset(&helmetBeam, 0, sizeof(cmh_helmetLight_t));
     if (pStatus->flood.current || pStatus->spot.current)
         helmetBeam.overcurrentError = 1;
     if (pStatus->flood.voltage || pStatus->spot.voltage)
@@ -981,15 +989,20 @@ static void updateLightMsgData(const light_status_t * pStatus)
 
 /** @brief function to update the light informations for the ble module
  */
-static void updateLightBtleData(helenaMode_t const* pMode, light_status_t const* pStatus, q15_t pitch)
+static void updateLightBtleData(helenaMode_t const * const pMode, light_status_t const* pStatus, q15_t pitch)
 {
     btle_lcsMeasurement_t helmetBeam;
     uint16_t powerFlood, powerSpot;
+    helenaMode_t const* pM;
 
     powerFlood = (pStatus->currentFlood * LEDVOLTAGE * ledConfiguration.floodCount * 1000ul) >> 10;
     powerSpot = (pStatus->currentSpot * LEDVOLTAGE * ledConfiguration.spotCount * 1000ul) >> 10;
 
-    convertModetoBtleMode(pMode, &helmetBeam.mode, 1);
+    pM = pMode;
+    if (pM != NULL)
+        convertModetoBtleMode(pM, &helmetBeam.mode, 1);
+    else
+        memset(&helmetBeam.mode, 0, sizeof(helmetBeam.mode));
 
     helmetBeam.statusFlood.overcurrent = pStatus->flood.current;
     helmetBeam.statusFlood.inputVoltage = pStatus->flood.voltage;
@@ -1017,7 +1030,7 @@ static void updateLightBtleData(helenaMode_t const* pMode, light_status_t const*
 
 static void brakeDetection(bool indicate)
 {
-    if (indicate)
+    if (modeConfig.mode[state.pMode->currentMode].setup.comBrakelight && indicate)
         cmh_UpdateBrakeIndicator(true);
 }
 
@@ -1061,10 +1074,10 @@ int main(void)
         }
 
         // button checks
-        hmi_ButtonEnum buttonInt = hmi_Debounce();
+        hmi_buttonState_t buttonInt = hmi_Debounce();
         buttonHandling(buttonInt, buttonVolUp, buttonVolDown);
-        buttonVolUp = hmi_BUTTONNOPRESS;    // remote button must be cleared
-        buttonVolDown = hmi_BUTTONNOPRESS;
+        buttonVolUp = HMI_BUTTONNOPRESS;    // remote button must be cleared
+        buttonVolDown = HMI_BUTTONNOPRESS;
 
         // determine current light mode
         if (state.pMode->currentMode != MODE_OFF)
@@ -1182,7 +1195,9 @@ int main(void)
             updateLightBtleData(pLightMode, pLightStatus, msData.pitch);
 
             // reset idle timeout counter if necessary
-            if (isModeEnabled(pLightMode) || msData.isMoving)
+            //if (msData.isMoving || isModeEnabled(pLightMode)) // why the hell is this not working ?
+            if (msData.isMoving ||
+                (state.pMode->currentMode != MODE_OFF && isModeEnabled(&modeConfig.mode[state.pMode->currentMode])))
                 state.idleTimeout = IDLE_TIMEOUT;
         }
 

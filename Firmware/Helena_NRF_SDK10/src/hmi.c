@@ -76,11 +76,11 @@ void hmi_Init()
     APP_ERROR_CHECK(app_timer_create(&hmi_Timer, APP_TIMER_MODE_REPEATED, &hmi_TimerCallback));
 }
 
-hmi_ButtonEnum hmi_Debounce()
+hmi_buttonState_t hmi_Debounce()
 {
     static uint8_t ct0 = 0xFF, ct1 = 0xFF, rpt, but_state, but_repeat, but_press, but_long;
     uint8_t i;
-    hmi_ButtonEnum presstype = hmi_BUTTONNOPRESS;
+    hmi_buttonState_t presstype = HMI_BUTTONNOPRESS;
 
     if (hmi_TimebaseFlag)
     {
@@ -122,7 +122,7 @@ hmi_ButtonEnum hmi_Debounce()
     i = ~but_state & but_long;
     if (i)
     {
-        presstype = hmi_BUTTONLONG;
+        presstype = HMI_BUTTONLONG;
         but_long = 0;
         but_press = 0;
     }
@@ -133,48 +133,48 @@ hmi_ButtonEnum hmi_Debounce()
         if (but_repeat)
             but_repeat = 0;
         else
-            presstype = hmi_BUTTONSHORT;
+            presstype = HMI_BUTTONSHORT;
         but_press = 0;
     }
     // check if button is pressed right now
     if (but_state)
-        presstype = hmi_BUTTONPRESS;
+        presstype = HMI_BUTTONPRESS;
 
     // check for ultra long press
     i = but_state & but_repeat & but_long;
     if (i)
     {
-        presstype = hmi_BUTTONULTRALONG;
+        presstype = HMI_BUTTONULTRALONG;
         but_long = 0;
     }
 
     return presstype;
 }
 
-void hmi_SetLed(hmi_LedEnum Led, hmi_LedStateEnum state)
+void hmi_SetLed(hmi_ledType_t led, hmi_ledState_t state)
 {
     static uint8_t ledState;
 
     switch (state)
     {
-    case hmi_LEDOFF:
-        ledState &= ~(1<<Led);
+    case HMI_LEDOFF:
+        ledState &= ~(1<<led);
         break;
-    case hmi_LEDON:
-        ledState |= (1<<Led);
+    case HMI_LEDON:
+        ledState |= (1<<led);
         break;
-    case hmi_LEDTOGGLE:
-        ledState ^= (1<<Led);
+    case HMI_LEDTOGGLE:
+        ledState ^= (1<<led);
         break;
     }
 
-    switch (ledState & ((1<<hmi_LEDBLUE)|(1<<hmi_LEDRED)))
+    switch (ledState & ((1<<HMI_LEDBLUE)|(1<<HMI_LEDRED)))
     {
     case 0:
         nrf_gpio_cfg_default(LEDRED);
         nrf_gpio_cfg_default(LEDBLUE);
         break;
-    case (1<<hmi_LEDRED):
+    case (1<<HMI_LEDRED):
         nrf_gpio_cfg_default(LEDBLUE);
         nrf_gpio_cfg_output(LEDRED);
         if (LEDRED == LEDBLUE)
@@ -182,12 +182,12 @@ void hmi_SetLed(hmi_LedEnum Led, hmi_LedStateEnum state)
         else
             nrf_gpio_pin_set(LEDRED);
         break;
-    case (1<<hmi_LEDBLUE):
+    case (1<<HMI_LEDBLUE):
         nrf_gpio_cfg_default(LEDRED);
         nrf_gpio_cfg_output(LEDBLUE);
         nrf_gpio_pin_set(LEDBLUE);
         break;
-    case (1<<hmi_LEDRED)|(1<<hmi_LEDBLUE):
+    case (1<<HMI_LEDRED)|(1<<HMI_LEDBLUE):
         nrf_gpio_cfg_output(LEDBLUE);
         nrf_gpio_pin_set(LEDRED);
         nrf_gpio_cfg_output(LEDRED);

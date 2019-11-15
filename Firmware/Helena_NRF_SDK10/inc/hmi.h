@@ -2,8 +2,6 @@
   ******************************************************************************
   * @file    hmi.h
   * @author  Thomas Reisnecker
-  * @version V1.0
-  * @date    15/10/26
   * @brief   Header for hmi.c module
   ******************************************************************************
   */
@@ -17,25 +15,45 @@
 
 /* Exported types ------------------------------------------------------------*/
 typedef enum {
-    hmi_BUTTONNOPRESS = 0, hmi_BUTTONPRESS, hmi_BUTTONSHORT, hmi_BUTTONLONG, hmi_BUTTONULTRALONG
-} hmi_ButtonEnum;
+    HMI_BUTTONNOPRESS = 0,
+    HMI_BUTTONPRESS,
+    HMI_BUTTONSHORT,
+    HMI_BUTTONLONG,
+    HMI_BUTTONULTRALONG
+} hmi_buttonState_t;
 
 typedef enum {
-    hmi_LEDRED = 0, hmi_LEDBLUE
-} hmi_LedEnum;
+    HMI_LEDRED = 0,
+    HMI_LEDBLUE
+} hmi_ledType_t;
 
 typedef enum {
-    hmi_LEDOFF = 0, hmi_LEDON, hmi_LEDTOGGLE
-} hmi_LedStateEnum;
+    HMI_LEDOFF = 0,
+    HMI_LEDON,
+    HMI_LEDTOGGLE
+} hmi_ledState_t;
 
 /* Exported constants --------------------------------------------------------*/
 
 /* Exported macros -----------------------------------------------------------*/
 
 /* Exported functions ------------------------------------------------------- */
+/** @brief function to initialize the hmi module
+ */
 void hmi_Init(void);
-hmi_ButtonEnum hmi_Debounce(void);
-void hmi_SetLed(hmi_LedEnum, hmi_LedStateEnum);
+
+/** @brief debounce function, this function should be called in the main loop
+ *
+ * @return button press states of the internal button
+ */
+hmi_buttonState_t hmi_Debounce(void);
+
+/** @brief function to control the leds
+ *
+ * @param[in] led   led type to control
+ * @param[in] state the new state
+ */
+void hmi_SetLed(hmi_ledType_t led, hmi_ledState_t state);
 
 #endif /*_HMI_H_*/
 

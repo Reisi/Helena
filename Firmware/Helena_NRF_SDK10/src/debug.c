@@ -36,6 +36,7 @@
 #include "nrf_delay.h"
 #include "crc16.h"
 #include "fstorage.h"
+#include "main.h"
 #endif
 
 #include "debug.h"

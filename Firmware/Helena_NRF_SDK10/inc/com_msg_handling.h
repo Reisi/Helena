@@ -2,8 +2,6 @@
   ******************************************************************************
   * @file    com_msg_handling.h
   * @author  Thomas Reisnecker
-  * @version V1.0
-  * @date    16/11/06
   * @brief   header file for communication messages handling
   ******************************************************************************
   */
@@ -26,7 +24,7 @@ typedef enum
     cmh_LIGHTDIM,
     cmh_LIGHTLOW,
     cmh_LIGHTFULL
-} cmh_LightModeEnum;
+} cmh_lightMode_t;
 
 typedef struct
 {
@@ -34,23 +32,23 @@ typedef struct
     uint8_t voltageError : 1;
     uint8_t temperatureError : 1;
     uint8_t directdriveError : 1;
-    cmh_LightModeEnum mode;
-    uint16_t current;               /**< current in mA */
-    uint16_t temperature;           /**< temperature in 0.1K */
-    uint16_t voltage;               /**< voltage in mV */
-} cmh_LightStruct;
+    cmh_lightMode_t mode;
+    uint16_t current;               // current in mA
+    uint16_t temperature;           // temperature in 0.1K
+    uint16_t voltage;               // voltage in mV
+} cmh_light_t;
 
-typedef cmh_LightStruct cmh_HelmetLightStruct;
+typedef cmh_light_t cmh_helmetLight_t;
 
 typedef struct
 {
-    cmh_LightModeEnum mainBeam;
-    cmh_LightModeEnum highBeam;
-    cmh_LightModeEnum helmetBeam;
-    cmh_LightModeEnum taillight;
-} cmh_LightMasterDataStruct;
+    cmh_lightMode_t mainBeam;
+    cmh_lightMode_t highBeam;
+    cmh_lightMode_t helmetBeam;
+    cmh_lightMode_t taillight;
+} cmh_lightMasterData_t;
 
-typedef void (*cmh_LightMasterHandler)(const cmh_LightMasterDataStruct * pMasterData);
+typedef void (*cmh_LightMasterHandler_t)(const cmh_lightMasterData_t * pMasterData);
 
 /* Exported constants --------------------------------------------------------*/
 
@@ -62,7 +60,7 @@ typedef void (*cmh_LightMasterHandler)(const cmh_LightMasterDataStruct * pMaster
  * @param[in]   pLightMasterHandler handler for master messages
  * @return      error code of application timer module
  */
-uint32_t cmh_Init(cmh_LightMasterHandler pLightMasterHandler);
+uint32_t cmh_Init(cmh_LightMasterHandler_t lightMasterHandler);
 
 /** @brief execution handler
  *
@@ -83,7 +81,15 @@ void cmh_ComMessageCheck(const com_MessageStruct * pMessageIn);
  * @param[in]   pLight  helmet light data
  * @return      NRF_SUCCESS
  */
-uint32_t cmh_UpdateHelmetLight(cmh_HelmetLightStruct* pLight);
+uint32_t cmh_UpdateHelmetLight(cmh_helmetLight_t* pLight);
+
+/** @brief function to enable com based taillight
+ *
+ * @param[in]   enable  true to enable, false to disable
+ * @return      NRF_SUCCESS
+ *              NRF_ERROR_INVALID_STATE if an active light master is available
+ */
+uint32_t cmh_EnableTaillight(bool enable);
 
 /** @brief function to update brake indicator
  *
