@@ -1028,7 +1028,7 @@ uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData)
         notifyData.spot_status.temperature = pData->statusSpot.temperature ? 1 : 0;
         notifyData.spot_status.dutycycle = pData->statusSpot.dutyCycleLimit ? 1 : 0;
     }
-    if (pData->temperature != 0)
+    if (pData->temperature >= -40 && pData->temperature <= 85)
     {
         notifyData.flags.temperature_present = 1;
         notifyData.temperature = pData->temperature;
@@ -1038,7 +1038,7 @@ uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData)
         notifyData.flags.input_voltage_present = 1;
         notifyData.input_voltage = pData->inputVoltage;;
     }
-    if (pData->mode.setup.pitchCompensation)
+    if (pData->pitch >= -90 && pData->pitch <= 90)
     {
         notifyData.flags.pitch_present = 1;
         notifyData.pitch = pData->pitch;

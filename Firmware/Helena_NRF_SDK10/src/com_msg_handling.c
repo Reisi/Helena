@@ -139,8 +139,8 @@ uint32_t sendTaillightMessage(bool enable)
 /* Public functions ----------------------------------------------------------*/
 uint32_t cmh_Init(cmh_LightMasterHandler_t lightMasterHandler)
 {
-    if (pLightMasterHandler != NULL)
-        pLightMasterHandler = pLightMasterHandler;
+    if (lightMasterHandler != NULL)
+        pLightMasterHandler = lightMasterHandler;
 
     lastLightMasterMessage = LIGHT_MASTER_INVALID;
 
@@ -227,21 +227,22 @@ void cmh_ComMessageCheck(const com_MessageStruct * pMessageIn)
         if (pMessageIn->Identifier == MASTERID)
             (void)app_timer_cnt_get(&lastLightMasterMessage);   // save timestamp of valid master message
 
-        if (ignoreAuxMaster == 0)                               // ignore auxiliary master messages if we sent them
+        if (pMessageIn->Identifier == AUXMASTERID && ignoreAuxMaster != 0)
         {
-            if (pLightMasterHandler != NULL)
-            {
-                cmh_lightMasterData_t masterData;
-
-                masterData.mainBeam = pMessageIn->Data[0] & 0x0F;
-                masterData.highBeam = pMessageIn->Data[0] >> 4;
-                masterData.helmetBeam = pMessageIn->Data[1] & 0x0F;
-                masterData.taillight = pMessageIn->Data[2] & 0x0F;
-                (*pLightMasterHandler)(&masterData);
-            }
-        }
-        else
             ignoreAuxMaster--;
+            return;                 // ignore auxiliary master messages, if we sent them
+        }
+
+        if (pLightMasterHandler != NULL)
+        {
+            cmh_lightMasterData_t masterData;
+
+            masterData.mainBeam = pMessageIn->Data[0] & 0x0F;
+            masterData.highBeam = pMessageIn->Data[0] >> 4;
+            masterData.helmetBeam = pMessageIn->Data[1] & 0x0F;
+            masterData.taillight = pMessageIn->Data[2] & 0x0F;
+            (*pLightMasterHandler)(&masterData);
+        }
     }
 }
 

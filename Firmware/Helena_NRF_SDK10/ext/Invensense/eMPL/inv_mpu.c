@@ -3169,6 +3169,7 @@ int mpu_get_compass_fsr(unsigned short *fsr)
  *  @param[in]  lpa_freq    Minimum sampling rate, or zero to disable.
  *  @return     0 if successful.
  */
+#ifdef BUGGED
 int mpu_lp_motion_interrupt(unsigned short thresh, unsigned char time,
     unsigned char lpa_freq)
 {
@@ -3288,6 +3289,215 @@ int mpu_lp_motion_interrupt(unsigned short thresh, unsigned char time,
                 goto lp_int_restore;
         }
         /* If we reach this point, motion interrupt mode hasn't been used yet. */
+        return -1;
+    }
+lp_int_restore:
+    /* Set to invalid values to ensure no I2C writes are skipped. */
+    st.chip_cfg.gyro_fsr = 0xFF;
+    st.chip_cfg.accel_fsr = 0xFF;
+    st.chip_cfg.lpf = 0xFF;
+    st.chip_cfg.sample_rate = 0xFFFF;
+    st.chip_cfg.sensors = 0xFF;
+    st.chip_cfg.fifo_enable = 0xFF;
+    st.chip_cfg.clk_src = INV_CLK_PLL;
+    mpu_set_sensors(st.chip_cfg.cache.sensors_on);
+    mpu_set_gyro_fsr(st.chip_cfg.cache.gyro_fsr);
+    mpu_set_accel_fsr(st.chip_cfg.cache.accel_fsr);
+    mpu_set_lpf(st.chip_cfg.cache.lpf);
+    mpu_set_sample_rate(st.chip_cfg.cache.sample_rate);
+    mpu_configure_fifo(st.chip_cfg.cache.fifo_sensors);
+
+    if (st.chip_cfg.cache.dmp_on)
+        mpu_set_dmp_state(1);
+
+#ifdef MPU6500
+    /* Disable motion interrupt (MPU6500 version). */
+    data[0] = 0;
+    if (i2c_write(st.hw->addr, st.reg->accel_intel, 1, data))
+        goto lp_int_restore;
+#endif
+
+    st.chip_cfg.int_motion_only = 0;
+    return 0;
+}
+#endif //BUGGED
+
+int mpu_lp_motion_interrupt(unsigned short thresh, unsigned char time,
+unsigned char lpa_freq)
+{
+    unsigned char data[3];
+
+    if (lpa_freq) {
+        unsigned char thresh_hw;
+
+#if defined MPU6050
+        /* TODO: Make these const/#defines. */
+        /* 1LSb = 32mg. */
+        if (thresh > 8160)
+            thresh_hw = 255;
+        else if (thresh < 32)
+            thresh_hw = 1;
+        else
+            thresh_hw = thresh >> 5;
+#elif defined MPU6500
+        /* 1LSb = 4mg. */
+        if (thresh > 1020)
+            thresh_hw = 255;
+        else if (thresh < 4)
+            thresh_hw = 1;
+        else
+            thresh_hw = thresh >> 2;
+#endif
+
+        if (!time)
+        /* Minimum duration must be 1ms. */
+            time = 1;
+
+#if defined MPU6050
+        if (lpa_freq > 40)
+#elif defined MPU6500
+        if (lpa_freq > 640)
+#endif
+        /* At this point, the chip has not been re-configured, so the
+        * function can safely exit.
+        */
+        return -1;
+
+        if (!st.chip_cfg.int_motion_only) {
+            /* Store current settings for later. */
+            if (st.chip_cfg.dmp_on) {
+                mpu_set_dmp_state(0);
+                st.chip_cfg.cache.dmp_on = 1;
+            } else
+            st.chip_cfg.cache.dmp_on = 0;
+            mpu_get_gyro_fsr(&st.chip_cfg.cache.gyro_fsr);
+            mpu_get_accel_fsr(&st.chip_cfg.cache.accel_fsr);
+            mpu_get_lpf(&st.chip_cfg.cache.lpf);
+            mpu_get_sample_rate(&st.chip_cfg.cache.sample_rate);
+            st.chip_cfg.cache.sensors_on = st.chip_cfg.sensors;
+            mpu_get_fifo_config(&st.chip_cfg.cache.fifo_sensors);
+        }
+
+#ifdef MPU6050
+        /* Disable hardware interrupts for now. */
+        set_int_enable(0);
+
+        /* Enter full-power accel-only mode. */
+        mpu_lp_accel_mode(0);
+
+        /* Override current LPF (and HPF) settings to obtain a valid accel
+        * reading.
+        */
+        data[0] = INV_FILTER_256HZ_NOLPF2;
+        if (i2c_write(st.hw->addr, st.reg->lpf, 1, data))
+            return -1;
+
+        /* NOTE: Digital high pass filter should be configured here. Since this
+        * driver doesn’t modify those bits anywhere, they should already be
+        * cleared by default.
+        */
+
+        /* Configure the device to send motion interrupts. */
+        /* Enable motion interrupt. */
+        data[0] = BIT_MOT_INT_EN;
+        if (i2c_write(st.hw->addr, st.reg->int_enable, 1, data))
+            goto lp_int_restore;
+
+        /* Set motion interrupt parameters. */
+        data[0] = thresh_hw;
+        data[1] = time;
+        if (i2c_write(st.hw->addr, st.reg->motion_thr, 2, data))
+            goto lp_int_restore;
+
+        /* Force hardware to “lock” current accel sample. */
+        delay_ms(5);
+        data[0] = (st.chip_cfg.accel_fsr << 3) | BITS_HPF;
+        if (i2c_write(st.hw->addr, st.reg->accel_cfg, 1, data))
+            goto lp_int_restore;
+
+        /* Set up LP accel mode. */
+        data[0] = BIT_LPA_CYCLE;
+        if (lpa_freq == 1)
+            data[1] = INV_LPA_1_25HZ;
+        else if (lpa_freq <= 5)
+            data[1] = INV_LPA_5HZ;
+        else if (lpa_freq <= 20)
+            data[1] = INV_LPA_20HZ;
+        else
+            data[1] = INV_LPA_40HZ;
+        data[1] = (data[1] << 6) | BIT_STBY_XYZG;
+        if (i2c_write(st.hw->addr, st.reg->pwr_mgmt_1, 2, data))
+            goto lp_int_restore;
+
+        st.chip_cfg.int_motion_only = 1;
+        return 0;
+#elif defined MPU6500
+        /* Disable hardware interrupts. */
+        set_int_enable(0);
+
+        /* Enter full-power accel-only mode, no FIFO/DMP. */
+        data[0] = 0;
+        data[1] = 0;
+        data[2] = BIT_STBY_XYZG;
+        if (i2c_write(st.hw->addr, st.reg->user_ctrl, 3, data))
+            goto lp_int_restore;
+
+        /* Set motion threshold. */
+        data[0] = thresh_hw;
+        if (i2c_write(st.hw->addr, st.reg->motion_thr, 1, data))
+            goto lp_int_restore;
+
+        /* Set wake frequency. */
+        if (lpa_freq == 1)
+            data[0] = INV_LPA_1_25HZ;
+        else if (lpa_freq == 2)
+            data[0] = INV_LPA_2_5HZ;
+        else if (lpa_freq < = 5)
+            data[0] = INV_LPA_5HZ;
+        else if (lpa_freq < = 10)
+            data[0] = INV_LPA_10HZ;
+        else if (lpa_freq < = 20)
+            data[0] = INV_LPA_20HZ;
+        else if (lpa_freq < = 40)
+            data[0] = INV_LPA_40HZ;
+        else if (lpa_freq < = 80)
+            data[0] = INV_LPA_80HZ;
+        else if (lpa_freq < = 160)
+            data[0] = INV_LPA_160HZ;
+        else if (lpa_freq < = 320)
+            data[0] = INV_LPA_320HZ;
+        else
+            data[0] = INV_LPA_640HZ;
+        if (i2c_write(st.hw->addr, st.reg->lp_accel_odr, 1, data))
+            goto lp_int_restore;
+
+        /* Enable motion interrupt (MPU6500 version). */
+        data[0] = BITS_WOM_EN;
+        if (i2c_write(st.hw->addr, st.reg->accel_intel, 1, data))
+            goto lp_int_restore;
+
+        /* Enable cycle mode. */
+        data[0] = BIT_LPA_CYCLE;
+        if (i2c_write(st.hw->addr, st.reg->pwr_mgmt_1, 1, data))
+            goto lp_int_restore;
+
+        /* Enable interrupt. */
+        data[0] = BIT_MOT_INT_EN;
+        if (i2c_write(st.hw->addr, st.reg->int_enable, 1, data))
+            goto lp_int_restore;
+
+        st.chip_cfg.int_motion_only = 1;
+        return 0;
+#endif
+    } else {
+        /* Don’t “restore” the previous state if no state has been saved. */
+        int ii;
+        char *cache_ptr = (char*)&st.chip_cfg.cache;
+        for (ii = 0; ii < sizeof(st.chip_cfg.cache); ii++) {
+            if (cache_ptr[ii] != 0)
+                goto lp_int_restore;
+        }
+        /* If we reach this point, motion interrupt mode hasn’t been used yet. */
         return -1;
     }
 lp_int_restore:

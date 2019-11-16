@@ -21,18 +21,13 @@
 #define BTLE_CONN_HANDLE_INVALID    BLE_CONN_HANDLE_INVALID
 #define BTLE_CONN_HANDLE_ALL        BLE_CONN_HANDLE_ALL
 
-/*#define BTLE_LIGHT_FLAG_OVERCURRENT     (1<<0)
-#define BTLE_LIGHT_FLAG_TEMPERATURE     (1<<1)
-#define BTLE_LIGHT_FLAG_INPUTVOLTAGE    (1<<2)
-#define BTLE_LIGHT_FLAG_DUTYCYCLELIMIT  (1<<3)*/
-
 /* Exported types ------------------------------------------------------------*/
 /**< btle events */
 typedef enum
 {
-    BTLE_EVT_CONNECTION = 0,    /**< connection related events */
-    BTLE_EVT_HID,               /**< hid related events  */
-    BTLE_EVT_LCS_CTRL_POINT     /**< events related to the light control service control point */
+    BTLE_EVT_CONNECTION = 0,                    // connection related events
+    BTLE_EVT_HID,                               // hid related events
+    BTLE_EVT_LCS_CTRL_POINT                     // events related to the light control service control point
 } btle_eventTypes_t;
 
 typedef enum
@@ -55,29 +50,29 @@ typedef enum
 
 typedef enum
 {
-    BTLE_EVT_LCSCP_REQ_MODE_CNT,
-    BTLE_EVT_LCSCP_SET_MODE,
-    BTLE_EVT_LCSCP_REQ_GROUP_CNT,
-    BTLE_EVT_LCSCP_CONFIG_GROUP,
-    BTLE_EVT_LCSCP_REQ_MODE_CONFIG,
-    BTLE_EVT_LCSCP_CONFIG_MODE,
-    BTLE_EVT_LCSCP_REQ_LED_CONFIG,
-    BTLE_EVT_LCSCP_CHECK_LED_CONFIG,
-    BTLE_EVT_LCSCP_REQ_SENS_OFFSET,
-    BTLE_EVT_LCSCP_CALIB_SENS_OFFSET,
-    BTLE_EVT_LCSCP_REQ_LIMITS,
-    BTLE_EVT_LCSCP_SET_LIMITS
+    BTLE_EVT_LCSCP_REQ_MODE_CNT,                // request mode count
+    BTLE_EVT_LCSCP_SET_MODE,                    // set mode
+    BTLE_EVT_LCSCP_REQ_GROUP_CNT,               // request group count
+    BTLE_EVT_LCSCP_CONFIG_GROUP,                // configure group count
+    BTLE_EVT_LCSCP_REQ_MODE_CONFIG,             // request mode configuration
+    BTLE_EVT_LCSCP_CONFIG_MODE,                 // configure modes
+    BTLE_EVT_LCSCP_REQ_LED_CONFIG,              // request led configuration
+    BTLE_EVT_LCSCP_CHECK_LED_CONFIG,            // start procedure to check led configuration
+    BTLE_EVT_LCSCP_REQ_SENS_OFFSET,             // request sensor offset
+    BTLE_EVT_LCSCP_CALIB_SENS_OFFSET,           // start sensor offset calibration
+    BTLE_EVT_LCSCP_REQ_LIMITS,                  // request current limits
+    BTLE_EVT_LCSCP_SET_LIMITS                   // set current limits
 } btle_LcsCtrlPtEventTypes_t;
 
 /**< available light setup for light control service */
 typedef struct
 {
-    bool flood             : 1;        // flood active
-    bool spot              : 1;        // spot active
-    bool pitchCompensation : 1;        // pitch compensation enabled
-    bool cloned            : 1;        // output cloned to both drivers
-    bool taillight         : 1;        // external taillight enabled
-    bool brakelight        : 1;        // external brake light enabled
+    bool flood             : 1;                 // flood active
+    bool spot              : 1;                 // spot active
+    bool pitchCompensation : 1;                 // pitch compensation enabled
+    bool cloned            : 1;                 // output cloned to both drivers
+    bool taillight         : 1;                 // external taillight enabled
+    bool brakelight        : 1;                 // external brake light enabled
 } btle_LcsLightSetup_t;
 
 /**< btle light configuration type */
@@ -86,38 +81,38 @@ typedef struct
     btle_LcsLightSetup_t setup;
     union
     {
-        uint8_t intensityInPercent;
-        uint8_t illuminanceInLux;
+        uint8_t intensityInPercent;             // used for setups without pitch compensation
+        uint8_t illuminanceInLux;               // used for setups with pitch compensation
     };
 } btle_LcsModeConfig_t;
 
 /**< btle event structure */
 typedef struct
 {
-    btle_eventTypes_t evt;                 /**< event type */
+    btle_eventTypes_t evt;                      // btle event type
     union
     {
-        btle_connectionEventType_t conn;
-        btle_hidEventType_t        hid;
-        btle_LcsCtrlPtEventTypes_t lcscp;
+        btle_connectionEventType_t conn;        // sub event type for BTLE_EVT_CONNECTION events
+        btle_hidEventType_t        hid;         // sub event type for BTLE_EVT_HID events
+        btle_LcsCtrlPtEventTypes_t lcscp;       // sub event type for BTLE_EVT_LCS_CTRL_POINT events
     } subEvt;
-    uint16_t connHandle;                /**< the connection handle this event is related to, use the same to send response */
+    uint16_t connHandle;                        // the connection handle this event is related to
     union
     {
-        uint8_t modeConfigStart;        /**< parameter for event type BTLE_EVT_REQ_MODE_CONFIG */
-        uint8_t modeToSet;              /**< parameter for event type BTLE_EVT_SET_MOPE */
+        uint8_t modeConfigStart;                // parameter for event type BTLE_EVT_REQ_MODE_CONFIG
+        uint8_t modeToSet;                      // parameter for event type BTLE_EVT_SET_MOPE
         struct
         {
-            uint8_t modeNumber;             // first mode number to change
-            uint8_t listEntries;            // number of modes to change
-            btle_LcsModeConfig_t const* pConfig; // list of mode configurations
-        } modeToConfig;                 /**< parameter for event type BTLE_EVT_CONFIG_MODE */
-        uint8_t groupConfig;            /**< parameter for event type BTLE_EVT_LCSCP_CONFIG_GROUP */
+            uint8_t modeNumber;                 // first mode number to change
+            uint8_t listEntries;                // number of modes to change
+            btle_LcsModeConfig_t const* pConfig;// list of mode configurations
+        } modeToConfig;                         // parameter for event type BTLE_EVT_CONFIG_MODE
+        uint8_t groupConfig;                    // parameter for event type BTLE_EVT_LCSCP_CONFIG_GROUP
         struct
         {
-            int8_t floodInPercent;
-            int8_t spotInPercent;
-        } currentLimits;                /**< parameter for event type BTLE_EVT_LCSCP_SET_LIMITS */
+            int8_t floodInPercent;              // flood current limit in % (related to hardware limit)
+            int8_t spotInPercent;               // spot current limit in % (related to hardware limit)
+        } currentLimits;                        // parameter for event type BTLE_EVT_LCSCP_SET_LIMITS
     } lcscpEventParams;
 } btle_event_t;
 
@@ -132,33 +127,33 @@ typedef enum
 
 typedef struct
 {
-    btle_LcsCtrlPtEventTypes_t evt;                 /**< event type */
-    btle_eventReturn_t    retCode;
+    btle_LcsCtrlPtEventTypes_t evt;             // event type this response is related to
+    btle_eventReturn_t    retCode;              // the return code for the event
     union
     {
-        uint8_t modeCnt;                /**< response parameter for event type BTLE_EVT_REQ_MODE_CNT */
-        uint8_t groupCnt;               /**< response parameter for event type BTLE_EVT_REQ_GROUP_CNT */
+        uint8_t modeCnt;                        // response parameter for event type BTLE_EVT_REQ_MODE_CNT
+        uint8_t groupCnt;                       // response parameter for event type BTLE_EVT_REQ_GROUP_CNT
         struct
         {
-            btle_LcsModeConfig_t const* pList;
-            uint8_t listEntries;
-        } modeList;                     /**< response parameter for event type BTLE_EVT_REQ_MODE_CONFIG */
+            btle_LcsModeConfig_t const* pList;  // list of mode configurations
+            uint8_t listEntries;                // number of modes in this list
+        } modeList;                             // response parameter for event type BTLE_EVT_REQ_MODE_CONFIG
         struct
         {
-            uint8_t floodCnt;
-            uint8_t spotCnt;
-        } ledConfig;                    /**< response parameter for event type BTLE_EVT_LCSCP_REQ_LED_CONFIG and BTLE_EVT_LCSCP_CHECK_LED_CONFIG */
+            uint8_t floodCnt;                   // number of leds in series connection connected to flood driver
+            uint8_t spotCnt;                    // number of leds in series connection connected to spot driver
+        } ledConfig;                            // response parameter for event type BTLE_EVT_LCSCP_REQ_LED_CONFIG and BTLE_EVT_LCSCP_CHECK_LED_CONFIG
         struct
         {
-            int16_t x;
-            int16_t y;
-            int16_t z;
-        } sensOffset;                   /**< response parameter for event type BTLE_EVT_LCSCP_REQ_SENS_OFFSET and BTLE_EVT_LCSCP_CALIB_SENS_OFFSET */
+            int16_t x;                          // acceleration sensor offset in x-axis, resolution tbd
+            int16_t y;                          // acceleration sensor offset in y-axis, resolution tbd
+            int16_t z;                          // acceleration sensor offset in z-axis, resolution tbd
+        } sensOffset;                           // response parameter for event type BTLE_EVT_LCSCP_REQ_SENS_OFFSET and BTLE_EVT_LCSCP_CALIB_SENS_OFFSET */
         struct
         {
-            int8_t floodInPercent;
-            int8_t spotInPercent;
-        } currentLimits;                /**< response parameter for event type BTLE_EVT_LCSCP_REQ_LIMITS */
+            int8_t floodInPercent;              // flood current limit in % (related to hardware limit)
+            int8_t spotInPercent;               // spot current limit in % (related to hardware limit)
+        } currentLimits;                        // response parameter for event type BTLE_EVT_LCSCP_REQ_LIMITS
     } responseParams;
 } btle_LcscpEventResponse_t;
 
@@ -168,36 +163,39 @@ typedef void (*btle_eventHandler_t)(btle_event_t * pEvt);
 /**< available light status flags for btle module */
 typedef struct
 {
-    bool overcurrent    : 1;
-    bool inputVoltage   : 1;
-    bool temperature    : 1;
-    bool dutyCycleLimit : 1;
+    bool overcurrent    : 1;                    // flag set if requested current exceeds current limit
+    bool inputVoltage   : 1;                    // flag set if requested current exceeds voltage limiter value
+    bool temperature    : 1;                    // flag set if requested current exceeds temperature limiter value
+    bool dutyCycleLimit : 1;                    // flag set if either min. or max. duty-cycle is reached
 } btle_lcsStatusFlags_t;
 
 /**< light data structure */
 typedef struct
 {
-    btle_LcsModeConfig_t mode;
-    btle_lcsStatusFlags_t statusFlood;
-    btle_lcsStatusFlags_t statusSpot;
-    uint16_t powerFlood;    /**< flood output power in mW */
-    uint16_t powerSpot;     /**< spot output power in mW */
-    int8_t temperature;     /**< light temperature in °C */
-    uint16_t inputVoltage;  /**< input voltage in mV */
-    int8_t pitch;           /**< pitch angle in ° */
+    btle_LcsModeConfig_t mode;                  // mode configuration, setup will always be included, intensity just if spot and/or flood are/is enabled
+    btle_lcsStatusFlags_t statusFlood;          // status of flood, will be included if flood is enabled
+    btle_lcsStatusFlags_t statusSpot;           // status of spot, will be included if spot is enabled
+    uint16_t powerFlood;                        // flood output power in mW, will be included if flood is active
+    uint16_t powerSpot;                         // spot output power in mW, will be included if spot is active
+    int8_t temperature;                         // light temperature in °C, will be included if value is in range -40..85
+    uint16_t inputVoltage;                      // input voltage in mV, will be included if value > 0
+    int8_t pitch;                               // pitch angle in °, will be included if value is in range -90..+90
 } btle_lcsMeasurement_t;
 
+/**< supported feature structure */
 typedef struct
 {
     uint8_t floodSupported : 1;
     uint8_t spotSupported  : 1;
     uint8_t pitchSupported : 1;
+    /// TODO: expand!
 } btle_lcsFeature_t;
 
+/**< scan mode */
 typedef enum
 {
-    BTLE_SCAN_MODE_LOW_POWER = 0,
-    BTLE_SCAN_MODE_LOW_LATENCY
+    BTLE_SCAN_MODE_LOW_POWER = 0,               // low power scanning, scan window 11.25ms, scan interval 1280ms
+    BTLE_SCAN_MODE_LOW_LATENCY                  // low latency scanning, scan window 11.25ms, scan interval 44.5ms
 } btle_scanMode_t;
 
 /* Exported macros -----------------------------------------------------------*/

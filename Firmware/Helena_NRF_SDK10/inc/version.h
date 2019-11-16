@@ -14,7 +14,7 @@
 #define VERSION_MINOR   14
 #define VERSION_PATCH   0
 
-#define VERSION_LEVEL   "tailbrake"
+#define VERSION_LEVEL   "wakeup"
 
 #define BUILD_YEAR  ((__DATE__[ 9] - '0') * 10 + (__DATE__[10] - '0'))
 

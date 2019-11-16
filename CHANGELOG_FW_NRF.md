@@ -11,6 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
   other connected lamps, this work bidirectional
 - expanded light setups and added the ability to control an external taillight
   and brake indicator using the wired communication interface
+- automatic wakeup from OFF mode when moving to speed up (re-)connection to 
+  remote
 
 ### Changed
 - Switched mode configuration from enumeration to flag based setup

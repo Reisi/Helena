@@ -473,7 +473,7 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
         else
             rsp.retCode = BTLE_RET_INVALID;
     case BTLE_EVT_LCSCP_REQ_SENS_OFFSET:
-        if (ms_GetSensorOffset((ms_AccelerationStruct*)&rsp.responseParams.sensOffset) == NRF_SUCCESS)
+        if (ms_GetSensorOffset((ms_accelerationData_t*)&rsp.responseParams.sensOffset) == NRF_SUCCESS)
             rsp.retCode = BTLE_RET_SUCCESS;
         else
             rsp.retCode = BTLE_RET_INVALID;
@@ -624,6 +624,11 @@ static void fdsEventHandler(ret_code_t errCode, fds_cmd_id_t cmd, fds_record_id_
         else
             APP_ERROR_CHECK(errCode);
     }
+}
+
+static void movementEventHandler()
+{
+    state.idleTimeout = IDLE_TIMEOUT;
 }
 
 /** @brief function to convert old configurations (<= v0.13) to new configuration structure
@@ -1020,10 +1025,19 @@ static void updateLightBtleData(helenaMode_t const * const pMode, light_status_t
         helmetBeam.powerFlood += powerSpot;
     if (pMode->setup.lightCloned && pMode->setup.lightSpot)
         helmetBeam.powerSpot += powerFlood;
-    if (pitch >= (1 << 14))                                         // move 180°..360° range to -180°..0°
-        pitch -= (1l << 15);
-    pitch = (pitch * 360l) >> 15;                                   // convert into degree
-    helmetBeam.pitch = pitch > 90 ? 90 : pitch < -90 ? -90 : pitch; // limit pitch to +-90°
+    if (pitch < 0)
+        pitch = INT8_MIN;
+    else
+    {
+        if (pitch >= (1 << 14))             // convert 0°..360° to -180°..180°
+            pitch -= (1l << 15);
+        if (pitch > (1 << 13))              // flip 90°..180° to 90°..0°
+            pitch = (1 << 14) - pitch;
+        else if (-pitch > (1 << 13))        // flip -90°..-180° to -90°..0°
+            pitch = -1 * (1 << 14) - pitch;
+        pitch = (pitch * 360l) >> 15;       // convert into degree
+        helmetBeam.pitch = pitch;
+    }
 
    (void)btle_UpdateLcsMeasurements(&helmetBeam);
 }
@@ -1046,7 +1060,7 @@ int main(void)
     hmi_Init();
     state.supplyCellCnt = pwr_Init();
     light_Init(state.supplyCellCnt, &ledConfiguration);
-    ms_Init();
+    ms_Init(movementEventHandler);
 
     btle_lcsFeature_t features;
     features.pitchSupported = 1;
@@ -1086,7 +1100,8 @@ int main(void)
             pLightMode = NULL;
 
         // check if state has to be changed
-        if (state.power == POWER_ON && !isModeEnabled(pLightMode))      // can device enter idle mode?
+        if ((state.power == POWER_ON && !isModeEnabled(pLightMode)) ||  // can device enter idle mode?
+            (state.power == POWER_OFF && state.idleTimeout != 0))
         {
             APP_ERROR_CHECK(setHelenaState(POWER_IDLE));
             state.idleTimeout = IDLE_TIMEOUT;
@@ -1147,7 +1162,7 @@ int main(void)
             btle_LcscpEventResponse_t rsp;
 
             rsp.evt = BTLE_EVT_LCSCP_CALIB_SENS_OFFSET;
-            if (ms_CalibrateSensorOffset((ms_AccelerationStruct*)&rsp.responseParams.sensOffset) == NRF_SUCCESS)
+            if (ms_CalibrateSensorOffset((ms_accelerationData_t*)&rsp.responseParams.sensOffset) == NRF_SUCCESS)
                 rsp.retCode = BTLE_RET_SUCCESS;
             else
                 rsp.retCode = BTLE_RET_FAILED;
@@ -1159,10 +1174,10 @@ int main(void)
         // periodic timebase checks
         if (state.timeoutFlag && (state.power == POWER_IDLE || state.power == POWER_ON))
         {
-            ms_DataStruct msData;
+            ms_data_t msData;
 
             // get motion sensor data
-            uint32_t errCode = ms_FetchData(&msData);
+            uint32_t errCode = ms_GetData(&msData);
             if (errCode != NRF_ERROR_INVALID_DATA)
             {
                 APP_ERROR_CHECK(errCode);
@@ -1192,7 +1207,7 @@ int main(void)
             updateLightMsgData(pLightStatus);
 
             // update ble related message data
-            updateLightBtleData(pLightMode, pLightStatus, msData.pitch);
+            updateLightBtleData(pLightMode, pLightStatus, state.power >= POWER_IDLE ? msData.pitch : INT16_MIN);
 
             // reset idle timeout counter if necessary
             //if (msData.isMoving || isModeEnabled(pLightMode)) // why the hell is this not working ?

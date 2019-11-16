@@ -18,12 +18,10 @@
 #include "fastmath.h"
 #include "i2c.h"
 #include "custom_board.h"
+#include "fpint.h"
+#include "nrf_drv_gpiote.h"
 
 /* Private typedef -----------------------------------------------------------*/
-//typedef float float32_t;
-typedef int32_t q30_t;
-//typedef int16_t q15_t;
-
 typedef struct
 {
     q15_t sinpitch;
@@ -43,12 +41,16 @@ typedef struct
 /* Private defines -----------------------------------------------------------*/
 #define ACCEL_FULLSCALERANGE    8       // acceleration sensor full scale range
 
-#define MOVINGTHRESHOLD         (10*131)  // gyro moving threshold in degree per second times hardware units
+#define MOVINGTHRESHOLD         (10*131)// gyro moving threshold in degree per second times hardware units
 
-#define FDSACCELBIAS            0xACCE      /**< number identifying accel bias fds data */
-#define FDSINSTANCE             0x4107      /**< number identifying fds data for motion sensor module */
+#define FDSACCELBIAS            0xACCE  // number identifying accel bias fds data
+#define FDSINSTANCE             0x4107  // number identifying fds data for motion sensor module
 
-#define EXTENDED_ERROR_CHECK            /**< activate this flag to get internal error codes */
+#define EXTENDED_ERROR_CHECK            // activate this flag to get internal error codes
+
+#define LP_MOTION_INT_THRESH    100     // 100mg
+#define LP_MOTION_INT_DURATION  5       // 5ms (trail & error, in reality this results in ~1sec)
+#define LP_MOTION_INT_FREQ      5       // 5Hz sampling rate
 
 /* Private macros ------------------------------------------------------------*/
 #ifdef EXTENDED_ERROR_CHECK
@@ -101,6 +103,7 @@ do                                      \
 /* Private variables ---------------------------------------------------------*/
 static bool isEnabled;
 static biasStruct bias;
+static ms_LowPowerMovementDetectedHandler_t movementIntHandler;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -505,8 +508,6 @@ static bool isBrakingDetected(const short* pAccel)
     if (noiseData.last >= BRAKE_NOISEFILTERCNT)
         noiseData.last = 0;
 
-    //SEGGER_RTT_printf(0, "%d, %d, %d\r\n", accelFilter[0] >> BRAKE_POSTFILTERSHIFT, accelFilter[1] >> BRAKE_POSTFILTERSHIFT, accelFilter[2] >> BRAKE_POSTFILTERSHIFT);
-
     // check if braking
     if ((accelFilter[1] >> BRAKE_POSTFILTERSHIFT) > 0)
         return false;
@@ -623,54 +624,6 @@ int inv_get_sensor_type_euler(long *quat, long *data)
     return 0;
 }
 
-static void quatToEuler(const long *pQuat, q3_12_t *pEuler)
-{
-    int32_t i, j, k, l;
-    int32_t q00, q01, q02, q03, q12, q13, q22, q23, q33;
-
-    q00 = Q29_MULT2(pQuat[0], pQuat[0]);
-    q01 = Q29_MULT2(pQuat[0], pQuat[1]);
-    q02 = Q29_MULT2(pQuat[0], pQuat[2]);
-    q03 = Q29_MULT2(pQuat[0], pQuat[3]);
-    q12 = Q29_MULT2(pQuat[1], pQuat[2]);
-    q13 = Q29_MULT2(pQuat[1], pQuat[3]);
-    q22 = Q29_MULT2(pQuat[2], pQuat[2]);
-    q23 = Q29_MULT2(pQuat[2], pQuat[3]);
-    q33 = Q29_MULT2(pQuat[3], pQuat[3]);
-
-    i = q12 - q03;
-    j = q22 + q00 - (1L << 30);
-
-    pEuler[2] = arm_atan2_q15(-i >> 16, j >> 16);
-
-    k = q23 + q01;
-    int64_t m = (int64_t)i*i + (int64_t)j*j;
-    arm_sqrt_q31(m >> 33, &l);
-    //l = m >> 15;
-
-    pEuler[0] = arm_atan2_q15(k >> 16, l >> 15);
-
-    i = q33 + q00 - (1L << 30);
-    if (i < 0)
-    {
-        if (pEuler[0] <= (1<<14))
-            pEuler[0] = (1<<14) - pEuler[0];
-        else
-            pEuler[0] = (1<<14) + ((1l<<15) - pEuler[0]);
-    }
-
-    j = q13 - q02;
-
-    pEuler[1] = arm_atan2_q15(i >> 16, j >> 16);
-    pEuler[1] -= (1<<13);
-    if (pEuler[1] < 0)
-        pEuler[1] = (1l<<15) + pEuler[1];
-    if (pEuler[1] > (1<<13) && pEuler[1] < (1<<14))
-        pEuler[1] = (1<<14) - pEuler[1];
-    if (pEuler[1] > (1<<14) && pEuler[1] < (3<<13))
-        pEuler[1] += (1<<13);
-}
-
 static void loadBias()
 {
     uint32_t errCode;
@@ -737,10 +690,37 @@ static uint32_t applyBias(biasStruct* pBias)
         return NRF_SUCCESS;
 }
 
+static void pinChangeHandler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
+{
+    if (movementIntHandler == NULL)
+        return;
+
+    if (nrf_gpio_pin_read(pin))
+        movementIntHandler();
+}
+
+static uint32_t initPinChangeInt()
+{
+    uint32_t errCode = NRF_SUCCESS;
+    nrf_drv_gpiote_in_config_t pinCfg = GPIOTE_CONFIG_IN_SENSE_TOGGLE(false);
+
+    if (!nrf_drv_gpiote_is_init())
+        errCode = nrf_drv_gpiote_init();
+    if (errCode != NRF_SUCCESS)
+        return errCode;
+
+    errCode = nrf_drv_gpiote_in_init(pBoardConfig->mpuInt, &pinCfg, pinChangeHandler);
+    if (errCode != NRF_SUCCESS)
+        return errCode;
+
+    return NRF_SUCCESS;
+}
+
 /* Public functions ----------------------------------------------------------*/
-uint32_t ms_Init()
+uint32_t ms_Init(ms_LowPowerMovementDetectedHandler_t movementHandler)
 {
     VERIFY_NRF_ERROR_CODE(i2c_Init());
+
     VERIFY_MPU_ERROR_CODE(mpu_init(NULL));
     VERIFY_MPU_ERROR_CODE(mpu_set_sensors(INV_XYZ_GYRO | INV_XYZ_ACCEL));
     VERIFY_MPU_ERROR_CODE(mpu_set_lpf(20));
@@ -752,7 +732,25 @@ uint32_t ms_Init()
     VERIFY_MPU_ERROR_CODE(mpu_set_dmp_state(1));
     loadBias();
     applyBias(&bias);
-    VERIFY_MPU_ERROR_CODE(mpu_set_sensors(0));
+
+    if (pBoardConfig->mpuInt != 0xFFFFFFFF)
+        movementIntHandler = movementHandler;
+
+    if (movementIntHandler)
+    {
+        VERIFY_NRF_ERROR_CODE(initPinChangeInt());
+
+        VERIFY_MPU_ERROR_CODE(mpu_set_int_latched(0));
+        VERIFY_MPU_ERROR_CODE(mpu_set_int_level(0));
+        VERIFY_MPU_ERROR_CODE(mpu_lp_motion_interrupt(LP_MOTION_INT_THRESH, LP_MOTION_INT_DURATION, LP_MOTION_INT_FREQ));
+
+        nrf_drv_gpiote_in_event_enable(pBoardConfig->mpuInt, true);
+    }
+    else
+    {
+        VERIFY_MPU_ERROR_CODE(mpu_set_sensors(0));
+    }
+
     return NRF_SUCCESS;
 }
 
@@ -763,17 +761,30 @@ uint32_t ms_Enable(bool enable)
     if (enable == isEnabled)
         return NRF_ERROR_INVALID_STATE;
 
-    if (enable)
+    if (movementIntHandler)
     {
-        errCode = mpu_set_sensors(INV_XYZ_GYRO | INV_XYZ_ACCEL);
-        /*uint32_t errCodeNrf = applyBias();
-        if (errCodeNrf != NRF_SUCCESS && errCodeNrf != NRF_ERROR_NOT_FOUND)
+        if (enable)
         {
-            APP_ERROR_HANDLER(errCodeNrf);
-        }*/
+            nrf_drv_gpiote_in_event_disable(pBoardConfig->mpuInt);
+            errCode = mpu_lp_motion_interrupt(LP_MOTION_INT_THRESH, LP_MOTION_INT_DURATION, 0);
+        }
+        else
+        {
+            errCode = mpu_lp_motion_interrupt(LP_MOTION_INT_THRESH, LP_MOTION_INT_DURATION, LP_MOTION_INT_FREQ);
+            nrf_drv_gpiote_in_event_enable(pBoardConfig->mpuInt, true);
+        }
     }
     else
-        errCode = mpu_set_sensors(0);
+    {
+        if (enable)
+        {
+            errCode = mpu_set_sensors(INV_XYZ_GYRO | INV_XYZ_ACCEL);
+        }
+        else
+        {
+            errCode = mpu_set_sensors(0);
+        }
+    }
 
     if (errCode == 0)
         isEnabled = enable;
@@ -781,7 +792,7 @@ uint32_t ms_Enable(bool enable)
     return errCode ? NRF_ERROR_INTERNAL : NRF_SUCCESS;
 }
 
-uint32_t ms_FetchData(ms_DataStruct* pData)
+uint32_t ms_GetData(ms_data_t* pData)
 {
     short gyro[3], accel[3], rotation[3], sensors;
     long quat[4];
@@ -794,60 +805,54 @@ uint32_t ms_FetchData(ms_DataStruct* pData)
     if (!isEnabled)
         return NRF_ERROR_INVALID_STATE;
 
-    more = 0xFF;
-    do                                      /**< MPU is sampling data with 100Hz, too, but due to unsynchronized */
-    {                                       /**< clocks, data is read out until fifo is empty. */
+    // read data
+    more = 0xFF;                            // initialize to detect "empty" readings
+    do                                      // MPU is sampling data with 100Hz, too, but due to unsynchronized
+    {                                       // clocks, data is read out until fifo is empty.
         int error = dmp_read_fifo(gyro, accel, quat, &timestamp, &sensors, &more);
-        if (error != -2 &&                  /**< ignore unaligned data error (can happen if data is read, */
-            error && more == 0xFF)          /**< and error, when trying to read empty fifo */
+        if (error != -2 &&                  // ignore unaligned data error
+            error && more == 0xFF)          // and error, when trying to read empty fifo (returns -1, but more will be set to 0)
         {
             VERIFY_MPU_ERROR_CODE(error);
         }
     }
-    while (more != 0);
+    while (more != 0);                      // read out data (and discard all but last)
     if ((sensors & (INV_WXYZ_QUAT | INV_XYZ_ACCEL)) != (INV_WXYZ_QUAT | INV_XYZ_ACCEL))
-        return NRF_ERROR_INVALID_DATA;
+        return NRF_ERROR_INVALID_DATA;      // no valid data available
 
     long euler[3];
-    inv_get_sensor_type_euler(quat, euler);
-    for (uint_fast8_t i = 0; i < 3; i++)
+    inv_get_sensor_type_euler(quat, euler); // convert quaternations to euler angles
+    for (uint_fast8_t i = 0; i < 3; i++)    // convert from -180°..+180° to 0..360° range
     {
         if (euler[i] < 0)
-            euler[i] += 360<<16;
+            euler[i] += 360l<<16;
     }
-    rotation[0] = euler[0]/720;
+    rotation[0] = euler[0]/720;             // convert q15_16_t to q3_12_t
     rotation[1] = euler[1]/720;
     rotation[2] = euler[2]/720;
-    //quatToEuler(quat, rotation);
-    pData->pitch = rotation[0];
+
+    pData->pitch = rotation[0];             // pitch can be used directly
+
     normalizeAcceleration(rotation, accel, gyro);
     pData->isBraking = isBrakingDetected(accel);
     pData->isMoving = isHeadMoving(gyro);
-    /*static uint8_t cnt = 50;
-    if (--cnt == 0)
-    {
-        cnt = 50;
-        SEGGER_RTT_printf(0, "%d, %d, %d, ", (int32_t)(rotation[0]*360)/(1<<15), (int32_t)(rotation[1]*360)/(1<<15), (int32_t)(rotation[2]*360)/(1<<15));
-        //SEGGER_RTT_printf(0, "%d, %d, %d, ", gyro[0], gyro[1], gyro[2]);
-        SEGGER_RTT_printf(0, "%d, %d, %d\r\n", accel[0], accel[1], accel[2]);
-    }*/
 
     return NRF_SUCCESS;
 }
 
-uint32_t ms_GetSensorOffset(ms_AccelerationStruct* pData)
+uint32_t ms_GetSensorOffset(ms_accelerationData_t* pData)
 {
     if (bias.accel[0] == 0 && bias.accel[1] == 0 && bias.accel[2] == 0 &&
         bias.gyro[0] == 0 && bias.gyro[1] == 0 && bias.gyro[2] == 0)
         return NRF_ERROR_NOT_FOUND;
 
-    pData->x = bias.accel[0];
-    pData->y = bias.accel[1];
-    pData->z = bias.accel[2];
+    pData->x = bias.accel[0] >> 4;          // convert q15_16_t to q3_12_t
+    pData->y = bias.accel[1] >> 4;
+    pData->z = bias.accel[2] >> 4;
     return NRF_SUCCESS;
 }
 
-uint32_t ms_CalibrateSensorOffset(ms_AccelerationStruct* pData)
+uint32_t ms_CalibrateSensorOffset(ms_accelerationData_t* pData)
 {
     uint32_t errCode;
     long gyro[3], accel[3];
@@ -874,13 +879,9 @@ uint32_t ms_CalibrateSensorOffset(ms_AccelerationStruct* pData)
     bias.gyro[1] = newBias.gyro[1];
     bias.gyro[2] = newBias.gyro[2];
 
-    pData->x = bias.accel[0];
-    pData->y = bias.accel[1];
-    pData->z = bias.accel[2];
-
-//    SEGGER_RTT_printf(0, "self test %d\r\n", result);
-//    SEGGER_RTT_printf(0, "gyro bias: %d, %d, %d\r\n", gyro[0], gyro[1], gyro[2]);
-//    SEGGER_RTT_printf(0, "accel bias: %d, %d, %d\r\n", accel[0], accel[1], accel[2]);
+    pData->x = bias.accel[0] >> 4;  // convert q15_16_t to q3_12_t
+    pData->y = bias.accel[1] >> 4;
+    pData->z = bias.accel[2] >> 4;
 
     fds_find_token_t token;
     fds_record_desc_t descriptor;

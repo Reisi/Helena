@@ -397,11 +397,6 @@ static void tx_buffer_process(void)
         {
             err_code = sd_ble_gattc_write(m_tx_buffer[m_tx_index].conn_handle,
                                           &m_tx_buffer[m_tx_index].req.write_req.gattc_params);
-            /*for (uint16_t i = 0; i < m_tx_buffer[m_tx_index].req.write_req.gattc_params.len; i++)
-            {
-                SEGGER_RTT_printf(0, "%02x-", m_tx_buffer[m_tx_index].req.write_req.gattc_value[i]);
-            }
-            SEGGER_RTT_printf(0, "\r\n");*/
         }
         if (err_code == NRF_SUCCESS)
         {
