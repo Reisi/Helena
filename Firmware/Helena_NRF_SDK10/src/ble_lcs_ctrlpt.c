@@ -172,6 +172,7 @@ static uint32_t lcs_ctrlpt_decode(uint8_t             * p_rcvd_val,
         case BLE_LCS_CTRLPT_OP_CODE_REQ_SENS_OFF:
         case BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF:
         case BLE_LCS_CTRLPT_OP_CODE_REQ_LIMITS:
+        case BLE_LCS_CTRLPT_OP_CODE_REQ_PREF_MODE:
             break;
 
         case BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNFG:
@@ -214,6 +215,14 @@ static uint32_t lcs_ctrlpt_decode(uint8_t             * p_rcvd_val,
             }
             p_write_val->params.current_limits.flood = p_rcvd_val[pos++];
             p_write_val->params.current_limits.spot = p_rcvd_val[pos];
+            break;
+
+        case BLE_LCS_CTRLPT_OP_CODE_SET_PREF_MODE:
+            if (len != 2)
+            {
+                return NRF_ERROR_INVALID_PARAM;
+            }
+            p_write_val->params.pref_mode = p_rcvd_val[pos];
             break;
 
         default:
@@ -275,6 +284,8 @@ static int ctrlpt_rsp_encode(const ble_lcs_ctrlpt_rsp_t  * p_ctrlpt_rsp,
                 p_data[len++] = p_ctrlpt_rsp->params.current_limits.flood;
                 p_data[len++] = p_ctrlpt_rsp->params.current_limits.spot;
                 break;
+            case BLE_LCS_CTRLPT_OP_CODE_REQ_PREF_MODE:
+                p_data[len++] = p_ctrlpt_rsp->params.pref_mode;
 
             default:
                 // No implementation needed.
@@ -348,6 +359,14 @@ static bool is_feature_supported(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_lcs_ctrlpt
         case BLE_LCS_CTRLPT_OP_CODE_REQ_LIMITS:
         case BLE_LCS_CTRLPT_OP_CODE_SET_LIMITS:
             if (p_lcs_ctrlpt->supported_features.current_limitation_supported == 1)
+            {
+                supported = true;
+            }
+            break;
+
+        case BLE_LCS_CTRLPT_OP_CODE_REQ_PREF_MODE:
+        case BLE_LCS_CTRLPT_OP_CODE_SET_PREF_MODE:
+            if (p_lcs_ctrlpt->supported_features.preferred_mode_supported == 1)
             {
                 supported = true;
             }
@@ -436,84 +455,99 @@ static void on_ctrlpt_write(ble_lcs_ctrlpt_t       * p_lcs_ctrlpt,
 
         evt.conn_handle = conn_handle;
         evt.p_client = p_client;
+        evt.p_params = &rcvd_ctrlpt.params;
 
         switch (rcvd_ctrlpt.opcode)
         {
             case BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNT:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_REQ_MODE_CNT;
-                evt.p_params = &rcvd_ctrlpt.params;
-                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                //evt.p_params = &rcvd_ctrlpt.params;
+                //p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;
 
             case BLE_LCS_CTRLPT_OP_CODE_REQ_GRP_CNFG:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_REQ_GRP_CNFG;
-                evt.p_params = &rcvd_ctrlpt.params;
-                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                //evt.p_params = &rcvd_ctrlpt.params;
+                //p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;
 
             case BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNFG:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_REQ_MODE_CNFG;
-                evt.p_params = &rcvd_ctrlpt.params;
-                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                //evt.p_params = &rcvd_ctrlpt.params;
+                //p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;
 
             case BLE_LCS_CTRLPT_OP_CODE_SET_MODE:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_SET_MODE;
-                evt.p_params = &rcvd_ctrlpt.params;
-                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                //evt.p_params = &rcvd_ctrlpt.params;
+                //p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;
 
             case BLE_LCS_CTRLPT_OP_CODE_CNFG_MODE:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_CNFG_MODE;
-                evt.p_params = &rcvd_ctrlpt.params;
-                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                //evt.p_params = &rcvd_ctrlpt.params;
+                //p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;
 
             case BLE_LCS_CTRLPT_OP_CODE_CNFG_GROUP:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_CNFG_GROUP;
-                evt.p_params = &rcvd_ctrlpt.params;
-                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                //evt.p_params = &rcvd_ctrlpt.params;
+                //p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;
 
             case BLE_LCS_CTRLPT_OP_CODE_REQ_LED_CNFG:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_REQ_LED_CNFG;
-                evt.p_params = &rcvd_ctrlpt.params;
-                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+               // evt.p_params = &rcvd_ctrlpt.params;
+                //p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;
 
             case BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_CHK_LED_CNFG;
-                evt.p_params = &rcvd_ctrlpt.params;
-                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                //evt.p_params = &rcvd_ctrlpt.params;
+                //p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;
 
             case BLE_LCS_CTRLPT_OP_CODE_REQ_SENS_OFF:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_REQ_SENS_OFF;
-                evt.p_params = &rcvd_ctrlpt.params;
-                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                //evt.p_params = &rcvd_ctrlpt.params;
+                //p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;
 
             case BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_CALIB_SENS_OFF;
-                evt.p_params = &rcvd_ctrlpt.params;
-                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                //evt.p_params = &rcvd_ctrlpt.params;
+                //p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;
 
             case BLE_LCS_CTRLPT_OP_CODE_REQ_LIMITS:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_REQ_LIMITS;
-                evt.p_params = &rcvd_ctrlpt.params;
-                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                //evt.p_params = &rcvd_ctrlpt.params;
+                //p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;
 
             case BLE_LCS_CTRLPT_OP_CODE_SET_LIMITS:
                 evt.evt_type = BLE_LCS_CTRLPT_EVT_SET_LIMITS;
-                evt.p_params = &rcvd_ctrlpt.params;
-                p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                //evt.p_params = &rcvd_ctrlpt.params;
+                //p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                break;
+
+            case BLE_LCS_CTRLPT_OP_CODE_REQ_PREF_MODE:
+                evt.evt_type = BLE_LCS_CTRLPT_EVT_REQ_PREF_MODE;
+                //evt.p_params = &rcvd_ctrlpt.params;
+                //p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
+                break;
+
+            case BLE_LCS_CTRLPT_OP_CODE_SET_PREF_MODE:
+                evt.evt_type = BLE_LCS_CTRLPT_EVT_SET_PREF_MODE;
+               //evt.p_params = &rcvd_ctrlpt.params;
+                //p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
                 break;
 
             default:
-                break;
+                return;
         }
+
+        p_lcs_ctrlpt->evt_handler(p_lcs_ctrlpt, &evt);
     }
     else
     {

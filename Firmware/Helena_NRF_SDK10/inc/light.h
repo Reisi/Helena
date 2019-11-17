@@ -16,6 +16,7 @@
 #include "fpint.h"
 
 /* Exported defines ----------------------------------------------------------*/
+#define LIGHT_LEDCONFIG_UNKNOWN UINT8_MAX
 
 /* Exported types ------------------------------------------------------------*/
 typedef enum

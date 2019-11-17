@@ -410,7 +410,8 @@ static void calculateTarget(const light_mode_t *pMode, q15_t pitch, uint8_t *pFl
     q7_8_t illuminanceInLux;
 
     // if spot and flood leds are present, add pitch offset due to tilted optics
-    if (storage.drvConfig.floodCount != 0 && storage.drvConfig.spotCount != 0)
+    if (storage.drvConfig.floodCount != 0  && storage.drvConfig.floodCount !=  LIGHT_LEDCONFIG_UNKNOWN &&
+        storage.drvConfig.spotCount != 0 && storage.drvConfig.spotCount != LIGHT_LEDCONFIG_UNKNOWN)
     {
         pitchCalc = pitch + PITCHOFFSETFLOOD;
         if (pitchCalc >= (1<<15))
@@ -443,6 +444,10 @@ static void calculateTarget(const light_mode_t *pMode, q15_t pitch, uint8_t *pFl
         {
             q7_8_t intensityFlood, intensitySpot;
             getIntensitiesFromLUT(limitPitch(pitch), illuminanceInLux, &intensityFlood, &intensitySpot);
+            if (storage.drvConfig.floodCount == 1)  // flood intensity is calculated for XHP50, double output if only one led is available
+                intensityFlood = intensityFlood >= (1 << 14) ? INT16_MAX : intensityFlood << 1;
+            if (storage.drvConfig.spotCount == 2)   // spot intensity is calculated for a single XM-L, halve output if two leds are connected
+                intensitySpot >>= 1;
             *pFlood = getTargetFromLUT(&floodLUT, pitchFlood, intensityFlood);
             *pSpot = getTargetFromLUT(&spotLUT, pitchSpot, intensitySpot);
         }
@@ -450,12 +455,16 @@ static void calculateTarget(const light_mode_t *pMode, q15_t pitch, uint8_t *pFl
         {
             if (pMode->setup.flood)
             {
+                if (storage.drvConfig.floodCount == 1)  // flood intensity is calculated for XHP50, double output if only one led is available
+                    illuminanceInLux = illuminanceInLux >= (1 <<14) ? INT16_MAX : illuminanceInLux << 1;
                 *pFlood = getTargetFromLUT(&floodLUT, pitchFlood, illuminanceInLux);
                 if (pMode->setup.cloned)
                     *pSpot = *pFlood;
             }
             if (pMode->setup.spot)
             {
+                if (storage.drvConfig.spotCount == 2)   // spot intensity is calculated for a single XM-L, halve output if two leds are connected
+                    illuminanceInLux >>= 1;
                 *pSpot = getTargetFromLUT(&spotLUT, pitchSpot, illuminanceInLux);
                 if (pMode->setup.cloned)
                     *pFlood = *pSpot;
@@ -585,7 +594,7 @@ static void fdsEventHandler(ret_code_t errCode, fds_cmd_id_t cmd, fds_record_id_
         flashInitialized = true;
 }
 
-static void validateLedConfig(light_driverConfig_t* pLedConfig)
+/*static void validateLedConfig(light_driverConfig_t* pLedConfig)
 {
     // if both driver led counts are not known, use default setup
     if (pLedConfig->floodCount == LIGHT_LEDCONFIG_UNKNOWN && pLedConfig->spotCount == LIGHT_LEDCONFIG_UNKNOWN)
@@ -598,7 +607,7 @@ static void validateLedConfig(light_driverConfig_t* pLedConfig)
         pLedConfig->floodCount = 2;
     else if (pLedConfig->floodCount == 0 && pLedConfig->spotCount == LIGHT_LEDCONFIG_UNKNOWN)
         pLedConfig->spotCount = 2;
-}
+}*/
 
 static void validateCurrentLimit(currentLimit_t* pLimits)
 {
@@ -656,7 +665,7 @@ static void readStorage()
     }
 
     // set default values if led count isn't known
-    validateLedConfig(&storage.drvConfig);
+    //validateLedConfig(&storage.drvConfig);
     validateCurrentLimit(&storage.currentLimits);
 }
 
@@ -686,23 +695,19 @@ static void writeStorage()
 static light_driverRevision_t driverRevCheck()
 {
     uint32_t errCode;
-    uint8_t buffer[4];
+    uint8_t buffer[11];
 
-    // read first two registers to have compare values
-    errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 2, &buffer[0]);
+    // read all 11 registers
+    errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 11, buffer);
     if(errCode != NRF_SUCCESS)
     {
         APP_ERROR_HANDLER(errCode);
         return LIGHT_DRIVERREVUNKNOWN;
     }
-    // now read duty cycle registers, on rev 1.0 drivers this will result in a read operation of reg 0 and 1
-    errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 2, &buffer[2]);
-    if(errCode != NRF_SUCCESS)
-    {
-        APP_ERROR_HANDLER(errCode);
-        return LIGHT_DRIVERREVUNKNOWN;
-    }
-    if (buffer[0] == buffer[2] && buffer[1] == buffer[3])
+
+    // rev 1.0 don't support duty-cycle registers, it will wrap around ad read the first two registers again
+    if (buffer[HELENABASE_RA_CONFIG] == buffer[HELENABASE_RA_DUTYCYCLELEFT] &&
+        buffer[HELENABASE_RA_TARGETSDL] == buffer[HELENABASE_RA_DUTYCYCLERIGHT])
         return LIGHT_DRIVERREV10;
     return LIGHT_DRIVERREV11;
 }
@@ -901,6 +906,7 @@ uint32_t light_CheckLedConfig(light_driverConfig_t* pLedConfig)
     if (errCode == NRF_SUCCESS)
     {
         // check if current is available, if not there is no led connected
+        /// TODO: current on unconnected is not zero, check driver hardware/firmware
         if (lightStatus.currentFlood < 500)
             storage.drvConfig.floodCount = 0;
         if (lightStatus.currentSpot < 500)
@@ -913,15 +919,15 @@ uint32_t light_CheckLedConfig(light_driverConfig_t* pLedConfig)
             if(errCode == NRF_SUCCESS)
             {
                 if (storage.drvConfig.floodCount)
-                    storage.drvConfig.floodCount = buffer[0] < (HELENABASE_DC_MAX * 0.75) ? 1 : 2;
-                if (storage.drvConfig.spotCount)
-                    storage.drvConfig.spotCount = buffer[1] < (HELENABASE_DC_MAX * 0.75) ? 1 : 2;
+                    storage.drvConfig.floodCount = buffer[0] < (HELENABASE_DC_MAX * 0.25) ? 0 : buffer[0] < (HELENABASE_DC_MAX * 0.75) ? 1 : 2;
+                if (storage.drvConfig.spotCount)///^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^- just bugfix
+                    storage.drvConfig.spotCount = buffer[1] < (HELENABASE_DC_MAX * 0.25) ? 0 : buffer[1] < (HELENABASE_DC_MAX * 0.75) ? 1 : 2;
             }
         }
     }
 
     // set default values if led count isn't known
-    validateLedConfig(&storage.drvConfig);
+    // validateLedConfig(&storage.drvConfig);
 
     pLedConfig->floodCount = storage.drvConfig.floodCount;
     pLedConfig->spotCount = storage.drvConfig.spotCount;
@@ -931,9 +937,9 @@ uint32_t light_CheckLedConfig(light_driverConfig_t* pLedConfig)
 
     // turn of driver
     if (oldState == STATEOFF)
-        buffer[0] = (HELENABASE_SLEEP_DISABLE<<HELENABASE_CRA_SLEEP_OFFSET) | (HELENABASE_ADCRATE_1S<<HELENABASE_CRA_ADCRATE_OFFSET);
-    else
         buffer[0] = (HELENABASE_SLEEP_ENABLE<<HELENABASE_CRA_SLEEP_OFFSET) | (HELENABASE_ADCRATE_1S<<HELENABASE_CRA_ADCRATE_OFFSET);
+    else
+        buffer[0] = (HELENABASE_SLEEP_DISABLE<<HELENABASE_CRA_SLEEP_OFFSET) | (HELENABASE_ADCRATE_1S<<HELENABASE_CRA_ADCRATE_OFFSET);
     buffer[1] = 0;
     buffer[2] = 0;
     VERIFY_NRF_ERROR_CODE(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 3, buffer));

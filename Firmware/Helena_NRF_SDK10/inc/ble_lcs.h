@@ -99,6 +99,7 @@ typedef struct
     uint16_t current_limitation_supported   : 1;
     uint16_t external_taillight_supported   : 1;
     uint16_t external_brake_light_supported : 1;
+    uint16_t preferred_mode_supported       : 1;
 } ble_lcs_lf_t;
 
 // include control point header here, because its using feature and light mode structures

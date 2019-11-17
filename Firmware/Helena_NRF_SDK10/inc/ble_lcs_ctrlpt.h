@@ -50,6 +50,8 @@ typedef enum
     BLE_LCS_CTRLPT_EVT_CALIB_SENS_OFF,  /**< Operator to start the sensor offset calibration */
     BLE_LCS_CTRLPT_EVT_REQ_LIMITS,      /**< Operator to request the current current limits */
     BLE_LCS_CTRLPT_EVT_SET_LIMITS,      /**< Operator to set the current limits  */
+    BLE_LCS_CTRLPT_EVT_REQ_PREF_MODE,   /**< Operator to request the current preferred mode */
+    BLE_LCS_CTRLPT_EVT_SET_PREF_MODE,   /**< Operator to set the preferred mode */
 } ble_lcs_ctrlpt_evt_type_t;
 
 /**@brief Light Control Control Point mode configuration structure */
@@ -75,6 +77,7 @@ typedef union
     ble_lcs_ctrlpt_mode_cnfg_t  mode_config;
     uint8_t                     group_config;
     ble_lcs_ctrlpt_set_limits_t current_limits;
+    uint8_t                     pref_mode;
 } ble_lcs_ctrlpt_write_val_t;
 
 /**@brief Light Control Control Point response parameter */
@@ -134,6 +137,8 @@ typedef enum
     BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF   = 10,
     BLE_LCS_CTRLPT_OP_CODE_REQ_LIMITS       = 11,
     BLE_LCS_CTRLPT_OP_CODE_SET_LIMITS       = 12,
+    BLE_LCS_CTRLPT_OP_CODE_REQ_PREF_MODE    = 13,
+    BLE_LCS_CTRLPT_OP_CODE_SET_PREF_MODE    = 14,
     BLE_LCS_CTRLPT_OP_CODE_RESPONSE         = 32
 } ble_lcs_ctrlpt_op_code_t;
 
@@ -175,6 +180,7 @@ typedef union
     ble_lcs_ctrlpt_rsp_param_led_config_t  led_config;
     ble_lcs_ctrlpt_rsp_param_sens_offset_t sens_offset;
     ble_lcs_ctrlpt_rsp_param_limits_t      current_limits;
+    uint8_t                                pref_mode;
 } ble_lcs_ctrlpt_rsp_params_t;
 
 /**@brief Light Control Control Point Response parameter structure */

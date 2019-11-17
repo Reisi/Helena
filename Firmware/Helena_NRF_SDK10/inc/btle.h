@@ -61,7 +61,9 @@ typedef enum
     BTLE_EVT_LCSCP_REQ_SENS_OFFSET,             // request sensor offset
     BTLE_EVT_LCSCP_CALIB_SENS_OFFSET,           // start sensor offset calibration
     BTLE_EVT_LCSCP_REQ_LIMITS,                  // request current limits
-    BTLE_EVT_LCSCP_SET_LIMITS                   // set current limits
+    BTLE_EVT_LCSCP_SET_LIMITS,                  // set current limits
+    BTLE_EVT_LCSCP_REQ_PREF_MODE,               // request preferred mode
+    BTLE_EVT_LCSCP_SET_PREF_MODE                // set preferred mode
 } btle_LcsCtrlPtEventTypes_t;
 
 /**< available light setup for light control service */
@@ -113,6 +115,7 @@ typedef struct
             int8_t floodInPercent;              // flood current limit in % (related to hardware limit)
             int8_t spotInPercent;               // spot current limit in % (related to hardware limit)
         } currentLimits;                        // parameter for event type BTLE_EVT_LCSCP_SET_LIMITS
+        uint8_t prefMode;                       // parameter for event type BTLE_EVT_LCSCP_SET_PREF_MODE
     } lcscpEventParams;
 } btle_event_t;
 
@@ -154,6 +157,7 @@ typedef struct
             int8_t floodInPercent;              // flood current limit in % (related to hardware limit)
             int8_t spotInPercent;               // spot current limit in % (related to hardware limit)
         } currentLimits;                        // response parameter for event type BTLE_EVT_LCSCP_REQ_LIMITS
+        uint8_t prefMode;                       // response parameter for event type BTLE_EVT_LCSCP_REQ_PREF_MODE
     } responseParams;
 } btle_LcscpEventResponse_t;
 

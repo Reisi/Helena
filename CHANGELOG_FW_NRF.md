@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
   and brake indicator using the wired communication interface
 - automatic wakeup from OFF mode when moving to speed up (re-)connection to 
   remote
+- prefered mode added, when set to a valid mode, lamp will start into this mode
+  and, if shutdown via remote, return to this mode first
 
 ### Changed
 - Switched mode configuration from enumeration to flag based setup

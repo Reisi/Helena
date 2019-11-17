@@ -457,7 +457,7 @@ void com_OnSysEvt(uint32_t sysEvent)
     case NRF_EVT_RADIO_BLOCKED:
     case NRF_EVT_RADIO_CANCELED:
         timeslotlength = 0;
-        APP_ERROR_HANDLER(0);
+        //APP_ERROR_HANDLER(0);
         break;
     case NRF_EVT_RADIO_SESSION_CLOSED:
         break;

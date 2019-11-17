@@ -453,6 +453,13 @@ static void lcsCpEventHandler(ble_lcs_ctrlpt_t * pLcsCtrlpt,
         evt.lcscpEventParams.currentLimits.floodInPercent = pEvt->p_params->current_limits.flood;
         evt.lcscpEventParams.currentLimits.spotInPercent = pEvt->p_params->current_limits.spot;
         break;
+    case BLE_LCS_CTRLPT_EVT_REQ_PREF_MODE:
+        evt.subEvt.lcscp = BTLE_EVT_LCSCP_REQ_PREF_MODE;
+        break;
+    case BLE_LCS_CTRLPT_EVT_SET_PREF_MODE:
+        evt.subEvt.lcscp = BTLE_EVT_LCSCP_SET_PREF_MODE;
+        evt.lcscpEventParams.prefMode = pEvt->p_params->pref_mode;
+        break;
     default:
         return;
     }
@@ -526,6 +533,7 @@ static void servicesInit(btle_lcsFeature_t* pFeature)
     lcsInit.features.led_config_check_supported = 1;
     lcsInit.features.sensor_calibration_supported = 1;
     lcsInit.features.current_limitation_supported = 1;
+    lcsInit.features.preferred_mode_supported = 1;
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lm_attr_md.cccd_write_perm);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lf_attr_md.read_perm);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lcp_attr_md.cccd_write_perm);
@@ -1098,6 +1106,9 @@ uint32_t btle_SendEventResponse(const btle_LcscpEventResponse_t *pRsp, uint16_t 
         rsp.params.current_limits.flood = pRsp->responseParams.currentLimits.floodInPercent;
         rsp.params.current_limits.spot = pRsp->responseParams.currentLimits.spotInPercent;
         break;
+    case BTLE_EVT_LCSCP_REQ_PREF_MODE:
+        rsp.params.pref_mode = pRsp->responseParams.prefMode;
+        break;
     default:
         break;
     }
@@ -1161,7 +1172,9 @@ uint32_t btle_SetMode(uint8_t mode, uint16_t connHandle)
     cmd.command = BLE_LCS_C_CP_CMD_SET_MODE;
     cmd.params.mode_to_set = mode;
 
-    if (connHandle == BTLE_CONN_HANDLE_ALL)
+    if (connHandle == BTLE_CONN_HANDLE_INVALID)
+        errCode = NRF_ERROR_INVALID_STATE;
+    else if (connHandle == BTLE_CONN_HANDLE_ALL)
     {
         for (uint_fast8_t i = 0; i < COUNT_OF(lcsGattcData_server_data); i++)
         {
