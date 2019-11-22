@@ -184,7 +184,7 @@ typedef struct
 
 /* Private variables ---------------------------------------------------------*/
 APP_TIMER_DEF(mainTimerId);                                         // timer instance for main timer
-static hmi_buttonState_t buttonVolUp, buttonVolDown;                // remote button states
+//static hmi_buttonState_t buttonVolUp, buttonVolDown;                // remote button states
 static modeState_t modeState __attribute__((section(".noinit")));   // mode states
 static state_t state = {.pMode = &modeState};                       // device states
 static helenaConfig_t modeConfig = MODES_DEFAULT;                   // modes and grouping configuration
@@ -224,17 +224,43 @@ static void btleHidEvtHandler(btle_event_t * pEvt)
     switch (pEvt->subEvt.hid)
     {
     case BTLE_EVT_HID_VOL_UP_SHORT:
-        buttonVolUp = HMI_BUTTONSHORT;
+        APP_ERROR_CHECK(hmi_ReportButton(HMI_BT_RMT_NEXT, HMI_BS_SHORT));
+        //buttonVolUp = HMI_BS_SHORT;
         break;
     case BTLE_EVT_HID_VOL_UP_LONG:
-        buttonVolUp = HMI_BUTTONLONG;
+        APP_ERROR_CHECK(hmi_ReportButton(HMI_BT_RMT_NEXT, HMI_BS_LONG));
+        //buttonVolUp = HMI_BS_LONG;
         break;
     case BTLE_EVT_HID_VOL_DOWN_SHORT:
-        buttonVolDown = HMI_BUTTONSHORT;
+        APP_ERROR_CHECK(hmi_ReportButton(HMI_BT_RMT_SELECT, HMI_BS_SHORT));
+        //buttonVolDown = HMI_BS_SHORT;
         break;
     case BTLE_EVT_HID_VOL_DOWN_LONG:
-        buttonVolDown = HMI_BUTTONLONG;
+        APP_ERROR_CHECK(hmi_ReportButton(HMI_BT_RMT_SELECT, HMI_BS_LONG));
+        //buttonVolDown = HMI_BS_LONG;
         break;
+    default:
+        break;
+    }
+}
+
+/** @brief event handler for incoming ble events related to the Light Control Service
+ */
+static void btleLcsEvtHandler(btle_event_t const* const pEvt)
+{
+    if (pEvt->connHandle != state.btle.isCentralConnected)
+        return; // ignore events of peripheral connection
+
+    switch (pEvt->subEvt.lcs)
+    {
+    case BTLE_EVT_LCS_MEAS_RECEIVED:
+    {
+        q15_t incl = (1l << 15) * pEvt->lcsmEventParams.pitch / 360l;
+        if (incl < 0)
+            incl += (1l << 15);
+        APP_ERROR_CHECK(ms_ReportInclination(incl));
+    }   break;
+
     default:
         break;
     }
@@ -595,6 +621,9 @@ static void btleEventHandler(btle_event_t * pEvt)
         break;
     case BTLE_EVT_HID:
         btleHidEvtHandler(pEvt);
+        break;
+    case BTLE_EVT_LCS:
+        btleLcsEvtHandler(pEvt);
         break;
     case BTLE_EVT_LCS_CTRL_POINT:
         btleLcscpEventHandler(pEvt);
@@ -993,63 +1022,67 @@ static uint8_t changeMode(int8_t mode, int8_t group)
 
 /** @brief function for handling button events
  */
-static void processButtons(hmi_buttonState_t* pInternal, hmi_buttonState_t* pVolumeUp, hmi_buttonState_t* pVolumeDown)
+//static void processButtons(hmi_buttonState_t* pInternal, hmi_buttonState_t* pVolumeUp, hmi_buttonState_t* pVolumeDown)
+static void processButtons(hmi_buttonState_t* pButtons)
 {
-    do
+    uint_fast8_t newMode = state.pMode->currentMode;
+
+    // ultra long press of internal button
+    if (pButtons[HMI_BT_INTERNAL] == HMI_BS_ULTRALONG)
     {
-        uint_fast8_t newMode;
-
-        // ultra long press of internal button
-        if (*pInternal == HMI_BUTTONULTRALONG)
+        if (state.pMode->currentMode == MODE_OFF)       // either search for remote
         {
-            if (state.pMode->currentMode == MODE_OFF)       // either search for remote
-            {
-                APP_ERROR_CHECK(btle_DeleteBonds());
-                APP_ERROR_CHECK(btle_SearchForRemote());
-            }
-            else                                            // or shut off
-                enterMode(MODE_OFF, BTLE_CONN_HANDLE_ALL);
-            break;
+            APP_ERROR_CHECK(btle_DeleteBonds());
+            APP_ERROR_CHECK(btle_SearchForRemote());
         }
+        else                                            // or shut off
+            enterMode(MODE_OFF, BTLE_CONN_HANDLE_ALL);
+        return;
+    }
 
-        // button press of external volume down button
-        if (*pVolumeDown != HMI_BUTTONNOPRESS)
-        {
-            if (modeConfig.prefMode != MODE_INVALID &&
-                (state.pMode->currentMode == modeConfig.prefMode || !isLightMode(&modeConfig.mode[modeConfig.prefMode])))
-                enterMode(MODE_OFF, BTLE_CONN_HANDLE_ALL);
-            else
-                enterMode(modeConfig.prefMode, BTLE_CONN_HANDLE_ALL);
-            break;
-        }
-
-        // increase to next mode for short button press
-        if (*pInternal == HMI_BUTTONSHORT || *pVolumeUp == HMI_BUTTONSHORT)
-        {
-            if (state.pMode->currentMode == MODE_OFF)
-            {
-                if (modeConfig.prefMode != MODE_INVALID && isLightMode(&modeConfig.mode[modeConfig.prefMode]))
-                    newMode = modeConfig.prefMode;
-                else
-                    newMode = 0;
-            }
-            else
-                newMode = changeMode(1, 0);
-        }
-        // switch to next group for long button press
-        else if (state.pMode->currentMode != MODE_OFF && (*pInternal == HMI_BUTTONLONG || *pVolumeUp == HMI_BUTTONLONG))
-            newMode = changeMode(0, 1);
+    // button press of external volume down button
+    if (pButtons[HMI_BT_RMT_SELECT] != HMI_BS_NOPRESS && state.pMode->currentMode != MODE_OFF)
+    {                                                               // enter preferred mode
+        if (modeConfig.prefMode != MODE_INVALID &&                  // if preferred mode is set and
+            isLightMode(&modeConfig.mode[modeConfig.prefMode]) &&   // preferred mode has a valid light setup and
+            state.pMode->currentMode != modeConfig.prefMode)        // current mode is not the preferred mode
+            enterMode(modeConfig.prefMode, BTLE_CONN_HANDLE_ALL);
         else
-            break;
+            enterMode(MODE_OFF, BTLE_CONN_HANDLE_ALL);
+        return;
+    }
 
-        newMode = getNextValidMode(newMode);
-        enterMode(newMode, BTLE_CONN_HANDLE_ALL);
-    } while(0);
+    // change mode
+    if (pButtons[HMI_BT_INTERNAL] == HMI_BS_SHORT ||
+        pButtons[HMI_BT_RMT_NEXT] == HMI_BS_SHORT || pButtons[HMI_BT_RMT_PREV] == HMI_BS_SHORT)
+    {
+        if (state.pMode->currentMode == MODE_OFF)
+        {
+            if (modeConfig.prefMode != MODE_INVALID && isLightMode(&modeConfig.mode[modeConfig.prefMode]))
+                newMode = modeConfig.prefMode;
+            else
+                newMode = 0;
+        }
+        else if (pButtons[HMI_BT_RMT_PREV] == HMI_BS_SHORT)
+            newMode = changeMode(-1, 0);
+        else
+            newMode = changeMode(1, 0);
+    }
+    // change group
+    else if (state.pMode->currentMode != MODE_OFF)
+    {
+        if (pButtons[HMI_BT_RMT_PREV] == HMI_BS_LONG || pButtons[HMI_BT_RMT_DOWN] >= HMI_BS_SHORT)
+            newMode = changeMode(0, -1);
+        else if (pButtons[HMI_BT_INTERNAL] == HMI_BS_LONG ||
+            pButtons[HMI_BT_RMT_NEXT] == HMI_BS_LONG || pButtons[HMI_BT_RMT_UP] >= HMI_BS_SHORT)
+            newMode = changeMode(0, 1);
+    }
 
-    // clear buttons
-    *pInternal = HMI_BUTTONNOPRESS;
-    *pVolumeDown = HMI_BUTTONNOPRESS;
-    *pVolumeUp = HMI_BUTTONNOPRESS;
+    if (newMode == state.pMode->currentMode)
+        return;
+
+    newMode = getNextValidMode(newMode);
+    enterMode(newMode, BTLE_CONN_HANDLE_ALL);
 }
 
 /** @brief function to handle the status led
@@ -1283,8 +1316,8 @@ int main(void)
 
     while (1)
     {
-        const helenaMode_t* pLightMode;
-        const light_status_t* pLightStatus;
+        helenaMode_t const* pLightMode;
+        light_status_t const* pLightStatus;
 
         // communication check
         com_MessageStruct const* pMessageIn = com_Check();
@@ -1294,8 +1327,10 @@ int main(void)
         }
 
         // button checks
-        hmi_buttonState_t buttonInt = hmi_Debounce();           // run debounce routine and get internal button state
-        processButtons(&buttonInt, &buttonVolUp, &buttonVolDown);  // process button events
+        hmi_buttonState_t buttons[HMI_BT_CNT];
+        APP_ERROR_CHECK(hmi_Debounce(buttons, HMI_BT_CNT));     // run debounce routine and get button states
+        processButtons(buttons);                                // process button events
+        //processButtons(&buttons[HMI_BT_INTERNAL], &buttonVolUp, &buttonVolDown);  // process button events
 
         // determine current light mode
         if (state.pMode->currentMode != MODE_OFF)
@@ -1338,7 +1373,9 @@ int main(void)
                     lightMode.intensity = pLightMode->intensity;
             }
 
-            errCode = light_UpdateTargets(&lightMode, msData.pitch, &pLightStatus);
+            uint16_t pitch = (uint16_t)msData.pitch - (uint16_t)msData.inclination;
+            pitch &= 0x7FFF;
+            errCode = light_UpdateTargets(&lightMode, (q15_t)pitch, &pLightStatus);
             APP_ERROR_CHECK(errCode);
 
             // update brake indicator

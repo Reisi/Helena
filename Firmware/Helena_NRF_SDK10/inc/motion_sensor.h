@@ -46,6 +46,7 @@ typedef struct
     //ms_accelerationData_t accelBody;
     //ms_rotationData_t rot;
     q15_t pitch;        // pitch angle in q15_t [0..1]->[0..360°]
+    q15_t inclination;  // last known inclination in q15_t [0..1]->[0..360°]
     bool isBraking;     // indicator if brake situation is detected
     bool isMoving;      // indicator if device is moving
 } ms_data_t;
@@ -114,6 +115,17 @@ uint32_t ms_GetSensorOffset(ms_accelerationData_t* pData);
  *              face-down (z-axis is parallel to gravity).
  */
 uint32_t ms_CalibrateSensorOffset(ms_accelerationData_t* pData);
+
+/** @brief function to report inclination values from external sensor data
+ *
+ * @param[in]   incl    the inclination in q15_t (0..1 -> 0..360°, -1..0 invalid)
+ * @return      NRF_SUCCESS
+ *              NRF_ERROR_INVALID_PARAM for angle data < 0
+ *
+ * @note        This data is internally filtered and can be accessed by calling
+ *              ms_GetData().
+ */
+uint32_t ms_ReportInclination(q15_t incl);
 
 #endif /* MOTION_SENSOR_H_INCLUDED */
 

@@ -27,6 +27,7 @@ typedef enum
 {
     BTLE_EVT_CONNECTION = 0,                    // connection related events
     BTLE_EVT_HID,                               // hid related events
+    BTLE_EVT_LCS,                               // events related to the light control service
     BTLE_EVT_LCS_CTRL_POINT                     // events related to the light control service control point
 } btle_eventTypes_t;
 
@@ -47,6 +48,13 @@ typedef enum
     BTLE_EVT_HID_VOL_DOWN_SHORT,
     BTLE_EVT_HID_VOL_DOWN_LONG
 } btle_hidEventType_t;
+
+typedef enum
+{
+    //BTLE_EVT_LCSM_ENABLED,
+    //BTLE_EVT_LCSM_DISABLED,
+    BTLE_EVT_LCS_MEAS_RECEIVED
+} btle_LcsMeasEventTypes_t;
 
 typedef enum
 {
@@ -88,6 +96,47 @@ typedef struct
     };
 } btle_LcsModeConfig_t;
 
+/**< available light status flags for btle module */
+typedef struct
+{
+    bool overcurrent    : 1;                    // flag set if requested current exceeds current limit
+    bool inputVoltage   : 1;                    // flag set if requested current exceeds voltage limiter value
+    bool temperature    : 1;                    // flag set if requested current exceeds temperature limiter value
+    bool dutyCycleLimit : 1;                    // flag set if either min. or max. duty-cycle is reached
+} btle_lcsStatusFlags_t;
+
+/**< light data structure */
+typedef struct
+{
+    btle_LcsModeConfig_t mode;                  // mode configuration, setup will always be included, intensity just if spot and/or flood are/is enabled
+    btle_lcsStatusFlags_t statusFlood;          // status of flood, will be included if flood is enabled
+    btle_lcsStatusFlags_t statusSpot;           // status of spot, will be included if spot is enabled
+    uint16_t powerFlood;                        // flood output power in mW, will be included if flood is active
+    uint16_t powerSpot;                         // spot output power in mW, will be included if spot is active
+    int8_t temperature;                         // light temperature in °C, will be included if value is in range -40..85
+    uint16_t inputVoltage;                      // input voltage in mV, will be included if value > 0
+    int8_t pitch;                               // pitch angle in °, will be included if value is in range -90..+90
+} btle_lcsMeasurement_t;
+
+typedef union
+{
+    uint8_t modeConfigStart;                    // parameter for event type BTLE_EVT_REQ_MODE_CONFIG
+    uint8_t modeToSet;                          // parameter for event type BTLE_EVT_SET_MOPE
+    struct
+    {
+        uint8_t modeNumber;                     // first mode number to change
+        uint8_t listEntries;                    // number of modes to change
+        btle_LcsModeConfig_t const* pConfig;    // list of mode configurations
+    } modeToConfig;                             // parameter for event type BTLE_EVT_CONFIG_MODE
+    uint8_t groupConfig;                        // parameter for event type BTLE_EVT_LCSCP_CONFIG_GROUP
+    struct
+    {
+        int8_t floodInPercent;                  // flood current limit in % (related to hardware limit)
+        int8_t spotInPercent;                   // spot current limit in % (related to hardware limit)
+    } currentLimits;                            // parameter for event type BTLE_EVT_LCSCP_SET_LIMITS
+            uint8_t prefMode;                   // parameter for event type BTLE_EVT_LCSCP_SET_PREF_MODE
+} btle_lcsCtrlPtEvent_t;
+
 /**< btle event structure */
 typedef struct
 {
@@ -96,27 +145,15 @@ typedef struct
     {
         btle_connectionEventType_t conn;        // sub event type for BTLE_EVT_CONNECTION events
         btle_hidEventType_t        hid;         // sub event type for BTLE_EVT_HID events
+        btle_LcsMeasEventTypes_t   lcs;         // sub event type for BTLE_EVT_LCS events
         btle_LcsCtrlPtEventTypes_t lcscp;       // sub event type for BTLE_EVT_LCS_CTRL_POINT events
     } subEvt;
     uint16_t connHandle;                        // the connection handle this event is related to
     union
     {
-        uint8_t modeConfigStart;                // parameter for event type BTLE_EVT_REQ_MODE_CONFIG
-        uint8_t modeToSet;                      // parameter for event type BTLE_EVT_SET_MOPE
-        struct
-        {
-            uint8_t modeNumber;                 // first mode number to change
-            uint8_t listEntries;                // number of modes to change
-            btle_LcsModeConfig_t const* pConfig;// list of mode configurations
-        } modeToConfig;                         // parameter for event type BTLE_EVT_CONFIG_MODE
-        uint8_t groupConfig;                    // parameter for event type BTLE_EVT_LCSCP_CONFIG_GROUP
-        struct
-        {
-            int8_t floodInPercent;              // flood current limit in % (related to hardware limit)
-            int8_t spotInPercent;               // spot current limit in % (related to hardware limit)
-        } currentLimits;                        // parameter for event type BTLE_EVT_LCSCP_SET_LIMITS
-        uint8_t prefMode;                       // parameter for event type BTLE_EVT_LCSCP_SET_PREF_MODE
-    } lcscpEventParams;
+        btle_lcsMeasurement_t lcsmEventParams;  // event parameters for BTLE_EVT_LCS_MEAS events
+        btle_lcsCtrlPtEvent_t lcscpEventParams; // event parameters for BTLE_EVT_LCS_CTRL_POINT events
+    };
 } btle_event_t;
 
 /**< return values for the btle event handler */
@@ -163,28 +200,6 @@ typedef struct
 
 /**< btle event handler type */
 typedef void (*btle_eventHandler_t)(btle_event_t * pEvt);
-
-/**< available light status flags for btle module */
-typedef struct
-{
-    bool overcurrent    : 1;                    // flag set if requested current exceeds current limit
-    bool inputVoltage   : 1;                    // flag set if requested current exceeds voltage limiter value
-    bool temperature    : 1;                    // flag set if requested current exceeds temperature limiter value
-    bool dutyCycleLimit : 1;                    // flag set if either min. or max. duty-cycle is reached
-} btle_lcsStatusFlags_t;
-
-/**< light data structure */
-typedef struct
-{
-    btle_LcsModeConfig_t mode;                  // mode configuration, setup will always be included, intensity just if spot and/or flood are/is enabled
-    btle_lcsStatusFlags_t statusFlood;          // status of flood, will be included if flood is enabled
-    btle_lcsStatusFlags_t statusSpot;           // status of spot, will be included if spot is enabled
-    uint16_t powerFlood;                        // flood output power in mW, will be included if flood is active
-    uint16_t powerSpot;                         // spot output power in mW, will be included if spot is active
-    int8_t temperature;                         // light temperature in °C, will be included if value is in range -40..85
-    uint16_t inputVoltage;                      // input voltage in mV, will be included if value > 0
-    int8_t pitch;                               // pitch angle in °, will be included if value is in range -90..+90
-} btle_lcsMeasurement_t;
 
 /**< supported feature structure */
 typedef struct

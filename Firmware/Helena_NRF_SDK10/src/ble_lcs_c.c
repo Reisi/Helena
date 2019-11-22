@@ -403,10 +403,6 @@ static void tx_buffer_process(void)
             m_tx_index++;
             m_tx_index &= TX_BUFFER_MASK;
         }
-        else
-        {
-            APP_ERROR_HANDLER(err_code);
-        }
     }
 }
 
@@ -419,6 +415,8 @@ static void on_write_rsp(ble_lcs_c_t * p_ble_lcs_c, const ble_evt_t * p_ble_evt)
 {
     (void)p_ble_lcs_c;
     (void)p_ble_evt;
+
+    APP_ERROR_CHECK(p_ble_evt->evt.gattc_evt.gatt_status);
 
     // Check if there is any message to be sent across to the peer and send it.
     tx_buffer_process();
@@ -470,6 +468,14 @@ static uint32_t cccd_configure(uint16_t conn_handle, uint16_t handle_cccd, uint1
     tx_message_t * p_msg;
     p_msg              = &m_tx_buffer[m_tx_insert_index++];
     m_tx_insert_index &= TX_BUFFER_MASK;
+
+    if (m_tx_insert_index == m_tx_index)
+    {
+        m_tx_insert_index--;
+        m_tx_insert_index &= TX_BUFFER_MASK;
+
+        return NRF_ERROR_NO_MEM;
+    }
 
     p_msg->req.write_req.gattc_params.handle   = handle_cccd;
     p_msg->req.write_req.gattc_params.len      = BLE_CCCD_VALUE_LEN;
@@ -665,6 +671,14 @@ uint32_t ble_lcs_c_feature_read(ble_lcs_c_t * p_ble_lcs_c, uint16_t conn_handle)
     p_msg                = &m_tx_buffer[m_tx_insert_index++];
     m_tx_insert_index   &= TX_BUFFER_MASK;
 
+    if (m_tx_insert_index == m_tx_index)
+    {
+        m_tx_insert_index--;
+        m_tx_insert_index &= TX_BUFFER_MASK;
+
+        return NRF_ERROR_NO_MEM;
+    }
+
     p_msg->req.read_handle = p_server->lcf_handle;
     p_msg->conn_handle     = conn_handle;
     p_msg->type            = READ_REQ;
@@ -692,6 +706,14 @@ uint32_t ble_lcs_c_cp_write(ble_lcs_c_t * p_ble_lcs_c, uint16_t conn_handle, con
 
     p_msg                = &m_tx_buffer[m_tx_insert_index++];
     m_tx_insert_index   &= TX_BUFFER_MASK;
+
+    if (m_tx_insert_index == m_tx_index)
+    {
+        m_tx_insert_index--;
+        m_tx_insert_index &= TX_BUFFER_MASK;
+
+        return NRF_ERROR_NO_MEM;
+    }
 
     p_msg->req.write_req.gattc_params.handle   = p_server->lccp_handle;
     p_msg->req.write_req.gattc_params.p_value  = p_msg->req.write_req.gattc_value;

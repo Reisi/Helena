@@ -37,6 +37,7 @@
 /* Private variables ---------------------------------------------------------*/
 APP_TIMER_DEF(hmi_Timer);
 static uint8_t hmi_TimebaseFlag;//, hmi_TimeoutDelay;
+static hmi_buttonState_t buttonStates[HMI_BT_CNT];
 
 /* Private functions ---------------------------------------------------------*/
 void hmi_DebounceStart(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
@@ -76,11 +77,15 @@ void hmi_Init()
     APP_ERROR_CHECK(app_timer_create(&hmi_Timer, APP_TIMER_MODE_REPEATED, &hmi_TimerCallback));
 }
 
-hmi_buttonState_t hmi_Debounce()
+uint32_t hmi_Debounce(hmi_buttonState_t * buttonReport, uint16_t countOf)
 {
     static uint8_t ct0 = 0xFF, ct1 = 0xFF, rpt, but_state, but_repeat, but_press, but_long;
     uint8_t i;
-    hmi_buttonState_t presstype = HMI_BUTTONNOPRESS;
+
+    if (countOf < HMI_BT_CNT)
+        return NRF_ERROR_NO_MEM;
+
+    //hmi_buttonState_t presstype = HMI_BS_NOPRESS;
 
     if (hmi_TimebaseFlag)
     {
@@ -122,7 +127,7 @@ hmi_buttonState_t hmi_Debounce()
     i = ~but_state & but_long;
     if (i)
     {
-        presstype = HMI_BUTTONLONG;
+        buttonStates[HMI_BT_INTERNAL] = HMI_BS_LONG;
         but_long = 0;
         but_press = 0;
     }
@@ -133,22 +138,38 @@ hmi_buttonState_t hmi_Debounce()
         if (but_repeat)
             but_repeat = 0;
         else
-            presstype = HMI_BUTTONSHORT;
+            buttonStates[HMI_BT_INTERNAL] = HMI_BS_SHORT;
         but_press = 0;
     }
     // check if button is pressed right now
     if (but_state)
-        presstype = HMI_BUTTONPRESS;
+        buttonStates[HMI_BT_INTERNAL] = HMI_BS_PRESS;
 
     // check for ultra long press
     i = but_state & but_repeat & but_long;
     if (i)
     {
-        presstype = HMI_BUTTONULTRALONG;
+        buttonStates[HMI_BT_INTERNAL] = HMI_BS_ULTRALONG;
         but_long = 0;
     }
 
-    return presstype;
+    for (hmi_buttonType_t i = 0; i < HMI_BT_CNT; i++)
+    {
+        buttonReport[i] = buttonStates[i];
+        buttonStates[i] = HMI_BS_NOPRESS;
+    }
+
+    return NRF_SUCCESS;
+}
+
+uint32_t hmi_ReportButton(hmi_buttonType_t type, hmi_buttonState_t state)
+{
+    if (type == HMI_BT_INTERNAL || type >= HMI_BT_CNT)
+        return NRF_ERROR_INVALID_PARAM;
+
+    buttonStates[type] = state;
+
+    return NRF_SUCCESS;
 }
 
 void hmi_SetLed(hmi_ledType_t led, hmi_ledState_t state)
@@ -197,18 +218,6 @@ void hmi_SetLed(hmi_ledType_t led, hmi_ledState_t state)
             nrf_gpio_pin_set(LEDRED);
         break;
     }
-
-    /*uint32_t pinnumber = 1;
-    if (Led == hmi_LEDRED)
-        pinnumber = LEDRED;
-    else if (Led == hmi_LEDBLUE)
-        pinnumber = LEDBLUE;
-    if (state == hmi_LEDTOGGLE)
-        nrf_gpio_pin_toggle(pinnumber);
-    else if (state == hmi_LEDON)
-        nrf_gpio_pin_set(pinnumber);
-    else
-        nrf_gpio_pin_clear(pinnumber);*/
 }
 
 /**END OF FILE*****************************************************************/

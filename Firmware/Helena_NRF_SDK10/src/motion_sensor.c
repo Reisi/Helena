@@ -30,13 +30,13 @@ typedef struct
     q15_t cosroll;
     q15_t sinyaw;
     q15_t cosyaw;
-} rotationStruct;
+} rotationsData_t;
 
 typedef struct
 {
     long accel[3];
     long gyro[3];
-} biasStruct;
+} biasData_t;
 
 /* Private defines -----------------------------------------------------------*/
 #define ACCEL_FULLSCALERANGE    8       // acceleration sensor full scale range
@@ -51,6 +51,8 @@ typedef struct
 #define LP_MOTION_INT_THRESH    100     // 100mg
 #define LP_MOTION_INT_DURATION  5       // 5ms (trail & error, in reality this results in ~1sec)
 #define LP_MOTION_INT_FREQ      5       // 5Hz sampling rate
+
+#define INCL_FILTER_SHIFT       3
 
 /* Private macros ------------------------------------------------------------*/
 #ifdef EXTENDED_ERROR_CHECK
@@ -101,9 +103,10 @@ do                                      \
                                  ((a) - (b)))
 
 /* Private variables ---------------------------------------------------------*/
-static bool isEnabled;
-static biasStruct bias;
-static ms_LowPowerMovementDetectedHandler_t movementIntHandler;
+static bool isEnabled;      // indicator if motion sensing is enabled or not
+static biasData_t bias;     // sensor bias values
+static ms_LowPowerMovementDetectedHandler_t movementIntHandler; // handler to be called , if low power movement interrupt occurred
+static int32_t inclination;   // filtered inclination from external sensor, resolution tbd.
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -270,7 +273,7 @@ static void rotateRawToHelenaAxis(short* pAccel)
  * @return void
  *
  */
-static void removeGravity(const rotationStruct* pRot, short* accel)
+static void removeGravity(const rotationsData_t* pRot, short* accel)
 {
     unsigned short accelSens;
     mpu_get_accel_sens(&accelSens);
@@ -356,7 +359,7 @@ static void removeHeadMovements(const short* pGyro, q15_t* pPosition, short* pAc
  * @param[in]       pRot    current rotation data
  * @param[in/out]   pAccel  acceleration data
  */
-static void rotateIntoBodyAxis(const rotationStruct* pRot, short* pAccel)
+static void rotateIntoBodyAxis(const rotationsData_t* pRot, short* pAccel)
 {
     arm_matrix_instance_q15 accelHead, accelBody, matrix;
     q15_t accelHeadData[3], matrixData[9];
@@ -395,7 +398,7 @@ static void normalizeAcceleration(const short* pRotation, short* accel, short* g
 {
     static q31_t yawFilter;                 // long term value of yaw angle
 
-    rotationStruct rotationData;
+    rotationsData_t rotationData;
 
     /// to do: change from fixed position to calibrated values or self finding algorithm
     q15_t position[3] = {0, -0.12 * (1<<15), -0.22 * (1<<15)};
@@ -653,7 +656,7 @@ static void loadBias()
         fds_record_t record;
         errCode = fds_open(&descriptor, &record);
         if (errCode == NRF_SUCCESS && record.header.tl.length_words == SIZEOF_WORDS(bias))
-            bias = *(biasStruct*)record.p_data;
+            bias = *(biasData_t*)record.p_data;
     }
     else if (errCode != NRF_ERROR_NOT_FOUND)
     {
@@ -661,7 +664,7 @@ static void loadBias()
     }
 }
 
-static uint32_t applyBias(biasStruct* pBias)
+static uint32_t applyBias(biasData_t* pBias)
 {
     long accel[3], gyro[3];
     unsigned short accelSens;
@@ -832,6 +835,9 @@ uint32_t ms_GetData(ms_data_t* pData)
     rotation[2] = euler[2]/720;
 
     pData->pitch = rotation[0];             // pitch can be used directly
+                                            // inclination is converted to usual q15_t angle representation
+    q15_t incl = inclination >> INCL_FILTER_SHIFT;
+    pData->inclination = incl < 0 ? incl += (1l << 15) : incl;
 
     normalizeAcceleration(rotation, accel, gyro);
     pData->isBraking = isBrakingDetected(accel);
@@ -857,7 +863,7 @@ uint32_t ms_CalibrateSensorOffset(ms_accelerationData_t* pData)
     uint32_t errCode;
     long gyro[3], accel[3];
     int result;
-    biasStruct newBias;
+    biasData_t newBias;
 
     result = mpu_run_self_test(gyro, accel);
     if (result != 7)
@@ -896,6 +902,27 @@ uint32_t ms_CalibrateSensorOffset(ms_accelerationData_t* pData)
     else if (errCode == NRF_ERROR_NOT_FOUND)
         return fds_write(&descriptor, key, 1, &chunk);
     return errCode;
+}
+
+uint32_t ms_ReportInclination(q15_t incl)
+{
+    if (incl < 0)
+        return NRF_ERROR_INVALID_PARAM;
+
+    // Inclination is not stored in usual q15_t (0..1 -> 0°..360°,-1..0 unused).
+    // To avoid problems with 360°<->0° overrun, the inclination is mapped into
+    // the range of -0.5..0.5 -> -180°..180. Additionally it is internally stored
+    // multiplied with 2^INCL_FILTER_SHIFT to minimize precision losses due to
+    // filtering and calculations.
+
+    // remap from 0°..360° to -180°..180°
+    if (incl >= (1 << 14))
+        incl = (1 << 14) - incl;
+
+    inclination -= inclination >> INCL_FILTER_SHIFT;
+    inclination += incl;
+
+    return NRF_SUCCESS;
 }
 
 /**END OF FILE*****************************************************************/

@@ -45,7 +45,6 @@ typedef struct
     ble_scan_mode_t scanMode;       // current scan mode
     uint16_t connHandleCentral;     // connection handle related to central connection
     uint16_t connHandlePeriph;      // connection handle related to peripheral connection
-    bool discoverOnCentralConn;     // flag indicating, if a database discovery shall be started on a connection as central
 } state_t;
 
 /* Private macros ------------------------------------------------------------*/
@@ -672,8 +671,64 @@ void lcsCEventHandler(ble_lcs_c_t * pBleLcsC, ble_lcs_c_evt_t * pEvt)
     switch (pEvt->evt_type)
     {
     case BLE_LCS_C_EVT_DISCOVERY_COMPLETE:
+        //ble_lcs_c_lcm_notif_enable(pBleLcsC, pEvt->p_server->conn_handle, true);
         ble_lcs_c_cp_indic_enable(pBleLcsC, pEvt->p_server->conn_handle, true);
         break;
+
+    case BLE_LCS_C_EVT_MEASUREMENT_NOTIFY:
+        if (state.handler)
+        {
+            btle_event_t evt = { .lcsmEventParams.temperature = INT8_MAX, .lcsmEventParams.pitch = INT8_MAX};
+            evt.evt = BTLE_EVT_LCS;
+            evt.subEvt.lcs = BTLE_EVT_LCS_MEAS_RECEIVED;
+            evt.connHandle = pEvt->p_server->conn_handle;
+
+            evt.lcsmEventParams.mode.setup.flood             = pEvt->data.measurement.mode.setup.flood;
+            evt.lcsmEventParams.mode.setup.spot              = pEvt->data.measurement.mode.setup.spot;
+            evt.lcsmEventParams.mode.setup.pitchCompensation = pEvt->data.measurement.mode.setup.pitchCompensation;
+            evt.lcsmEventParams.mode.setup.cloned            = pEvt->data.measurement.mode.setup.cloned;
+            evt.lcsmEventParams.mode.setup.taillight         = pEvt->data.measurement.mode.setup.taillight;
+            evt.lcsmEventParams.mode.setup.brakelight        = pEvt->data.measurement.mode.setup.brakelight;
+
+            if (pEvt->data.measurement.flags.intensity_present)
+            {
+                if (pEvt->data.measurement.mode.setup.pitchCompensation)
+                    evt.lcsmEventParams.mode.illuminanceInLux = pEvt->data.measurement.mode.intensity;
+                else
+                    evt.lcsmEventParams.mode.intensityInPercent = pEvt->data.measurement.mode.intensity;
+            }
+            if (pEvt->data.measurement.flags.flood_status_present)
+            {
+                evt.lcsmEventParams.statusFlood.overcurrent    = pEvt->data.measurement.flood_status.overcurrent;
+                evt.lcsmEventParams.statusFlood.inputVoltage   = pEvt->data.measurement.flood_status.voltage;
+                evt.lcsmEventParams.statusFlood.temperature    = pEvt->data.measurement.flood_status.temperature;
+                evt.lcsmEventParams.statusFlood.dutyCycleLimit = pEvt->data.measurement.flood_status.dutycycle;
+            }
+            if (pEvt->data.measurement.flags.spot_status_present)
+            {
+                evt.lcsmEventParams.statusSpot.overcurrent    = pEvt->data.measurement.spot_status.overcurrent;
+                evt.lcsmEventParams.statusSpot.inputVoltage   = pEvt->data.measurement.spot_status.voltage;
+                evt.lcsmEventParams.statusSpot.temperature    = pEvt->data.measurement.spot_status.temperature;
+                evt.lcsmEventParams.statusSpot.dutyCycleLimit = pEvt->data.measurement.spot_status.dutycycle;
+            }
+            if (pEvt->data.measurement.flags.flood_power_present)
+                evt.lcsmEventParams.powerFlood = pEvt->data.measurement.flood_power;
+            if (pEvt->data.measurement.flags.spot_power_present)
+                evt.lcsmEventParams.powerSpot = pEvt->data.measurement.spot_power;
+            if (pEvt->data.measurement.flags.temperature_present)
+                evt.lcsmEventParams.temperature = pEvt->data.measurement.temperature;
+            if (pEvt->data.measurement.flags.input_voltage_present)
+                evt.lcsmEventParams.inputVoltage = pEvt->data.measurement.input_voltage;
+            if (pEvt->data.measurement.flags.pitch_present)
+                evt.lcsmEventParams.pitch = pEvt->data.measurement.pitch;
+
+            state.handler(&evt);
+        }
+        break;
+
+    case BLE_LCS_C_EVT_CONTROL_POINT_INDIC:
+        break;
+
     default:
         break;
     }
@@ -827,7 +882,6 @@ static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
             errCode = ble_scanning_start(BLE_SCAN_MODE_IDLE);
             APP_ERROR_CHECK(errCode);
             // and connect to device
-            state.discoverOnCentralConn = isHid;    // start discovery only if connecting to a hid device
             errCode = sd_ble_gap_connect(&pScanEvt->p_ble_adv_report->peer_addr, &scanParams, &connParams);
             APP_ERROR_CHECK(errCode);
         }
@@ -1166,6 +1220,8 @@ uint32_t btle_SearchForRemote()
 
 uint32_t btle_SetMode(uint8_t mode, uint16_t connHandle)
 {
+    /// TODO: check if indication of previous change has been received, if not schedule command
+
     ble_lcs_c_cp_write_t cmd;
     uint32_t errCode = NRF_SUCCESS;
 
@@ -1173,7 +1229,7 @@ uint32_t btle_SetMode(uint8_t mode, uint16_t connHandle)
     cmd.params.mode_to_set = mode;
 
     if (connHandle == BTLE_CONN_HANDLE_INVALID)
-        errCode = NRF_ERROR_INVALID_STATE;
+        errCode = NRF_ERROR_INVALID_PARAM;
     else if (connHandle == BTLE_CONN_HANDLE_ALL)
     {
         for (uint_fast8_t i = 0; i < COUNT_OF(lcsGattcData_server_data); i++)

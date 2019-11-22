@@ -75,7 +75,7 @@ static char *pDebugMessages[DBG_CNT] =
 #if defined HELENA_DEBUG_FIELD_TESTING
 static ble_nus_t    nusGattsData;                                           /**< database for nordic uart service */
 static rttPointersStruct rttPointers __attribute__((section(".noinit")));   /**< rtt pointers stored in noinit section to survive reset */
-static bool isErrorLogPending, isErrorLogMorePending, isMemoryClearPending; /**< Flags for pending actions */
+static bool isMemoryClearPending;                                           /**< Flags for pending actions */
 static volatile bool eraseInProgress = false;                               /**< Flag indication if flash erase is in progress */
 #endif
 
@@ -94,44 +94,28 @@ static void sendErrorLog(void *pData, uint16_t size)
     (void)size;
 
     uint32_t errCode;
-    char* pNoLogMsg = "error log is empty\r\n";
 
-    // check if error log is empty
-    if (_SEGGER_RTT.aUp[0].RdOff == _SEGGER_RTT.aUp[0].WrOff)
+     while (_SEGGER_RTT.aUp[0].RdOff != _SEGGER_RTT.aUp[0].WrOff)
     {
-        errCode = ble_nus_string_send(&nusGattsData, (uint8_t*)pNoLogMsg, strlen(pNoLogMsg) - 1);
-        if (errCode != BLE_ERROR_NO_TX_BUFFERS && errCode != NRF_ERROR_BUSY)
-            isErrorLogPending = false;
-    }
-    else
-    {
-        isErrorLogPending = false;
-        isErrorLogMorePending = false;
-        while (_SEGGER_RTT.aUp[0].RdOff != _SEGGER_RTT.aUp[0].WrOff)
+        // check size of error log
+        uint32_t contentSize = _SEGGER_RTT.aUp[0].WrOff - _SEGGER_RTT.aUp[0].RdOff;
+        contentSize %= _SEGGER_RTT.aUp[0].SizeOfBuffer;
+        // if error log is bigger than max. transfer size it has to be sent in several chunks
+        uint32_t thisStringSize = BLE_NUS_MAX_DATA_LEN;
+        if (thisStringSize > contentSize)
+            thisStringSize = contentSize;
+        if (thisStringSize > (_SEGGER_RTT.aUp[0].SizeOfBuffer - _SEGGER_RTT.aUp[0].WrOff))
+            thisStringSize = (_SEGGER_RTT.aUp[0].SizeOfBuffer - _SEGGER_RTT.aUp[0].WrOff);
+        errCode = ble_nus_string_send(&nusGattsData, (uint8_t*)&_SEGGER_RTT.aUp[0].pBuffer[_SEGGER_RTT.aUp[0].RdOff],
+                                       thisStringSize);
+        if (errCode == NRF_SUCCESS)
         {
-            // check size of error log
-            uint32_t contentSize = _SEGGER_RTT.aUp[0].WrOff - _SEGGER_RTT.aUp[0].RdOff;
-            contentSize %= _SEGGER_RTT.aUp[0].SizeOfBuffer;
-            // if error log is bigger than max. transfer size it has to be sent in several chunks
-            uint32_t thisStringSize = BLE_NUS_MAX_DATA_LEN;
-            if (thisStringSize > contentSize)
-                thisStringSize = contentSize;
-            if (thisStringSize > (_SEGGER_RTT.aUp[0].SizeOfBuffer - _SEGGER_RTT.aUp[0].WrOff))
-                thisStringSize = (_SEGGER_RTT.aUp[0].SizeOfBuffer - _SEGGER_RTT.aUp[0].WrOff);
-            errCode = ble_nus_string_send(&nusGattsData, (uint8_t*)&_SEGGER_RTT.aUp[0].pBuffer[_SEGGER_RTT.aUp[0].RdOff],
-                                           thisStringSize);
-            if (errCode == NRF_SUCCESS)
-            {
-                _SEGGER_RTT.aUp[0].RdOff += thisStringSize;
-                _SEGGER_RTT.aUp[0].RdOff %= _SEGGER_RTT.aUp[0].SizeOfBuffer;
-                rttPointers.RdOff = _SEGGER_RTT.aUp[0].RdOff;
-            }
-            else if (errCode == BLE_ERROR_NO_TX_BUFFERS || errCode == NRF_ERROR_BUSY)
-            {
-                isErrorLogMorePending = true;
-                break;
-            }
+            _SEGGER_RTT.aUp[0].RdOff += thisStringSize;
+            _SEGGER_RTT.aUp[0].RdOff %= _SEGGER_RTT.aUp[0].SizeOfBuffer;
+            rttPointers.RdOff = _SEGGER_RTT.aUp[0].RdOff;
         }
+        else if (errCode == BLE_ERROR_NO_TX_BUFFERS || errCode == NRF_ERROR_BUSY)
+            break;
     }
 }
 
@@ -170,10 +154,6 @@ static void onBleNusEvt(ble_nus_t *pNus, uint8_t *pData, uint16_t length)
 {
     char* pString = (char*)pData;
 
-    if (strncmp(pString, "get error log", 13) == 0)
-    {
-        isErrorLogPending = true;
-    }
     if (strncmp(pString, "fake error", 10) == 0)
     {
         APP_ERROR_CHECK(NRF_ERROR_INTERNAL);
@@ -210,6 +190,7 @@ void debug_Init()
         // noinit data is valid, use last known read and write pointers
         _SEGGER_RTT.aUp[0].WrOff = rttPointers.WrOff;
         _SEGGER_RTT.aUp[0].RdOff = rttPointers.RdOff;
+        SEGGER_RTT_WriteString(0, "..reset..\r\n");
     }
     else
     {
@@ -218,6 +199,7 @@ void debug_Init()
         rttPointers.crc = crc16_compute((const uint8_t*)&rttPointers.magicNumber, sizeof(rttPointers.magicNumber), NULL);
         rttPointers.WrOff = _SEGGER_RTT.aUp[0].WrOff;
         rttPointers.RdOff = _SEGGER_RTT.aUp[0].RdOff;
+        SEGGER_RTT_WriteString(0, "..power on..\r\n");
     }
 #endif
 
@@ -241,7 +223,7 @@ void debug_Execute()
 {
     nrf_drv_wdt_channel_feed(watchdogChannel);
 #if defined HELENA_DEBUG_FIELD_TESTING
-    if (isErrorLogPending || isErrorLogMorePending)
+    if (nusGattsData.conn_handle != BLE_CONN_HANDLE_INVALID && nusGattsData.is_notification_enabled)
         sendErrorLog(NULL, 0);
     if (isMemoryClearPending)
         clearMem();
@@ -265,6 +247,7 @@ void debug_FieldTestingInit()
 
 void debug_OnBleEvt(ble_evt_t * pBleEvt)
 {
+
     ble_nus_on_ble_evt(&nusGattsData, pBleEvt);
 }
 
@@ -369,36 +352,38 @@ void HardFault_Handler(void)
 // called from HardFault_Handler in file xxx.s
 void hard_fault_handler_c(unsigned int * hardfault_args, unsigned lr_value)
 {
-    unsigned int stacked_r0;
-    unsigned int stacked_r1;
-    unsigned int stacked_r2;
-    unsigned int stacked_r3;
-    unsigned int stacked_r12;
+    //unsigned int stacked_r0;
+    //unsigned int stacked_r1;
+    //unsigned int stacked_r2;
+    //unsigned int stacked_r3;
+    //unsigned int stacked_r12;
     unsigned int stacked_lr;
     unsigned int stacked_pc;
-    unsigned int stacked_psr;
+    //unsigned int stacked_psr;
 
 #if defined HELENA_DEBUG_RTT
-    stacked_r0 = ((unsigned long) hardfault_args[0]);
-    stacked_r1 = ((unsigned long) hardfault_args[1]);
-    stacked_r2 = ((unsigned long) hardfault_args[2]);
-    stacked_r3 = ((unsigned long) hardfault_args[3]);
+    //stacked_r0 = ((unsigned long) hardfault_args[0]);
+    //stacked_r1 = ((unsigned long) hardfault_args[1]);
+    //stacked_r2 = ((unsigned long) hardfault_args[2]);
+    //stacked_r3 = ((unsigned long) hardfault_args[3]);
 
-    stacked_r12 = ((unsigned long) hardfault_args[4]);
+    //stacked_r12 = ((unsigned long) hardfault_args[4]);
     stacked_lr = ((unsigned long) hardfault_args[5]);
     stacked_pc = ((unsigned long) hardfault_args[6]);
-    stacked_psr = ((unsigned long) hardfault_args[7]);
+    //stacked_psr = ((unsigned long) hardfault_args[7]);
 
-    SEGGER_RTT_printf (0, "\n\n[Hard fault handler - all numbers in hex]\n");
-    SEGGER_RTT_printf (0, "R0 = %x\n", stacked_r0);
-    SEGGER_RTT_printf (0, "R1 = %x\n", stacked_r1);
-    SEGGER_RTT_printf (0, "R2 = %x\n", stacked_r2);
-    SEGGER_RTT_printf (0, "R3 = %x\n", stacked_r3);
-    SEGGER_RTT_printf (0, "R12 = %x\n", stacked_r12);
-    SEGGER_RTT_printf (0, "LR [R14] = %x  subroutine call return address\n", stacked_lr);
-    SEGGER_RTT_printf (0, "PC [R15] = %x  program counter\n", stacked_pc);
-    SEGGER_RTT_printf (0, "PSR = %x\n", stacked_psr);
-    SEGGER_RTT_printf (0, "LR = %x\n", lr_value);
+    SEGGER_RTT_printf (0, "[Hard fault]\n");
+    //SEGGER_RTT_printf (0, "R0 = %x\n", stacked_r0);
+    //SEGGER_RTT_printf (0, "R1 = %x\n", stacked_r1);
+    //SEGGER_RTT_printf (0, "R2 = %x\n", stacked_r2);
+    //SEGGER_RTT_printf (0, "R3 = %x\n", stacked_r3);
+    //SEGGER_RTT_printf (0, "R12 = %x\n", stacked_r12);
+    //SEGGER_RTT_printf (0, "LR [R14] = %x  subroutine call return address\n", stacked_lr);
+    //SEGGER_RTT_printf (0, "PC [R15] = %x  program counter\n", stacked_pc);
+    SEGGER_RTT_printf (0, "LR [R14] = %x  src ret addr\n", stacked_lr);
+    SEGGER_RTT_printf (0, "PC [R15] = %x\n", stacked_pc);
+    //SEGGER_RTT_printf (0, "PSR = %x\n", stacked_psr);
+    //SEGGER_RTT_printf (0, "LR = %x\n", lr_value);
 #else
     (void)stacked_r0;
     (void)stacked_r1;
