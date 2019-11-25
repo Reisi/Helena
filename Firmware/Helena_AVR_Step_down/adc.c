@@ -13,7 +13,6 @@
 #include <stdint.h>
 #include <avr/interrupt.h>
 #include <avr/power.h>
-#include <avr/eeprom.h>
 #include <util/atomic.h>
 #include "main.h"
 #include "smps.h"
@@ -22,58 +21,43 @@
 /* External variables --------------------------------------------------------*/
 
 /* Private typedef -----------------------------------------------------------*/
-typedef struct {
-    int16_t TemperatureOffset;
-    uint8_t StepDownLeftGain;
-    uint8_t StepDownRightGain;
-} adc_CompensationStruct;
+typedef struct
+{
+    uint16_t Temperature;
+    uint16_t CurrentStepDownLeft;
+    uint16_t CurrentStepDownRight;
+} adc_data_t;
 
 /* Private macros ------------------------------------------------------------*/
 #define adc_StartConversion()   (ADCSRA |= (1<<ADSC))
 
 /* Private defines -----------------------------------------------------------*/
-#define TEMPERATURE         0b10001111
-#define CURRSTEPDOWNRIGHT   0b10000011
-#define CURRSTEPDOWNLEFT    0b10000000
+#define TEMPERATURE         0b10001111      // ADMUX settings for temperature measurement
+#define CURRSTEPDOWNRIGHT   0b10000011      // ADMUX settings for current measurement right side
+#define CURRSTEPDOWNLEFT    0b10000000      // ADMUX settings for current measurement left side
 
 /* Private variables ---------------------------------------------------------*/
-static adc_ModeEnum adc_Mode = adc_SINGLESHOT;
-static adc_DataStruct adc_Raw;
-static adc_CompensationStruct adc_Comp;// = {-12,224,217};
-
-/* Private function prototypes -----------------------------------------------*/
-static void adc_Disable(void);
-static void adc_Enable(void);
+static adc_mode_t adc_Mode = ADC_MODE_SINGLESHOT;
+static adc_data_t adc_Raw;
+static adc_compensation_t adc_Comp = ADC_COMPENSATION_DEFAULTS;
 
 /* Private functions ---------------------------------------------------------*/
-/********************************************//**
- * \brief adc disable function
- *
- * \return void
- *
- ***********************************************/
+/** @brief function disable the adc
+ */
 static void adc_Disable() {
     ADCSRA &= ~(1<<ADEN);
     power_adc_disable();
 }
 
-/********************************************//**
- * \brief adc enable function
- *
- * \return void
- *
- ***********************************************/
+/** @brief function to enable the adc
+ */
 static void adc_Enable() {
     ATOMIC_BLOCK(ATOMIC_FORCEON) {power_adc_enable();}
     ADCSRA |= (1<<ADEN);
 }
 
-/********************************************//**
- * \brief adc interrupt service routine
- *
- * \return void
- *
- ***********************************************/
+/** @brief adc interrupt service routine
+ */
 ISR(ADC_vect) {
     uint16_t adc = ADC;
 
@@ -81,23 +65,23 @@ ISR(ADC_vect) {
     case TEMPERATURE:
         ADMUX = CURRSTEPDOWNLEFT;
         adc_StartConversion();
-        if (adc_Mode == adc_SINGLESHOT)
+        if (adc_Mode == ADC_MODE_SINGLESHOT)
             adc_Raw.Temperature = adc<<2;
-        else 
+        else
             adc_Raw.Temperature = adc_Raw.Temperature - (adc_Raw.Temperature>>2) + adc;
         main_flag |= (1<<SAMPLETEMPERATURE);
         break;
     case CURRSTEPDOWNLEFT:
         ADMUX = CURRSTEPDOWNRIGHT;
         adc_StartConversion();
-        if (adc_Mode == adc_SINGLESHOT)
+        if (adc_Mode == ADC_MODE_SINGLESHOT)
             adc_Raw.CurrentStepDownLeft = adc<<2;
         else
             adc_Raw.CurrentStepDownLeft = adc_Raw.CurrentStepDownLeft - (adc_Raw.CurrentStepDownLeft>>2) + adc;
         main_flag |= (1<<SAMPLESTEPDOWNLEFT);
         break;
     case CURRSTEPDOWNRIGHT:
-        if (adc_Mode == adc_SINGLESHOT) {
+        if (adc_Mode == ADC_MODE_SINGLESHOT) {
             adc_Raw.CurrentStepDownRight = adc<<2;
             adc_Disable();
         }
@@ -114,53 +98,38 @@ ISR(ADC_vect) {
 }
 
 /* Public functions ----------------------------------------------------------*/
-/********************************************//**
- * \brief adc initialisation function
- *
- * \note sets adc clock to 250kHz, activates adc Interrupt
- * \return void
- *
- ***********************************************/
-void adc_Init() {
+void adc_Init()
+{
     ADCSRA = (1<<ADIE)|(1<<ADPS2)|(1<<ADPS0);
     DIDR0 = (1<<ADC0D)|(1<<ADC3D);
     adc_Disable();
 
     // load compensation values from eeprom
-    adc_Comp.TemperatureOffset = eeprom_read_word(TEMPOFFS);
-    adc_Comp.StepDownLeftGain = eeprom_read_byte(LEFTGAIN);
-    adc_Comp.StepDownRightGain = eeprom_read_byte(RIGHTGAIN);
-    
+    /*adc_Comp.TemperatureOffset = eeprom_read_word(TEMPOFFS);
+    adc_Comp.CurrentLeftGain = eeprom_read_byte(LEFTGAIN);
+    adc_Comp.CurrentRightGain = eeprom_read_byte(RIGHTGAIN);
+
     // default values if eeprom is empty
     if (adc_Comp.TemperatureOffset == 0xFFFF)
         adc_Comp.TemperatureOffset = 0;
-    if (adc_Comp.StepDownLeftGain == 0xFF)
-        adc_Comp.StepDownLeftGain = 128;
-    if (adc_Comp.StepDownRightGain == 0xFF)
-        adc_Comp.StepDownRightGain = 128;
+    if (adc_Comp.CurrentLeftGain == 0xFF)
+        adc_Comp.CurrentLeftGain = 128;
+    if (adc_Comp.CurrentRightGain == 0xFF)
+        adc_Comp.CurrentRightGain = 128;*/
 }
 
-/********************************************//**
- * \brief function to set adc mode
- *
- * \param Mode: converion mode (adc_SINGLESHOT or adc_CONTINOUS)
- * \return void
- *
- ***********************************************/
-void adc_SetMode(adc_ModeEnum Mode) {
-    adc_Mode = Mode;
+void adc_SetCompensation(adc_compensation_t const* pComp)
+{
+    adc_Comp = *pComp;
 }
 
-/********************************************//**
- * \brief function start adc measurement row
- *
- * \note this function starts temperature measurement, current measurements are
-         triggered in ISR. Depending on Conversion Mode the ADC is switched off 
-         after last measurement or restarted with first. 
- * \return void
- *
- ***********************************************/
-void adc_StartRow() {
+void adc_SetMode(adc_mode_t mode)
+{
+    adc_Mode = mode;
+}
+
+void adc_StartCycle()
+{
     if (adc_Off()) {
         adc_Enable();
         ADMUX = TEMPERATURE;
@@ -168,24 +137,14 @@ void adc_StartRow() {
     }
 }
 
-/********************************************//**
- * \brief compensation function
- *
- * \note this function compensate offset error for temperature, gain error for
- *       step down and step up current, also calculate step up output current 
- *       from input current measurement
- * \param compensate adc input to be compensated
- * \return void
- *
- ***********************************************/
-uint16_t adc_Compensation(adc_CompensationEnum compensate) {
+uint16_t adc_GetCompensated(adc_dataType_t compensate) {
     uint16_t i = 0;
-    if (compensate == adc_COMPENSATETEMPERATURE) 
-        i = adc_Raw.Temperature + adc_Comp.TemperatureOffset;        
-    else if (compensate == adc_COMPENSATESTEPDOWNLEFT) 
-        i = (((uint32_t)adc_Raw.CurrentStepDownLeft * adc_Comp.StepDownLeftGain)<<1)>>8;
-    else if (compensate == adc_COMPENSATESTEPDOWNRIGHT) 
-        i = (((uint32_t)adc_Raw.CurrentStepDownRight * adc_Comp.StepDownRightGain)<<1)>>8;
+    if (compensate == ADC_DATA_TEMPERATURE)
+        i = adc_Raw.Temperature + adc_Comp.TemperatureOffset;
+    else if (compensate == ADC_DATA_CURRENTLEFT)
+        i = (((uint32_t)adc_Raw.CurrentStepDownLeft * adc_Comp.CurrentLeftGain)<<1)>>8;
+    else if (compensate == ADC_DATA_CURRENTRIGHT)
+        i = (((uint32_t)adc_Raw.CurrentStepDownRight * adc_Comp.CurrentRightGain)<<1)>>8;
     return i;
 }
 

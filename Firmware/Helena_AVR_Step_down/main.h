@@ -9,4 +9,8 @@
 #define WATCHDOG            4
 #define COMRXDONE           5
 
+#define TEMPOFFS    (uint16_t*)0
+#define LEFTGAIN    (uint8_t*)2
+#define RIGHTGAIN   (uint8_t*)3
+
 #endif

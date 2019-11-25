@@ -10,11 +10,11 @@
 #ifndef VERSION_H_INCLUDED
 #define VERSION_H_INCLUDED
 
-#define VERSION_MAJOR   0
-#define VERSION_MINOR   14
+#define VERSION_MAJOR   1
+#define VERSION_MINOR   0
 #define VERSION_PATCH   0
 
-#define VERSION_LEVEL   "bugfix"
+#define VERSION_LEVEL   "calibrate"
 
 #define BUILD_YEAR  ((__DATE__[ 9] - '0') * 10 + (__DATE__[10] - '0'))
 

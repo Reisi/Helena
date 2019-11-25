@@ -227,11 +227,12 @@ void btle_StackInit(void);
 /** @brief Function to initialize the btle module
  *
  * @param[in]   deleteBonds true to erase all bond information at
- *              initialization
- * @param[in]   pFeature supported features
- * @param[in]   event handler for btle events
+ *                          initialization
+ * @param[in]   pDrvRev     pointer to driver firmware string
+ * @param[in]   pFeature    supported features
+ * @param[in]   pEvtHandler event handler for btle events
  */
-void btle_Init(bool deleteBonds, btle_lcsFeature_t* pFeature, btle_eventHandler_t pEvtHandler);
+void btle_Init(bool deleteBonds, char const* pDrvRev, btle_lcsFeature_t* pFeature, btle_eventHandler_t pEvtHandler);
 
 /** @brief Function to set the scan mode
  *

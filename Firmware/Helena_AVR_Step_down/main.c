@@ -1,14 +1,13 @@
 /**
   ******************************************************************************
   * @file    main.c
-  * @author  RT
-  * @version V1.0
-  * @date    15/01/31
+  * @author  Thomas Reisnecker
   * @brief   main module for 2 Channel i2c SMPS Module
   ******************************************************************************
   */
 
 /* Includes ------------------------------------------------------------------*/
+#include <string.h>
 #include <avr/io.h>
 #include <stdint.h>
 #include <avr/eeprom.h>
@@ -17,15 +16,12 @@
 #include <avr/wdt.h>
 #include <avr/interrupt.h>
 #include <util/atomic.h>
-//#include "comreloaded.h"
 #include "usiTwiSlave.h"
 #include "adc.h"
 #include "main.h"
 #include "smps.h"
 
 /* External variables --------------------------------------------------------*/
-//extern volatile uint8_t rxbuffer[buffer_size];         // Buffer to write data received from the master
-//extern volatile uint8_t txbuffer[buffer_size];			// Transmission buffer to be read from the master
 
 /* Private typedef -----------------------------------------------------------*/
 typedef struct {
@@ -38,7 +34,9 @@ typedef struct {
     uint16_t CurrentStepDownRight;
     uint8_t StatusStepDownRight;
     uint16_t Temperature;
-} main_DataStruct;
+    adc_compensation_t adcComp;
+    uint8_t adcXor;
+} main_data_t;
 
 /* Private macros ------------------------------------------------------------*/
 
@@ -47,21 +45,30 @@ typedef struct {
 #define NULL 0
 #endif
 
-//#define CALIBRATION     // if this flag is enabled, both drivers are set to 
+//#define CALIBRATION     // if this flag is enabled, both drivers are set to
                         // output 0.75A, and the temperature value is stored
                         // to last eeprom address approximately every 5 sec
 #ifdef CALIBRATION
-#define TEMPSAFECNT     (5*250000/(3*13))  
+#define TEMPSAFECNT     (5*250000/(3*13))
 #define TEMPSAFEADDR    (uint16_t*)510
 #endif
 
 /* Private variables ---------------------------------------------------------*/
-static main_DataStruct main_Data;
-
-/* Private function prototypes -----------------------------------------------*/
-static void main_Init(void);
+static main_data_t main_Data;
 
 /* Private functions ---------------------------------------------------------*/
+static uint8_t calcXor(adc_compensation_t const* pComp)
+{
+    uint8_t xor = 0;
+
+    xor = pComp->TemperatureOffset & 0x00FF;
+    xor ^= (uint8_t)(pComp->TemperatureOffset >> 8);
+    xor ^= pComp->CurrentLeftGain;
+    xor ^= pComp->CurrentRightGain;
+
+    return xor;
+}
+
 static void main_Init() {
     MCUSR &= ~(1<<WDRF);
     wdt_disable();
@@ -71,6 +78,25 @@ static void main_Init() {
     main_Data.AdcConfig = WDTO_1S;
     rxbuffer[0] = (main_Data.Sleep<<4) | main_Data.AdcConfig;
     txbuffer[0] = (main_Data.Sleep<<4) | main_Data.AdcConfig;
+
+    int16_t tOffset = eeprom_read_word(TEMPOFFS);
+    uint8_t gainLeft = eeprom_read_byte(LEFTGAIN);
+    uint8_t gainRight = eeprom_read_byte(RIGHTGAIN);
+
+    if (tOffset == 0xFFFF && gainLeft == 0xFF && gainRight == 0xFF)
+    {
+        adc_compensation_t def = ADC_COMPENSATION_DEFAULTS;
+        main_Data.adcComp = def;
+    }
+    else
+    {
+        main_Data.adcComp.TemperatureOffset = tOffset;
+        main_Data.adcComp.CurrentLeftGain = gainLeft;
+        main_Data.adcComp.CurrentRightGain = gainRight;
+    }
+    main_Data.adcXor = calcXor(&main_Data.adcComp);
+
+    adc_SetCompensation(&main_Data.adcComp);
 }
 
 int main(void) {
@@ -88,7 +114,7 @@ int main(void) {
         main_Data.TargetStepDownRight = 64;
 #else
         /**
-         * twi data handling
+         * receiving twi data handling
          */
         main_Data.AdcConfig = rxbuffer[0] & 0x0F;
         if (rxbuffer[0] & (1<<4))
@@ -97,6 +123,27 @@ int main(void) {
             main_Data.Sleep = 0;
         main_Data.TargetStepDownLeft = rxbuffer[1];
         main_Data.TargetStepDownRight = rxbuffer[2];
+        adc_compensation_t rcvdComp;
+        rcvdComp.TemperatureOffset = (int16_t)(((uint16_t)rxbuffer[11] << 8) | rxbuffer[12]);
+        rcvdComp.CurrentLeftGain = rxbuffer[13];
+        rcvdComp.CurrentRightGain = rxbuffer[14];
+        uint8_t xor = rxbuffer[15];
+        if (calcXor(&rcvdComp) == xor)
+        {
+            if (memcmp(&rcvdComp, &main_Data.adcComp, sizeof(adc_compensation_t)) != 0)
+            {
+                main_Data.adcComp = rcvdComp;
+                main_Data.adcXor = xor;
+                eeprom_update_word(TEMPOFFS, rcvdComp.TemperatureOffset);
+                eeprom_update_byte(LEFTGAIN, rcvdComp.CurrentLeftGain);
+                eeprom_update_byte(RIGHTGAIN, rcvdComp.CurrentRightGain);
+                adc_SetCompensation(&rcvdComp);
+            }
+        }
+
+        /**
+         * transmitting twi data handling
+         */
         ATOMIC_BLOCK(ATOMIC_FORCEON) {txbuffer[0] = (main_Data.Sleep<<4) | main_Data.AdcConfig;}
         txbuffer[1] = main_Data.TargetStepDownLeft;
         txbuffer[2] = main_Data.TargetStepDownRight;
@@ -115,12 +162,19 @@ int main(void) {
             }
             txbuffer[9] = smps_GetDutyCycle(smps_STEPDOWNLEFT);
             txbuffer[10] = smps_GetDutyCycle(smps_STEPDOWNRIGHT);
+            ATOMIC_BLOCK(ATOMIC_FORCEON) {
+                txbuffer[11] = main_Data.adcComp.TemperatureOffset >> 8;
+                txbuffer[12] = main_Data.adcComp.TemperatureOffset & 0x00FF;
+            }
+            txbuffer[13] = main_Data.adcComp.CurrentLeftGain;
+            txbuffer[14] = main_Data.adcComp.CurrentRightGain;
+            txbuffer[15] = main_Data.adcXor;
         }
         main_flag &= ~(1<<USIRXDONE);
 #endif // CALIBRATION
 
         /**
-         * Sleep mode checking, turn on or off watchdog with desired repetition 
+         * Sleep mode checking, turn on or off watchdog with desired repetition
          * rate to trigger analog conversions
          */
         if (main_Data.Sleep == 0) {
@@ -141,17 +195,17 @@ int main(void) {
         if (main_flag & (1<<WATCHDOG)) {
             main_flag &= ~(1<<WATCHDOG);
             if (adc_Off())
-                adc_StartRow();
+                adc_StartCycle();
         }
 
         /**
-         * Enable smps module if necessary and configure ADC in continous mode
+         * Enable smps module if necessary and configure ADC in continuous mode
          */
         if ((main_Data.Sleep == 0) && (main_Data.TargetStepDownLeft || main_Data.TargetStepDownRight) && smps_Off()) {
             smps_Enable();
-            adc_SetMode(adc_CONTINOUS);
+            adc_SetMode(ADC_MODE_CONTINUOUS);
             if (adc_Off())
-                adc_StartRow();
+                adc_StartCycle();
         }
 
         /**
@@ -159,15 +213,15 @@ int main(void) {
          */
         if (((main_Data.Sleep != 0) || (!main_Data.TargetStepDownLeft && !main_Data.TargetStepDownRight)) && !smps_Off()) {
             smps_Disable();
-            adc_SetMode(adc_SINGLESHOT);
+            adc_SetMode(ADC_MODE_SINGLESHOT);
         }
 
         /**
-         * compensate analoge values and call regulator if necessary
+         * compensate analog values and call regulator if necessary
          */
         if (main_flag & (1<<SAMPLETEMPERATURE)) {
             main_flag &= ~(1<<SAMPLETEMPERATURE);
-            main_Data.Temperature = adc_Compensation(adc_COMPENSATETEMPERATURE);
+            main_Data.Temperature = adc_GetCompensated(ADC_DATA_TEMPERATURE);
 #ifdef CALIBRATION
             static uint16_t cnt = TEMPSAFECNT;
             if (--cnt == 0)
@@ -179,13 +233,13 @@ int main(void) {
         }
         if (main_flag & (1<<SAMPLESTEPDOWNLEFT)) {
             main_flag &= ~(1<<SAMPLESTEPDOWNLEFT);
-            main_Data.CurrentStepDownLeft = adc_Compensation(adc_COMPENSATESTEPDOWNLEFT);
+            main_Data.CurrentStepDownLeft = adc_GetCompensated(ADC_DATA_CURRENTLEFT);
             if (!smps_Off())
                 main_Data.StatusStepDownLeft = smps_Regulator(smps_STEPDOWNLEFT, (uint16_t)main_Data.TargetStepDownLeft<<4, main_Data.CurrentStepDownLeft);
         }
         if (main_flag & (1<<SAMPLESTEPDOWNRIGHT)) {
             main_flag &= ~(1<<SAMPLESTEPDOWNRIGHT);
-            main_Data.CurrentStepDownRight = adc_Compensation(adc_COMPENSATESTEPDOWNRIGHT);
+            main_Data.CurrentStepDownRight = adc_GetCompensated(ADC_DATA_CURRENTRIGHT);
             if (!smps_Off())
                 main_Data.StatusStepDownRight = smps_Regulator(smps_STEPDOWNRIGHT, (uint16_t)main_Data.TargetStepDownRight<<4, main_Data.CurrentStepDownRight);
         }
@@ -242,8 +296,8 @@ int main(void) {
 }
 
 ISR(WDT_vect) {
-    main_flag |= (1<<WATCHDOG);         
-    WDTCR |= (1<<WDIE);        
+    main_flag |= (1<<WATCHDOG);
+    WDTCR |= (1<<WDIE);
 }
 
 /* Public functions ----------------------------------------------------------*/

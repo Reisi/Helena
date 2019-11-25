@@ -23,6 +23,7 @@ typedef enum
 {
     LIGHT_DRIVERREV10 = 0,      // led driver firmware revision 1.0
     LIGHT_DRIVERREV11,          // rev 1.1, added support for dutycyle readback
+    LIGHT_DRIVERREV12,          // rev 1.2, added support for calibration over i2c
     LIGHT_DRIVERREVUNKNOWN
 } light_driverRevision_t;
 

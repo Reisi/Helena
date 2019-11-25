@@ -17,7 +17,6 @@
 #include "crc16.h"
 #include "debug.h"
 #include "hmi.h"
-#include "light.h"
 #include "main.h"
 #include "power.h"
 #include "softdevice_handler.h"
@@ -189,6 +188,13 @@ static modeState_t modeState __attribute__((section(".noinit")));   // mode stat
 static state_t state = {.pMode = &modeState};                       // device states
 static helenaConfig_t modeConfig = MODES_DEFAULT;                   // modes and grouping configuration
 static light_driverConfig_t ledConfiguration;                       // led and driver information
+
+static char const* pDriverRevision[LIGHT_DRIVERREVUNKNOWN] =
+{
+    "1.0",
+    "1.1",
+    "1.2"
+};
 
 /* Private macros ------------------------------------------------------------*/
 #define COUNT_OF(x)             (sizeof(x)/sizeof(x[0]))
@@ -1305,7 +1311,9 @@ int main(void)
     features.pitchSupported = 1;
     features.floodSupported = ledConfiguration.floodCount ? 1 : 0;  // supported if unknown
     features.spotSupported = ledConfiguration.spotCount ? 1 : 0;    // supported if unknown
-    btle_Init(false, &features, btleEventHandler);
+    char const* pDrvRev = ledConfiguration.rev == LIGHT_DRIVERREVUNKNOWN ? NULL :
+                          pDriverRevision[ledConfiguration.rev];
+    btle_Init(false, pDrvRev, &features, btleEventHandler);
 
     com_Init();
     cmh_Init(&lightMasterHandler);
@@ -1402,5 +1410,11 @@ int main(void)
     }
 }
 /* Public functions ----------------------------------------------------------*/
+#ifdef HELENA_DEBUG_FIELD_TESTING
+light_driverRevision_t main_GetDrvRev()
+{
+    return ledConfiguration.rev;
+}
+#endif // HELENA_DEBUG_FIELD_TESTING
 
 /**END OF FILE*****************************************************************/

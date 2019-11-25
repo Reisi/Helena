@@ -4,9 +4,9 @@
 	Version	: 1.3  - Stable
 	autor	: Martin Junghans	jtronics@gmx.de
 	page	: www.jtronics.de
-	License	: GNU General Public License 
+	License	: GNU General Public License
 
-	Created from Atmel source files for Application Note AVR312: 
+	Created from Atmel source files for Application Note AVR312:
 	Using the USI Module as an I2C slave like an I2C-EEPROM.
 
 	LICENSE:    Copyright (C) 2010 Marin Junghans
@@ -20,17 +20,17 @@
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details
-	
-	
-	
+
+
+
 	16.11.2010 - reworked by Markus Schatzl
-	
-//############################################################################## 
+
+//##############################################################################
 
 	Description:
-	
+
 	The slave device acts like a I2C-EEPROM.
-	
+
 	Write data from master to slave (into slave rxbuffer):
 
         1. Master sends slave address (bit 7-1) + r/w flag (bit 0), which must be set to 0
@@ -48,7 +48,7 @@
 		- You have to change the buffer_size in the usiTwiSlave.h file
 		- Buffer address is automatically incremented
 		- If buffer address > buffersize -> start with buffer address 0x00
-	
+
 //############################################################################*/
 
 #ifndef _USI_TWI_SLAVE_H_
@@ -65,7 +65,7 @@ uint8_t usiCheckForStop(void);
 
 //#################################################################### variables
 
-#define buffer_size 11	  				        //in bytes (2..254), change ONLY here!!!!!
+#define buffer_size 16	  				        //in bytes (2..254), change ONLY here!!!!!
 
 
 volatile uint8_t rxbuffer[buffer_size];         // Buffer to write data received from the master
@@ -75,7 +75,7 @@ volatile uint8_t buffer_adr; 					// Virtual buffer address register
 
 #if 	(buffer_size > 254)
 		#error Buffer to big! Maximal 254 Bytes.
-		
+
 #elif 	(buffer_size < 2)
 		#error Buffer to small! mindestens 2 Bytes!
 #endif

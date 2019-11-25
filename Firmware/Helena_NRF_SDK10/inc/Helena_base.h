@@ -16,42 +16,45 @@
 /* Exported types ------------------------------------------------------------*/
 
 /* Exported constants --------------------------------------------------------*/
-#define HELENABASE_ADDRESS               0x3A // this device only has one address
-#define HELENABASE_DEFAULT_ADDRESS       0x3A
+#define HELENABASE_ADDRESS              0x3A // this device only has one address
+#define HELENABASE_DEFAULT_ADDRESS      0x3A
 
-#define HELENABASE_RA_CONFIG             0x00
-#define HELENABASE_RA_TARGETSDL          0x01
-#define HELENABASE_RA_TARGETSDR          0x02
-#define HELENABASE_RA_STATUSSDL_H        0x03
-#define HELENABASE_RA_STATUSSDL_L        0x04
-#define HELENABASE_RA_STATUSSDR_H        0x05
-#define HELENABASE_RA_STATUSSDR_L        0x06
-#define HELENABASE_RA_TEMPERATURE_H      0x07
-#define HELENABASE_RA_TEMPERATURE_L      0x08
-#define HELENABASE_RA_DUTYCYCLELEFT      0x09
-#define HELENABASE_RA_DUTYCYCLERIGHT     0x0A
+#define HELENABASE_RA_CONFIG            0x00
+#define HELENABASE_RA_TARGETSDL         0x01
+#define HELENABASE_RA_TARGETSDR         0x02
+#define HELENABASE_RA_STATUSSDL_H       0x03
+#define HELENABASE_RA_STATUSSDL_L       0x04
+#define HELENABASE_RA_STATUSSDR_H       0x05
+#define HELENABASE_RA_STATUSSDR_L       0x06
+#define HELENABASE_RA_TEMPERATURE_H     0x07
+#define HELENABASE_RA_TEMPERATURE_L     0x08
+#define HELENABASE_RA_DUTYCYCLELEFT     0x09    // these registers are only available in v1.1 and greater
+#define HELENABASE_RA_DUTYCYCLERIGHT    0x0A
+#define HELENABASE_RA_TEMPOFFSET_H      0x0B    // these registers are only available in v1.2 and greater
+#define HELENABASE_RA_TEMPOFFSET_L      0x0C
+#define HELENABASE_RA_GAINLEFT          0x0D
+#define HELENABASE_RA_GAINRIGHT         0x0E
+#define HELENABASE_RA_XOR               0x0F
 
+#define HELENABASE_CRA_SLEEP_OFFSET     4
+#define HELENABASE_CRA_ADCRATE_OFFSET   0
 
-#define HELENABASE_CRA_SLEEP_OFFSET      4
-#define HELENABASE_CRA_ADCRATE_OFFSET    0
+#define HELENABASE_SLEEP_ENABLE         1
+#define HELENABASE_SLEEP_DISABLE        0
 
+#define HELENABASE_ADCRATE_16MS         0
+#define HELENABASE_ADCRATE_32MS         1
+#define HELENABASE_ADCRATE_64MS         2
+#define HELENABASE_ADCRATE_125MS        3
+#define HELENABASE_ADCRATE_250MS        4
+#define HELENABASE_ADCRATE_500MS        5
+#define HELENABASE_ADCRATE_1S           6
+#define HELENABASE_ADCRATE_2S           7
+#define HELENABASE_ADCRATE_4S           8
+#define HELENABASE_ADCRATE_8S           9
 
-#define HELENABASE_SLEEP_ENABLE          1
-#define HELENABASE_SLEEP_DISABLE         0
-
-#define HELENABASE_ADCRATE_16MS          0
-#define HELENABASE_ADCRATE_32MS          1
-#define HELENABASE_ADCRATE_64MS          2
-#define HELENABASE_ADCRATE_125MS         3
-#define HELENABASE_ADCRATE_250MS         4
-#define HELENABASE_ADCRATE_500MS         5
-#define HELENABASE_ADCRATE_1S            6
-#define HELENABASE_ADCRATE_2S            7
-#define HELENABASE_ADCRATE_4S            8
-#define HELENABASE_ADCRATE_8S            9
-
-#define HELENABASE_ST_STATUS_OFFSET      1
-#define HELENABASE_DC_MAX                254
+#define HELENABASE_ST_STATUS_OFFSET     1
+#define HELENABASE_DC_MAX               254
 
 /* Exported macros -----------------------------------------------------------*/
 #define REGISTERVALUE_IN_MILLIAMPERE(x)  (((uint32_t)x * 212) >> 8)
@@ -72,7 +75,7 @@
  * @param  x raw current value
  * @return current in Ampere in q6_10_t
  ***********************************************/
-#define REGISTERVALUE_TO_AMPEREQ10(x)    ((uint16_t)((x * 1733ul) >> 11))
+#define REGISTERVALUE_TO_AMPEREQ10(x)    ((uint16_t)((x * 771ul) >> 10))
 
 /********************************************//**
  * @brief macro to convert current to target value

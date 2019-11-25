@@ -695,21 +695,48 @@ static void writeStorage()
 static light_driverRevision_t driverRevCheck()
 {
     uint32_t errCode;
-    uint8_t buffer[11];
+    uint8_t buffer[2];
 
-    // read all 11 registers
-    errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 11, buffer);
+    // read first register as reference. The content of this register should be
+    // 0x16 after a reset. In the case that the driver is already running (e.g.
+    // due to a watchdog reset) the content of this register might differ, but
+    // in this project this register is never set to 0x00, so it is unlikely
+    // that this check will fail in such a case.
+    errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 1, &buffer[0]);
     if(errCode != NRF_SUCCESS)
     {
         APP_ERROR_HANDLER(errCode);
         return LIGHT_DRIVERREVUNKNOWN;
     }
 
-    // rev 1.0 don't support duty-cycle registers, it will wrap around ad read the first two registers again
-    if (buffer[HELENABASE_RA_CONFIG] == buffer[HELENABASE_RA_DUTYCYCLELEFT] &&
-        buffer[HELENABASE_RA_TARGETSDL] == buffer[HELENABASE_RA_DUTYCYCLERIGHT])
+    // now read HELENABASE_RA_DUTYCYCLELEFT register. A driver with v1.0 will
+    // wrap over to reg HELENABASE_RA_CONFIG and the register content should be
+    // the same than in the first buffer.
+    errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_DUTYCYCLELEFT, 1, &buffer[1]);
+    if(errCode != NRF_SUCCESS)
+    {
+        APP_ERROR_HANDLER(errCode);
+        return LIGHT_DRIVERREVUNKNOWN;
+    }
+
+    if (buffer[0] == buffer[1])     // register content is equal, this must be v1.0
         return LIGHT_DRIVERREV10;
-    return LIGHT_DRIVERREV11;
+
+    // now read HELENABASE_RA_TEMPOFFSET_H register. A driver with v1.1 will
+    // wrap over to reg HELENABASE_RA_CONFIG and the register content should be
+    // the same than in the first buffer.
+    errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_TEMPOFFSET_H, 1, &buffer[1]);
+    if(errCode != NRF_SUCCESS)
+    {
+        APP_ERROR_HANDLER(errCode);
+        return LIGHT_DRIVERREVUNKNOWN;
+    }
+
+    if (buffer[0] == buffer[1])     // register content is equal, this must be v1.1
+        return LIGHT_DRIVERREV11;
+
+    // when this point is reached, the driver firmware has to be at least v1.2
+    return LIGHT_DRIVERREV12;
 }
 
 /* Public functions ----------------------------------------------------------*/
@@ -738,10 +765,11 @@ uint32_t light_Init(uint8_t supplyCellCnt, light_driverConfig_t* pLedConfig)
 
     // read led configuration
     readStorage();
-    *pLedConfig = storage.drvConfig;
 
     // check driver revision;
     storage.drvConfig.rev = driverRevCheck();
+
+    *pLedConfig = storage.drvConfig;
 
     return NRF_SUCCESS;
 }

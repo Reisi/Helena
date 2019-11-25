@@ -477,7 +477,7 @@ static void lcsErrorHandler(uint32_t errCode)
 
 /**@brief Function for initializing services that will be used by the application.
  */
-static void servicesInit(btle_lcsFeature_t* pFeature)
+static void servicesInit(char const* pDrvRev, btle_lcsFeature_t* pFeature)
 {
     uint32_t errCode;
 
@@ -501,6 +501,12 @@ static void servicesInit(btle_lcsFeature_t* pFeature)
     i = strlen(versionString);
     versionString[i++] = '-';
     itoa(VERSION_BUILD, &versionString[i], 10);
+    if (pDrvRev != NULL)
+    {
+        i = strlen(versionString);
+        strcat(&versionString[i], " | ");
+        strcat(&versionString[i+3], pDrvRev);
+    }
     memset(&disInit, 0, sizeof(ble_dis_init_t));
     ble_srv_ascii_to_utf8(&disInit.fw_rev_str, versionString);
     ble_srv_ascii_to_utf8(&disInit.hw_rev_str, (char*)pBoardConfig->hwRevStr);
@@ -982,7 +988,7 @@ void btle_StackInit()
     APP_ERROR_CHECK(errCode);
 }
 
-void btle_Init(bool deleteBonds, btle_lcsFeature_t* pFeature, btle_eventHandler_t pEvtHandler)
+void btle_Init(bool deleteBonds, char const* pDrvRev, btle_lcsFeature_t* pFeature, btle_eventHandler_t pEvtHandler)
 {
     state.handler = pEvtHandler;
     state.connHandleCentral = BLE_CONN_HANDLE_INVALID;
@@ -991,7 +997,7 @@ void btle_Init(bool deleteBonds, btle_lcsFeature_t* pFeature, btle_eventHandler_
     peerManagerInit(deleteBonds);
     gapParamsInit();
     connParamsInit();
-    servicesInit(pFeature);
+    servicesInit(pDrvRev, pFeature);
     advertisingInit();
     discoveryInit();
     serviceCollectorInit();

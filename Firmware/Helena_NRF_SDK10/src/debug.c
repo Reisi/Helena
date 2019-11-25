@@ -37,6 +37,10 @@
 #include "crc16.h"
 #include "fstorage.h"
 #include "main.h"
+#include "fpint.h"
+#include "Helena_base.h"
+#include "i2c.h"
+#include "app_error.h"
 #endif
 
 #include "debug.h"
@@ -57,6 +61,16 @@ typedef struct
     volatile unsigned int RdOff;/**< rtt read pointer */
 } rttPointersStruct;
 
+#if defined HELENA_DEBUG_FIELD_TESTING
+typedef struct
+{
+    bool isPending;
+    int16_t tempOffset;
+    q1_7_t gainLeft;
+    q1_7_t gainRight;
+} driverCalibration_t;
+#endif // defined HELENA_DEBUG_FIELD_TESTING
+
 /* Private macros ------------------------------------------------------------*/
 
 /* Private defines -----------------------------------------------------------*/
@@ -76,6 +90,7 @@ static char *pDebugMessages[DBG_CNT] =
 static ble_nus_t    nusGattsData;                                           /**< database for nordic uart service */
 static rttPointersStruct rttPointers __attribute__((section(".noinit")));   /**< rtt pointers stored in noinit section to survive reset */
 static bool isMemoryClearPending;                                           /**< Flags for pending actions */
+static driverCalibration_t driverCalib;
 static volatile bool eraseInProgress = false;                               /**< Flag indication if flash erase is in progress */
 #endif
 
@@ -150,6 +165,87 @@ static void clearMem()
     isMemoryClearPending = false;
 }
 
+static bool extractCalib(char const* pS)
+{
+    int16_t sign, temp;
+    q1_7_t gain;
+
+    // start with sign for temperature offset
+    if (*pS == '-')
+    {
+        sign = -1;
+        pS++;
+    }
+    else
+        sign = 1;
+    if (!(*pS >= '0' && *pS <= '9'))
+        return false;
+
+    // extract temperature offset
+    temp = 0;
+    while (*pS >= '0' && *pS <= '9')
+    {
+        temp *= 10;
+        temp += *pS - '0';
+        pS++;
+    }
+    driverCalib.tempOffset = temp * sign;
+
+    pS++;
+    if (!(*pS >= '0' && *pS <= '9'))
+        return false;
+
+    // extract left side gain
+    gain= 0;
+    while (*pS >= '0' && *pS <= '9')
+    {
+        gain *= 10;
+        gain += *pS - '0';
+        pS++;
+    }
+    driverCalib.gainLeft = gain;
+
+    pS++;
+    if (!(*pS >= '0' && *pS <= '9'))
+        return false;
+
+    // extract right side gain
+    gain= 0;
+    while (*pS >= '0' && *pS <= '9')
+    {
+        gain *= 10;
+        gain += *pS - '0';
+        pS++;
+    }
+    driverCalib.gainRight = gain;
+
+    return true;
+}
+
+static void sendCalib()
+{
+    driverCalib.isPending = false;
+
+    light_driverRevision_t rev = main_GetDrvRev();
+
+    if (rev == LIGHT_DRIVERREVUNKNOWN || rev < LIGHT_DRIVERREV12)
+    {
+        APP_ERROR_CHECK(ble_nus_string_send(&nusGattsData, (uint8_t*)"not supported\r\n", 15));
+        return;
+    }
+
+    uint8_t buffer[5];
+    buffer[0] = (uint16_t)driverCalib.tempOffset >> 8;
+    buffer[1] = (uint16_t)driverCalib.tempOffset & 0x00FF;
+    buffer[2] = driverCalib.gainLeft;
+    buffer[3] = driverCalib.gainRight;
+    buffer[4] = buffer[0] ^ buffer[1] ^ buffer[2] ^ buffer[3];
+
+    APP_ERROR_CHECK(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_TEMPOFFSET_H, 5, buffer));
+
+    APP_ERROR_CHECK(ble_nus_string_send(&nusGattsData, (uint8_t*)"done\r\n", 6));
+}
+
 static void onBleNusEvt(ble_nus_t *pNus, uint8_t *pData, uint16_t length)
 {
     char* pString = (char*)pData;
@@ -161,6 +257,10 @@ static void onBleNusEvt(ble_nus_t *pNus, uint8_t *pData, uint16_t length)
     if (strncmp(pString, "clear mem", 9) == 0)
     {
         isMemoryClearPending = true;
+    }
+    if (strncmp(pString, "calib ", 6) == 0)
+    {
+        driverCalib.isPending = extractCalib(&pString[6]);
     }
 }
 #endif
@@ -227,6 +327,8 @@ void debug_Execute()
         sendErrorLog(NULL, 0);
     if (isMemoryClearPending)
         clearMem();
+    if (driverCalib.isPending)
+        sendCalib();
 #endif
 }
 
@@ -247,7 +349,6 @@ void debug_FieldTestingInit()
 
 void debug_OnBleEvt(ble_evt_t * pBleEvt)
 {
-
     ble_nus_on_ble_evt(&nusGattsData, pBleEvt);
 }
 
