@@ -655,8 +655,12 @@ static void loadBias()
         // record exists, so open it
         fds_record_t record;
         errCode = fds_open(&descriptor, &record);
-        if (errCode == NRF_SUCCESS && record.header.tl.length_words == SIZEOF_WORDS(bias))
-            bias = *(biasData_t*)record.p_data;
+        if (errCode == NRF_SUCCESS)
+        {
+            if(record.header.tl.length_words == SIZEOF_WORDS(bias))
+                bias = *(biasData_t*)record.p_data;
+            APP_ERROR_CHECK(fds_close(&descriptor));
+        }
     }
     else if (errCode != NRF_ERROR_NOT_FOUND)
     {

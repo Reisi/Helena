@@ -61,8 +61,8 @@ static uint8_t calcXor(adc_compensation_t const* pComp)
 {
     uint8_t xor = 0;
 
-    xor = pComp->TemperatureOffset & 0x00FF;
-    xor ^= (uint8_t)(pComp->TemperatureOffset >> 8);
+    xor = (uint8_t)(pComp->TemperatureOffset >> 8);
+    xor ^= pComp->TemperatureOffset & 0x00FF;
     xor ^= pComp->CurrentLeftGain;
     xor ^= pComp->CurrentRightGain;
 
@@ -76,8 +76,6 @@ static void main_Init() {
     power_timer0_disable();
     main_Data.Sleep = 1;
     main_Data.AdcConfig = WDTO_1S;
-    rxbuffer[0] = (main_Data.Sleep<<4) | main_Data.AdcConfig;
-    txbuffer[0] = (main_Data.Sleep<<4) | main_Data.AdcConfig;
 
     int16_t tOffset = eeprom_read_word(TEMPOFFS);
     uint8_t gainLeft = eeprom_read_byte(LEFTGAIN);
@@ -97,6 +95,15 @@ static void main_Init() {
     main_Data.adcXor = calcXor(&main_Data.adcComp);
 
     adc_SetCompensation(&main_Data.adcComp);
+
+    rxbuffer[0] = (main_Data.Sleep<<4) | main_Data.AdcConfig;
+    rxbuffer[11] = main_Data.adcComp.TemperatureOffset >> 8;
+    rxbuffer[12] = main_Data.adcComp.TemperatureOffset & 0x00FF;
+    rxbuffer[13] = main_Data.adcComp.CurrentLeftGain;
+    rxbuffer[14] = main_Data.adcComp.CurrentRightGain;
+    rxbuffer[15] = main_Data.adcXor;
+
+    txbuffer[0] = (main_Data.Sleep<<4) | main_Data.AdcConfig;
 }
 
 int main(void) {

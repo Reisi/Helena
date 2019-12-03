@@ -934,6 +934,14 @@ static void mainInit(void)
 {
     uint32_t errCode;
 
+    state.btle.isPeriphConnected = BTLE_CONN_HANDLE_INVALID;
+    state.btle.isCentralConnected = BTLE_CONN_HANDLE_INVALID;
+    state.btle.isGroupCountPending = BTLE_CONN_HANDLE_INVALID;
+    state.btle.isModeConfigWritePending = BTLE_CONN_HANDLE_INVALID;
+    state.btle.isLedConfigCheckPending = BTLE_CONN_HANDLE_INVALID;
+    state.btle.isSensorCalibrationPending = BTLE_CONN_HANDLE_INVALID;
+    state.btle.isPrefModeWritePending = BTLE_CONN_HANDLE_INVALID;
+
     // initialize timer
     errCode = app_timer_create(&mainTimerId, APP_TIMER_MODE_REPEATED, timerHandler);
     APP_ERROR_CHECK(errCode);
@@ -962,14 +970,6 @@ static void mainInit(void)
 
     APP_ERROR_CHECK(setHelenaState(POWER_IDLE));
     state.idleTimeout = IDLE_TIMEOUT;
-
-    state.btle.isPeriphConnected = BTLE_CONN_HANDLE_INVALID;
-    state.btle.isCentralConnected = BTLE_CONN_HANDLE_INVALID;
-    state.btle.isGroupCountPending = BTLE_CONN_HANDLE_INVALID;
-    state.btle.isModeConfigWritePending = BTLE_CONN_HANDLE_INVALID;
-    state.btle.isLedConfigCheckPending = BTLE_CONN_HANDLE_INVALID;
-    state.btle.isSensorCalibrationPending = BTLE_CONN_HANDLE_INVALID;
-    state.btle.isPrefModeWritePending = BTLE_CONN_HANDLE_INVALID;
 }
 
 /** @brief function to get the next valid light mode
@@ -993,7 +993,7 @@ static uint8_t getNextValidMode(uint8_t mode)
             if (isLightMode(&modeConfig.mode[mode]))        // if mode is enabled, return immediately
                 return mode;
 
-            if (++mode % modesInGroup)                      // otherwise loop through group
+            if (++mode % modesInGroup == 0)                 // otherwise loop through group
                 mode -= modesInGroup;
         }
 

@@ -654,6 +654,7 @@ static void readStorage()
             // limits has been added supplementary, check size to be sure to not read flimflam from old data
             if (record.header.tl.length_words == SIZE_IN_WORDS(storage))
                 storage.currentLimits = pData->currentLimits;
+            APP_ERROR_CHECK(fds_close(&descriptor));
         }
         else
             APP_ERROR_HANDLER(errCode);

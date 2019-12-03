@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 ### Added
+### Changed
+### Removed
+### Fixed
+### Known Issues
+
+## [1.0.0] - 2019-12-03
+### Added
 - this changelog
 - Daisy chain feature, lamp cannot only connect to remote but to other light, 
   too. Changes to another mode (either by remote or button) are relayed to 
@@ -15,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
   to remote
 - preferred mode added, when set to a valid mode, lamp will start into this 
   mode and, if shutdown via remote, return to this mode first
+- option to calibrate driver board over debug interface
 
 ### Changed
 - Switched mode configuration from enumeration to flag based setup
@@ -32,11 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ### Fixed
 - device will not bond to remote (had no effect, because remote initiated 
   bonding)
+- garbage collection not working properly resulting in a lockup where no more 
+  write operations are working.
 
 ### Known Issues
-- garbage collection not working properly resulting in a lockup where no more 
-  write operations are working. 
-  WORKAROUND: use debug interface and sen "clear mem" command, this will clear
-  all user memory.
-
-## [1.0.0] - 2017-06-20
