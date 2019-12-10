@@ -946,16 +946,6 @@ static void mainInit(void)
     errCode = app_timer_create(&mainTimerId, APP_TIMER_MODE_REPEATED, timerHandler);
     APP_ERROR_CHECK(errCode);
 
-    // initialize mode state if content is not valid
-    if (1 &&    /// TODO: reset survive
-        state.pMode->magicnumber != MAGICNUMBER &&
-        state.pMode->crc != crc16_compute((const uint8_t*)&state.pMode->magicnumber, sizeof(state.pMode->magicnumber), NULL))
-    {
-        state.pMode->currentMode = MODE_OFF;
-        state.pMode->magicnumber = MAGICNUMBER;
-        state.pMode->crc = crc16_compute((const uint8_t*)&state.pMode->magicnumber, sizeof(state.pMode->magicnumber), NULL);
-    }
-
     // register to fds module
     errCode = fds_register(fdsEventHandler);
     APP_ERROR_CHECK(errCode);
@@ -968,8 +958,22 @@ static void mainInit(void)
     // set minimum input voltage
     state.minInputVoltage = state.supplyCellCnt * MINIMUM_INPUT_VOLTAGE;
 
-    APP_ERROR_CHECK(setHelenaState(POWER_IDLE));
-    state.idleTimeout = IDLE_TIMEOUT;
+    // initialize mode state if content is not valid
+    if (state.pMode->magicnumber != MAGICNUMBER &&
+        state.pMode->crc != crc16_compute((const uint8_t*)&state.pMode->magicnumber, sizeof(state.pMode->magicnumber), NULL))
+    {
+        state.pMode->currentMode = MODE_OFF;
+        state.pMode->magicnumber = MAGICNUMBER;
+        state.pMode->crc = crc16_compute((const uint8_t*)&state.pMode->magicnumber, sizeof(state.pMode->magicnumber), NULL);
+    }
+    if (state.pMode->currentMode != MODE_OFF && isLightMode(&modeConfig.mode[state.pMode->currentMode]))
+    {
+        APP_ERROR_CHECK(setHelenaState(POWER_ON));
+    }
+    else
+    {
+        APP_ERROR_CHECK(setHelenaState(POWER_IDLE));
+    }
 }
 
 /** @brief function to get the next valid light mode
@@ -1317,8 +1321,8 @@ int main(void)
 
     com_Init();
     cmh_Init(&lightMasterHandler);
-#if defined HELENA_DEBUG_FIELD_TESTING
-    debug_FieldTestingInit();
+#if defined BTDEBUG
+    //debug_FieldTestingInit();
 #endif
     mainInit();
 
@@ -1410,11 +1414,11 @@ int main(void)
     }
 }
 /* Public functions ----------------------------------------------------------*/
-#ifdef HELENA_DEBUG_FIELD_TESTING
+#ifdef BTDEBUG
 light_driverRevision_t main_GetDrvRev()
 {
     return ledConfiguration.rev;
 }
-#endif // HELENA_DEBUG_FIELD_TESTING
+#endif // BTDEBUG
 
 /**END OF FILE*****************************************************************/

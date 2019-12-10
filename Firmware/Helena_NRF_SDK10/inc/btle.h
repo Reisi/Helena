@@ -21,6 +21,10 @@
 #define BTLE_CONN_HANDLE_INVALID    BLE_CONN_HANDLE_INVALID
 #define BTLE_CONN_HANDLE_ALL        BLE_CONN_HANDLE_ALL
 
+#ifdef BTDEBUG
+#define BTLE_MAXNUSLENGHT   20
+#endif
+
 /* Exported types ------------------------------------------------------------*/
 /**< btle events */
 typedef enum
@@ -285,6 +289,10 @@ uint32_t btle_SearchForRemote(void);
  *              NRF_ERROR_INVALID_STATE if no device connected
  */
 uint32_t btle_SetMode(uint8_t mode, uint16_t connHandle);
+
+#ifdef BTDEBUG
+uint32_t btle_SendNusString(uint8_t* pData, uint16_t len);
+#endif // BTDEBUG
 
 #endif /* BTLE_H_INCLUDED */
 

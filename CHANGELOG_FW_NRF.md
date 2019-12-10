@@ -5,7 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 ### Added
+- re-implemented reset survive (lamp keeps its mode even if it is reset by 
+  watchdog)
+- release version
 ### Changed
+- reworked debug interface
 ### Removed
 ### Fixed
 ### Known Issues

@@ -8,164 +8,340 @@
   ******************************************************************************
   */
 
+/* Debug flag checking -------------------------------------------------------*/
+#ifdef BTDEBUG
+#ifndef DEBUG
+#error "bluetooth debugging requires DEBUG flag"
+#endif
+#endif
+
 /* Includes ------------------------------------------------------------------*/
-#if !defined HELENA_DEBUG_NONE && !defined HELENA_DEBUG_SWD && !defined HELANA_DEBUG_RTT
-#error "no debug state defined, define HELENA_DEBUG_NONE, HELENA_DEBUG_SWD and/or HELENA_DEBUG_RTT in project settings!"
-#endif
+#include "nrf_drv_wdt.h"
+#include "debug.h"
+#include "app_util_platform.h"
 
-#if defined HELENA_DEBUG_RTT && !defined HELENA_DEBUG_SWD
-#error "RTT debugging needs SWD debugging as well, please enable HELENA_DEBUG_SWD too"
-#endif
-
-#if defined HELENA_DEBUG_RTT && !defined DEBUG
-#warning "you also have to define DEBUG, otherwise no line and file data are available"
-#endif
-
-#if defined HELENA_DEBUG_FIELD_TESTING && !defined HELENA_DEBUG_RTT
-#error "field testing is using rtt resources, enable it, too"
-#endif
-
-#if defined HELENA_DEBUG_RTT
+#ifdef DEBUG
 #include "SEGGER_RTT.h"
-#endif
+#include <string.h>
+#endif // DEBUG
 
-#if defined HELENA_DEBUG_FIELD_TESTING
-#include "ble_nus.h"
-#include "power.h"
-#include "ble_err.h"
+#ifdef BTDEBUG
+#include "btle.h"
+#include "ble.h"
 #include "nrf_delay.h"
-#include "crc16.h"
+#include "fpint.h"
+#include <stdlib.h>
+#include "ble_nus.h"
 #include "fstorage.h"
 #include "main.h"
-#include "fpint.h"
 #include "Helena_base.h"
 #include "i2c.h"
 #include "app_error.h"
-#endif
-
-#include "debug.h"
-#include "nrf.h"
-#include "app_util_platform.h"
-#include "nrf_drv_wdt.h"
-#include <string.h>
+#include "crc16.h"
+#endif // BTDEBUG
 
 /* External variables --------------------------------------------------------*/
+#ifdef BTDEBUG
+extern uint32_t __StackTop;
+extern uint32_t __StackLimit;
+extern uint32_t __HeapLimit;
+extern uint32_t __HeapBase;
+#endif // BTDEBUG
 
 /* Private typedef -----------------------------------------------------------*/
-/**@brief data struct for rtt read and write pointers in noinit section */
+#ifdef DEBUG
 typedef struct
 {
-    uint32_t magicNumber;       /**< magic number to check integrity */
-    uint16_t crc;               /**< crc of magic number to check integrity */
-    volatile unsigned int WrOff;/**< rtt write pointer */
-    volatile unsigned int RdOff;/**< rtt read pointer */
-} rttPointersStruct;
+    uint32_t magicNumber;       // magic number to check integrity
+    uint16_t crc;               // crc of magic number to check integrity
+    volatile unsigned int WrOff;// rtt write pointer
+    volatile unsigned int RdOff;// rtt read pointer
+} rttBuf_t;
+#endif // DEBUG
 
-#if defined HELENA_DEBUG_FIELD_TESTING
+#if defined BTDEBUG
+typedef void (*debugCommand_t)(char const* pSubcommand);
+
+typedef struct
+{
+    char const* pCommand;
+    debugCommand_t pCommandFunc;
+} commands_t;
+
 typedef struct
 {
     bool isPending;
-    int16_t tempOffset;
-    q1_7_t gainLeft;
-    q1_7_t gainRight;
-} driverCalibration_t;
-#endif // defined HELENA_DEBUG_FIELD_TESTING
+    bool volatile eraseInProgress;
+} memory_t;
+#endif // defined BTDEBUG
 
 /* Private macros ------------------------------------------------------------*/
+#ifdef BTDEBUG
+#define COUNT_OF(x)     (sizeof(x)/sizeof(x[0]))
+#endif // BTDEBUG
 
 /* Private defines -----------------------------------------------------------*/
+#ifdef DEBUG
 #define MAGICVAILDNUMBER    0x78151503
+#endif // DEBUG
+
+/* Private function prototype ------------------------------------------------*/
+#ifdef BTDEBUG
+static void errorlogCommand(char const* pSubcommand);
+static void resetCommand(char const* pSubcommand);
+static void memoryCommand(char const* pSubcommand);
+static void calibrateCommand(char const* pSubcommand);
+#endif // BTDEBUG
 
 /* Private variables ---------------------------------------------------------*/
-#ifdef HELENA_DEBUG_RTT
-static char *pDebugMessages[DBG_CNT] =
+static nrf_drv_wdt_channel_id watchdogChannel;
+
+#ifdef DEBUG
+static volatile rttBuf_t rttBuf __attribute__((section(".noinit")));   // rtt pointers stored in noinit section to survive reset
+#endif // DEBUG
+
+#ifdef BTDEBUG
+static const commands_t commands[] =
 {
-    "Helena Error",
-    "NRF Error",
-    "MPU Error"
+    {"errorlog", &errorlogCommand},
+    {"reset", &resetCommand},
+    {"memory", &memoryCommand},
+    {"cal", &calibrateCommand}
 };
-#endif
-
-#if defined HELENA_DEBUG_FIELD_TESTING
-static ble_nus_t    nusGattsData;                                           /**< database for nordic uart service */
-static rttPointersStruct rttPointers __attribute__((section(".noinit")));   /**< rtt pointers stored in noinit section to survive reset */
-static bool isMemoryClearPending;                                           /**< Flags for pending actions */
-static driverCalibration_t driverCalib;
-static volatile bool eraseInProgress = false;                               /**< Flag indication if flash erase is in progress */
-#endif
-
-static nrf_drv_wdt_channel_id watchdogChannel;                              /**< watchdog channel used in debug module */
-
-/* Private function prototypes -----------------------------------------------*/
+static memory_t memory;
+#endif // BTDEBUG
 
 /* Private functions ---------------------------------------------------------*/
-void hard_fault_handler_c(unsigned int * hardfault_args, unsigned lr_value);
-
-#ifdef HELENA_DEBUG_FIELD_TESTING
-/**@brief Function to send error log over ble through nordic uart service */
-static void sendErrorLog(void *pData, uint16_t size)
+static void watchdogEventHandler()
 {
-    (void)pData;
-    (void)size;
+    /// maybe do something
+}
 
-    uint32_t errCode;
-
-     while (_SEGGER_RTT.aUp[0].RdOff != _SEGGER_RTT.aUp[0].WrOff)
+#ifdef BTDEBUG
+static void errorlogCommand(char const* pSubcommand)
+{
+    if (strncmp(pSubcommand, " --read", 7) == 0)
     {
-        // check size of error log
-        uint32_t contentSize = _SEGGER_RTT.aUp[0].WrOff - _SEGGER_RTT.aUp[0].RdOff;
-        contentSize %= _SEGGER_RTT.aUp[0].SizeOfBuffer;
-        // if error log is bigger than max. transfer size it has to be sent in several chunks
-        uint32_t thisStringSize = BLE_NUS_MAX_DATA_LEN;
-        if (thisStringSize > contentSize)
-            thisStringSize = contentSize;
-        if (thisStringSize > (_SEGGER_RTT.aUp[0].SizeOfBuffer - _SEGGER_RTT.aUp[0].WrOff))
-            thisStringSize = (_SEGGER_RTT.aUp[0].SizeOfBuffer - _SEGGER_RTT.aUp[0].WrOff);
-        errCode = ble_nus_string_send(&nusGattsData, (uint8_t*)&_SEGGER_RTT.aUp[0].pBuffer[_SEGGER_RTT.aUp[0].RdOff],
-                                       thisStringSize);
-        if (errCode == NRF_SUCCESS)
+        unsigned RdOff = _SEGGER_RTT.aUp[0].RdOff;
+
+        while(RdOff != _SEGGER_RTT.aUp[0].WrOff)
         {
-            _SEGGER_RTT.aUp[0].RdOff += thisStringSize;
-            _SEGGER_RTT.aUp[0].RdOff %= _SEGGER_RTT.aUp[0].SizeOfBuffer;
-            rttPointers.RdOff = _SEGGER_RTT.aUp[0].RdOff;
+            char* pString = &_SEGGER_RTT.aUp[0].pBuffer[RdOff];
+            int16_t len = _SEGGER_RTT.aUp[0].WrOff;             // set len to end
+            if (len < RdOff)                            // set to bufferend if rollover
+                len = _SEGGER_RTT.aUp[0].SizeOfBuffer;
+            len -= RdOff;                               // calculate length
+            if (len > BTLE_MAXNUSLENGHT)                // limit length
+                len = BTLE_MAXNUSLENGHT;
+            uint32_t errCode = btle_SendNusString((uint8_t*)pString, len);
+            if (errCode == NRF_SUCCESS)
+            {
+                RdOff += len;
+                RdOff %= _SEGGER_RTT.aUp[0].SizeOfBuffer;
+            }
+            else if (errCode != BLE_ERROR_NO_TX_BUFFERS)
+            {
+                APP_ERROR_CHECK(errCode);
+            }
         }
-        else if (errCode == BLE_ERROR_NO_TX_BUFFERS || errCode == NRF_ERROR_BUSY)
-            break;
+
+    }
+    else if (strncmp(pSubcommand, " --clear", 8) == 0)
+    {
+        static char const rspMsg[] = "done\r\n";
+        uint32_t errCode;
+
+        _SEGGER_RTT.aUp[0].RdOff = _SEGGER_RTT.aUp[0].WrOff;
+        rttBuf.RdOff = _SEGGER_RTT.aUp[0].RdOff;
+        rttBuf.WrOff = _SEGGER_RTT.aUp[0].WrOff;
+
+        errCode = btle_SendNusString((uint8_t*)rspMsg, strlen(rspMsg));
+        APP_ERROR_CHECK(errCode);
+    }
+    else if (strncmp(pSubcommand, " --fake", 7) == 0)
+    {
+        APP_ERROR_CHECK(NRF_ERROR_INTERNAL);
+    }
+    else
+    {
+        static char const* usage[] =
+        {
+            "usage:\r\n",
+            "--read\r\n",
+            "--clear\r\n",
+            "--fake\r\n"
+        };
+
+        for (uint8_t i = 0; i < COUNT_OF(usage); i++)
+        {
+            uint32_t errCode;
+            do
+            {
+                errCode = btle_SendNusString((uint8_t*)usage[i], strlen(usage[i]));
+            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        }
     }
 }
 
-/**@brief Function to clear user memory */
-static void clearMem()
+static void resetCommand(char const* pSubcommand)
+{
+    static char const rspMsg[] = "resetting...\r\n";
+    uint32_t errCode;
+
+    _SEGGER_RTT.aUp[0].WrOff = _SEGGER_RTT.aUp[0].RdOff;
+
+    errCode = btle_SendNusString((uint8_t*)rspMsg, strlen(rspMsg));
+    APP_ERROR_CHECK(errCode);
+
+    nrf_delay_ms(1000);
+    NVIC_SystemReset();
+}
+
+static void memoryClear()
 {
     uint32_t errCode;
+
+    memory.isPending = false;
 
     errCode = sd_flash_page_erase((FS_PAGE_END_ADDR - 1 * FS_PAGE_SIZE) / FS_PAGE_SIZE);
     if (errCode == NRF_SUCCESS)
     {
-        eraseInProgress = true;
+        memory.eraseInProgress = true;
     }
     else
     {
         APP_ERROR_HANDLER(errCode);
     }
-    while (eraseInProgress == true);
+    while (memory.eraseInProgress == true);
     errCode = sd_flash_page_erase((FS_PAGE_END_ADDR - 2 * FS_PAGE_SIZE) / FS_PAGE_SIZE);
     if (errCode == NRF_SUCCESS)
     {
-        eraseInProgress = true;
+        memory.eraseInProgress = true;
     }
     else
     {
         APP_ERROR_HANDLER(errCode);
     }
-    while (eraseInProgress == true);
-    errCode = ble_nus_string_send(&nusGattsData, (uint8_t*)"done, cycle power\r\n", 19);
+    while (memory.eraseInProgress == true);
+    do
+    {
+        errCode = btle_SendNusString((uint8_t*)"done, cycle power\r\n", 19);
+    } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
     APP_ERROR_CHECK(errCode);
-
-    isMemoryClearPending = false;
 }
 
-static bool extractCalib(char const* pS)
+static void memoryCommand(char const* pSubcommand)
+{
+    if (strncmp(pSubcommand, " --stack", 8) == 0)
+    {
+        char rsp[BTLE_MAXNUSLENGHT+1];
+        uint32_t errCode, stackSize, stackUsed;
+        uint8_t* pStack;
+        uint8_t compare;
+        //uint_fast16_t stackSize;
+
+        stackSize = (uint32_t)((uint8_t*)&__StackTop - (uint8_t*)&__StackLimit);
+
+        strcpy(rsp, "size: ");
+        itoa(stackSize, &rsp[strlen(rsp)], 10);
+        strcat(rsp, "B\r\n");
+        do
+        {
+            errCode = btle_SendNusString((uint8_t*)rsp, strlen(rsp));
+        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        APP_ERROR_CHECK(errCode);
+
+        pStack = (uint8_t*)&__StackLimit;
+        compare = 0x55;
+        if (*pStack != compare)             // stack overflow
+        {
+            pStack = (uint8_t*)&__HeapLimit;// check if heap already reached
+            compare = 0x33;
+        }
+        if (*pStack != compare)             // stack already reached heap
+        {
+            strcpy(rsp, "fucked up!");
+        }
+        else
+        {
+            while(*pStack == compare) {pStack++;}
+            stackUsed = (uint32_t)((uint8_t*)&__StackTop - pStack);
+            strcpy(rsp, "used: ");
+            itoa(stackUsed, &rsp[strlen(rsp)], 10);
+            strcat(rsp, "B\r\n");
+        }
+        do
+        {
+            errCode = btle_SendNusString((uint8_t*)rsp, strlen(rsp));
+        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        APP_ERROR_CHECK(errCode);
+    }
+    else if (strncmp(pSubcommand, " --heap", 7) == 0)
+    {
+        char rsp[BTLE_MAXNUSLENGHT+1];
+        uint32_t errCode, heapSize, heapUsed;
+        uint8_t* pHeap;
+
+        heapSize = (uint32_t)((uint8_t*)&__HeapLimit - (uint8_t*)&__HeapBase);
+
+        strcpy(rsp, "size: ");
+        itoa(heapSize, &rsp[strlen(rsp)], 10);
+        strcat(rsp, "B\r\n");
+        do
+        {
+            errCode = btle_SendNusString((uint8_t*)rsp, strlen(rsp));
+        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        APP_ERROR_CHECK(errCode);
+
+        pHeap = (uint8_t*)&__HeapBase;
+        while (*pHeap == 0xAA) {pHeap++;}
+        heapUsed = (uint32_t)(pHeap - (uint8_t*)&__HeapBase);
+        strcpy(rsp, "used: ");
+        itoa(heapUsed, &rsp[strlen(rsp)], 10);
+        strcat(rsp, "B\r\n");
+        do
+        {
+            errCode = btle_SendNusString((uint8_t*)rsp, strlen(rsp));
+        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        APP_ERROR_CHECK(errCode);
+    }
+    else if (strncmp(pSubcommand, " --clear", 8) == 0)
+    {
+        memory.isPending = true;
+    }
+    else
+    {
+        static char const* usage[] =
+        {
+            "usage:\r\n",
+            "--stack\r\n",
+            "--heap\r\n",
+            "--clear\r\n"
+        };
+
+        for (uint8_t i = 0; i < COUNT_OF(usage); i++)
+        {
+            uint32_t errCode;
+            do
+            {
+                errCode = btle_SendNusString((uint8_t*)usage[i], strlen(usage[i]));
+            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+            APP_ERROR_CHECK(errCode);
+        }
+    }
+}
+
+static bool isCalSupported()
+{
+    light_driverRevision_t rev = main_GetDrvRev();
+
+    if (rev == LIGHT_DRIVERREVUNKNOWN || rev < LIGHT_DRIVERREV12)
+        return false;
+    else
+        return true;
+}
+
+static bool extractCalib(char const* pS, uint8_t* buf)
 {
     int16_t sign, temp;
     q1_7_t gain;
@@ -189,7 +365,9 @@ static bool extractCalib(char const* pS)
         temp += *pS - '0';
         pS++;
     }
-    driverCalib.tempOffset = temp * sign;
+    temp = temp * sign;
+    buf[0] = (uint16_t)temp >> 8;
+    buf[1] = (uint16_t)temp & 0x00FF;
 
     pS++;
     if (!(*pS >= '0' && *pS <= '9'))
@@ -203,7 +381,7 @@ static bool extractCalib(char const* pS)
         gain += *pS - '0';
         pS++;
     }
-    driverCalib.gainLeft = gain;
+    buf[2] = gain;
 
     pS++;
     if (!(*pS >= '0' && *pS <= '9'))
@@ -217,91 +395,137 @@ static bool extractCalib(char const* pS)
         gain += *pS - '0';
         pS++;
     }
-    driverCalib.gainRight = gain;
+    buf[3] = gain;
+
+    buf[4] = buf[0] ^ buf[1] ^ buf[2] ^ buf[3];
 
     return true;
 }
 
-static void sendCalib()
+static void calibrateCommand(char const* pSubcommand)
 {
-    driverCalib.isPending = false;
-
-    light_driverRevision_t rev = main_GetDrvRev();
-
-    if (rev == LIGHT_DRIVERREVUNKNOWN || rev < LIGHT_DRIVERREV12)
+    if (isCalSupported() == false)
     {
-        APP_ERROR_CHECK(ble_nus_string_send(&nusGattsData, (uint8_t*)"not supported\r\n", 15));
+        uint32_t errCode;
+        do
+        {
+            errCode = btle_SendNusString((uint8_t*)"not supported\r\n", 15);
+        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+    }
+    else if (strncmp(pSubcommand, " --read", 7) == 0)
+    {
+        char rsp[BTLE_MAXNUSLENGHT+1];
+        uint32_t errCode;
+        uint8_t buffer[4];
+        int16_t tempOff;
+
+        errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_TEMPOFFSET_H, 4, buffer);
+        if (errCode != NRF_SUCCESS)
+        {
+            do
+            {
+                errCode = btle_SendNusString((uint8_t*)"failed\r\n", 8);
+            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+            APP_ERROR_CHECK(errCode);
+            return;
+        }
+        tempOff = (uint16_t)buffer[0] << 8 | buffer[1];
+        itoa(tempOff, rsp, 10);
+        strcat(rsp, ",");
+        itoa(buffer[2], &rsp[strlen(rsp)], 10);
+        strcat(rsp, ",");
+        itoa(buffer[3], &rsp[strlen(rsp)], 10);
+        do
+        {
+            errCode = btle_SendNusString((uint8_t*)rsp, strlen(rsp));
+        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        APP_ERROR_CHECK(errCode);
+    }
+    else if (strncmp(pSubcommand, " --st ", 6) == 0)
+    {
+        uint32_t errCode;
+        uint8_t buffer[5];
+
+        do
+        {
+            errCode = btle_SendNusString((uint8_t*)"deactivated\r\n", 13);
+        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        APP_ERROR_CHECK(errCode);
         return;
+
+        if (extractCalib(&pSubcommand[6], buffer) == false)
+        {
+            do
+            {
+                errCode = btle_SendNusString((uint8_t*)"wrong parameters\r\n", 18);
+            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+            APP_ERROR_CHECK(errCode);
+            return;
+        }
+
+        errCode = i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_TEMPOFFSET_H, 5, buffer);
+        if (errCode != NRF_SUCCESS)
+        {
+            do
+            {
+                errCode = btle_SendNusString((uint8_t*)"failed\r\n", 8);
+            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        }
+        else
+        {
+            do
+            {
+                errCode = btle_SendNusString((uint8_t*)"done\r\n", 6);
+            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        }
+        APP_ERROR_CHECK(errCode);
     }
-
-    uint8_t buffer[5];
-    buffer[0] = (uint16_t)driverCalib.tempOffset >> 8;
-    buffer[1] = (uint16_t)driverCalib.tempOffset & 0x00FF;
-    buffer[2] = driverCalib.gainLeft;
-    buffer[3] = driverCalib.gainRight;
-    buffer[4] = buffer[0] ^ buffer[1] ^ buffer[2] ^ buffer[3];
-
-    APP_ERROR_CHECK(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_TEMPOFFSET_H, 5, buffer));
-
-    APP_ERROR_CHECK(ble_nus_string_send(&nusGattsData, (uint8_t*)"done\r\n", 6));
-}
-
-static void onBleNusEvt(ble_nus_t *pNus, uint8_t *pData, uint16_t length)
-{
-    char* pString = (char*)pData;
-
-    if (strncmp(pString, "fake error", 10) == 0)
+    else
     {
-        APP_ERROR_CHECK(NRF_ERROR_INTERNAL);
-    }
-    if (strncmp(pString, "clear mem", 9) == 0)
-    {
-        isMemoryClearPending = true;
-    }
-    if (strncmp(pString, "calib ", 6) == 0)
-    {
-        driverCalib.isPending = extractCalib(&pString[6]);
-    }
-}
-#endif
+        static char const* usage[] =
+        {
+            "usage:\r\n",
+            "--read\r\n",
+            "--st ot,gl,gr\r\n"
+        };
 
-static void watchdogEventHandler()
-{
-    /// maybe do something
+        for (uint8_t i = 0; i < COUNT_OF(usage); i++)
+        {
+            uint32_t errCode;
+            do
+            {
+                errCode = btle_SendNusString((uint8_t*)usage[i], strlen(usage[i]));
+            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+            APP_ERROR_CHECK(errCode);
+        }
+    }
 }
+#endif // BTDEBUG
 
 /* Public functions ----------------------------------------------------------*/
 void debug_Init()
 {
-#if defined HELENA_DEBUG_NONE
-    /**< nothing to do... */
-#endif
-
-#if defined HELENA_DEBUG_SWD
-    /**< nothing to do... */
-#endif
-
-#if defined HELENA_DEBUG_RTT
+#ifdef DEBUG
     // check if noinit data is valid
     SEGGER_RTT_Init();
-    if (rttPointers.magicNumber == MAGICVAILDNUMBER &&
-        rttPointers.crc == crc16_compute((const uint8_t*)&rttPointers.magicNumber, sizeof(rttPointers.magicNumber), NULL))
+    if (rttBuf.magicNumber == MAGICVAILDNUMBER &&
+        rttBuf.crc == crc16_compute((const uint8_t*)&rttBuf.magicNumber, sizeof(rttBuf.magicNumber), NULL))
     {
         // noinit data is valid, use last known read and write pointers
-        _SEGGER_RTT.aUp[0].WrOff = rttPointers.WrOff;
-        _SEGGER_RTT.aUp[0].RdOff = rttPointers.RdOff;
-        SEGGER_RTT_WriteString(0, "..reset..\r\n");
+        _SEGGER_RTT.aUp[0].WrOff = rttBuf.WrOff;
+        _SEGGER_RTT.aUp[0].RdOff = rttBuf.RdOff;
+        SEGGER_RTT_WriteString(0, "Helena reset\r\n");
     }
     else
     {
         // noinit data isn't valid, initialize
-        rttPointers.magicNumber = MAGICVAILDNUMBER;
-        rttPointers.crc = crc16_compute((const uint8_t*)&rttPointers.magicNumber, sizeof(rttPointers.magicNumber), NULL);
-        rttPointers.WrOff = _SEGGER_RTT.aUp[0].WrOff;
-        rttPointers.RdOff = _SEGGER_RTT.aUp[0].RdOff;
-        SEGGER_RTT_WriteString(0, "..power on..\r\n");
+        rttBuf.magicNumber = MAGICVAILDNUMBER;
+        rttBuf.crc = crc16_compute((const uint8_t*)&rttBuf.magicNumber, sizeof(rttBuf.magicNumber), NULL);
+        rttBuf.WrOff = _SEGGER_RTT.aUp[0].WrOff;
+        rttBuf.RdOff = _SEGGER_RTT.aUp[0].RdOff;
+        SEGGER_RTT_WriteString(0, "Helena power on\r\n");
     }
-#endif
+#endif // DEBUG
 
     uint32_t errCode;
     nrf_drv_wdt_config_t wdtConfig =
@@ -322,103 +546,142 @@ void debug_Init()
 void debug_Execute()
 {
     nrf_drv_wdt_channel_feed(watchdogChannel);
-#if defined HELENA_DEBUG_FIELD_TESTING
-    if (nusGattsData.conn_handle != BLE_CONN_HANDLE_INVALID && nusGattsData.is_notification_enabled)
-        sendErrorLog(NULL, 0);
-    if (isMemoryClearPending)
-        clearMem();
-    if (driverCalib.isPending)
-        sendCalib();
+#if defined BTDEBUG
+    if (memory.isPending)
+        memoryClear();
 #endif
 }
 
-#if defined HELENA_DEBUG_FIELD_TESTING
-void debug_FieldTestingInit()
+#if defined BTDEBUG
+void debug_OnNusEvt(uint8_t* pData, uint16_t length)
 {
-    uint32_t err_code;
+    char const* pString = (char const*)pData;
 
-    // initialization of the nordic uart service for test support
-    ble_nus_init_t nusInit;
-    memset(&nusInit, 0, sizeof(nusInit));
+    // search command
+    for (uint8_t i = 0; i < COUNT_OF(commands); i++)
+    {
+        int16_t len = strlen(commands[i].pCommand);
+        if (strncmp(pString, commands[i].pCommand, len) == 0)
+        {
+            if (commands[i].pCommandFunc != NULL)
+                (*commands[i].pCommandFunc)(&pString[len]);
+            return;
+        }
+    }
 
-    nusInit.data_handler = &onBleNusEvt;
+    // command not found, send list of available commands
+    static char const defaultMsg[] = "not found, cmds:\r\n";
+    uint32_t errCode;
 
-    err_code = ble_nus_init(&nusGattsData, &nusInit);
-    APP_ERROR_CHECK(err_code);
-}
-
-void debug_OnBleEvt(ble_evt_t * pBleEvt)
-{
-    ble_nus_on_ble_evt(&nusGattsData, pBleEvt);
+    errCode = btle_SendNusString((uint8_t*)defaultMsg, strlen(defaultMsg));
+    APP_ERROR_CHECK(errCode);
+    for (uint8_t i = 0; i < COUNT_OF(commands); i++)
+    {
+        char command[21];
+        if (strlen(commands[i].pCommand) > sizeof(command) - 3)
+            continue;
+        strcpy(command, commands[i].pCommand);
+        strcat(command, ",\r\n");
+        do
+        {
+            errCode = btle_SendNusString((uint8_t*)command, strlen(command));
+        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+    }
 }
 
 void debug_OnSysEvent(uint32_t sysEvt)
 {
     if (sysEvt == NRF_EVT_FLASH_OPERATION_SUCCESS)
-        eraseInProgress = false;
+        memory.eraseInProgress = false;
     else if (sysEvt == NRF_EVT_FLASH_OPERATION_ERROR)
         APP_ERROR_CHECK(0);
 }
 #endif
 
-void debug_ErrorHandler(debugMessageEnum debug, uint32_t err_code, uint32_t line, const uint8_t* pfile)
+void app_error_handler(uint32_t error_code, uint32_t line_num, const uint8_t * p_file_name)
 {
-#if defined HELENA_DEBUG_NONE
-    NVIC_SystemReset();
-#endif
+    volatile bool loop = true;
+#ifdef DEBUG
+    //loop = false; // no looping when debug flag is set
 
-    volatile bool loop = true;  /**< variable decides if ErrorHandler stays in infinite while loop if called */
-
-#if defined HELENA_DEBUG_RTT
-    loop = false;               /**< no infinite loop necessary, error message will be displayed in terminal */
-#endif
-
-#if defined HELENA_DEBUG_SWD && !defined HELENA_DEBUG_RTT
-    (void)err_code;
-    (void)line;
-    (void)pfile;
-#endif
-
-#if defined HELENA_DEBUG_RTT
-    // reduce string to filename
     const char* pFile;
-    pFile = strrchr((char*)pfile, '/');
-    pFile = pFile == NULL ? (const char*)pfile : pFile + 1;
+    pFile = strrchr((char*)p_file_name, '/');
+    pFile = pFile == NULL ? (const char*)p_file_name : pFile + 1;
 
-    SEGGER_RTT_WriteString(0, pDebugMessages[debug]);
-    switch (debug)
-    {
-    case DBG_HELENA:
-    case DBG_NRF:
-        SEGGER_RTT_printf(0, " %x, %u, %s\r\n", err_code, line, pFile);
-        break;
-    case DBG_MPU:
-        SEGGER_RTT_printf(0, " %d, %u, %s\r\n", err_code, line, pFile);
-        break;
-    default:
-        break;
-    }
-#ifdef HELENA_DEBUG_FIELD_TESTING
-    // wait until RTT client has read out information, if no client is connected
-    // device will be reset through watchdog
-    /*do
-    {
-        rttPointers.WrOff = _SEGGER_RTT.aUp[0].WrOff;
-        rttPointers.RdOff = _SEGGER_RTT.aUp[0].RdOff;
-    }
-    while (rttPointers.WrOff != rttPointers.RdOff);*/
-    //while (_SEGGER_RTT.aUp[0].WrOff != _SEGGER_RTT.aUp[0].RdOff);
-#endif
-#endif
+    SEGGER_RTT_printf(0, "0x%02x at %u in %s\r\n", error_code, line_num, pFile);
+
+#ifdef BTDEBUG
+    nrf_delay_ms(5);
+    rttBuf.RdOff = _SEGGER_RTT.aUp[0].RdOff;
+    rttBuf.WrOff = _SEGGER_RTT.aUp[0].WrOff;
+#endif // BTDEBUG
+
+#endif // DEBUG
 
     CRITICAL_REGION_ENTER();
-    while(loop);
+    while(loop);            // reset through watchdog when looping
     CRITICAL_REGION_EXIT();
 }
 
-void app_error_handler(uint32_t error_code, uint32_t line_num, const uint8_t * p_file_name)
+// From Joseph Yiu, minor edits by FVH
+// hard fault handler in C,
+// with stack frame location as input parameter
+// called from HardFault_Handler in file xxx.s
+void hard_fault_handler_c(unsigned int * hardfault_args, unsigned lr_value)
 {
-    debug_ErrorHandler(DBG_NRF, error_code, line_num, p_file_name);
+    unsigned int stacked_r0;
+    unsigned int stacked_r1;
+    unsigned int stacked_r2;
+    unsigned int stacked_r3;
+    unsigned int stacked_r12;
+    unsigned int stacked_lr;
+    unsigned int stacked_pc;
+    unsigned int stacked_psr;
+
+#ifdef DEBUG
+    (void)stacked_r0;
+    (void)stacked_r1;
+    (void)stacked_r2;
+    (void)stacked_r3;
+    (void)stacked_r12;
+    (void)stacked_psr;
+
+    stacked_lr = ((unsigned long) hardfault_args[5]);
+    stacked_pc = ((unsigned long) hardfault_args[6]);
+    SEGGER_RTT_printf (0, "LR [R14] = %x  src ret addr\n", stacked_lr);
+    SEGGER_RTT_printf (0, "PC [R15] = %x\n", stacked_pc);
+
+    /*stacked_r0 = ((unsigned long) hardfault_args[0]);
+    stacked_r1 = ((unsigned long) hardfault_args[1]);
+    stacked_r2 = ((unsigned long) hardfault_args[2]);
+    stacked_r3 = ((unsigned long) hardfault_args[3]);
+
+    stacked_r12 = ((unsigned long) hardfault_args[4]);
+    stacked_lr = ((unsigned long) hardfault_args[5]);
+    stacked_pc = ((unsigned long) hardfault_args[6]);
+    stacked_psr = ((unsigned long) hardfault_args[7]);
+
+    SEGGER_RTT_printf (0, "[Hard fault]\n");
+    SEGGER_RTT_printf (0, "R0 = %x\n", stacked_r0);
+    SEGGER_RTT_printf (0, "R1 = %x\n", stacked_r1);
+    SEGGER_RTT_printf (0, "R2 = %x\n", stacked_r2);
+    SEGGER_RTT_printf (0, "R3 = %x\n", stacked_r3);
+    SEGGER_RTT_printf (0, "R12 = %x\n", stacked_r12);
+    SEGGER_RTT_printf (0, "LR [R14] = %x  subroutine call return address\n", stacked_lr);
+    SEGGER_RTT_printf (0, "PC [R15] = %x  program counter\n", stacked_pc);
+    SEGGER_RTT_printf (0, "PSR = %x\n", stacked_psr);
+    SEGGER_RTT_printf (0, "LR = %x\n", lr_value);*/
+#else
+    (void)stacked_r0;
+    (void)stacked_r1;
+    (void)stacked_r2;
+    (void)stacked_r3;
+    (void)stacked_r12;
+    (void)stacked_lr;
+    (void)stacked_pc;
+    (void)stacked_psr;
+#endif
+  while (1);
 }
 
 /* The prototype shows it is a naked function - in effect this is just an
@@ -447,58 +710,4 @@ void HardFault_Handler(void)
     );
 }
 
-// From Joseph Yiu, minor edits by FVH
-// hard fault handler in C,
-// with stack frame location as input parameter
-// called from HardFault_Handler in file xxx.s
-void hard_fault_handler_c(unsigned int * hardfault_args, unsigned lr_value)
-{
-    //unsigned int stacked_r0;
-    //unsigned int stacked_r1;
-    //unsigned int stacked_r2;
-    //unsigned int stacked_r3;
-    //unsigned int stacked_r12;
-    unsigned int stacked_lr;
-    unsigned int stacked_pc;
-    //unsigned int stacked_psr;
-
-#if defined HELENA_DEBUG_RTT
-    //stacked_r0 = ((unsigned long) hardfault_args[0]);
-    //stacked_r1 = ((unsigned long) hardfault_args[1]);
-    //stacked_r2 = ((unsigned long) hardfault_args[2]);
-    //stacked_r3 = ((unsigned long) hardfault_args[3]);
-
-    //stacked_r12 = ((unsigned long) hardfault_args[4]);
-    stacked_lr = ((unsigned long) hardfault_args[5]);
-    stacked_pc = ((unsigned long) hardfault_args[6]);
-    //stacked_psr = ((unsigned long) hardfault_args[7]);
-
-    SEGGER_RTT_printf (0, "[Hard fault]\n");
-    //SEGGER_RTT_printf (0, "R0 = %x\n", stacked_r0);
-    //SEGGER_RTT_printf (0, "R1 = %x\n", stacked_r1);
-    //SEGGER_RTT_printf (0, "R2 = %x\n", stacked_r2);
-    //SEGGER_RTT_printf (0, "R3 = %x\n", stacked_r3);
-    //SEGGER_RTT_printf (0, "R12 = %x\n", stacked_r12);
-    //SEGGER_RTT_printf (0, "LR [R14] = %x  subroutine call return address\n", stacked_lr);
-    //SEGGER_RTT_printf (0, "PC [R15] = %x  program counter\n", stacked_pc);
-    SEGGER_RTT_printf (0, "LR [R14] = %x  src ret addr\n", stacked_lr);
-    SEGGER_RTT_printf (0, "PC [R15] = %x\n", stacked_pc);
-    //SEGGER_RTT_printf (0, "PSR = %x\n", stacked_psr);
-    //SEGGER_RTT_printf (0, "LR = %x\n", lr_value);
-#else
-    (void)stacked_r0;
-    (void)stacked_r1;
-    (void)stacked_r2;
-    (void)stacked_r3;
-    (void)stacked_r12;
-    (void)stacked_lr;
-    (void)stacked_pc;
-    (void)stacked_psr;
-#endif
-  while (1);
-}
-
 /**END OF FILE*****************************************************************/
-
-
-

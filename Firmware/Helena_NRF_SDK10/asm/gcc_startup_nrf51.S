@@ -174,23 +174,73 @@ Reset_Handler:
     bgt    .LC1
 .LC0:
 
+#ifdef DEBUG
+/*  Fill heap section with dummy values.
+ *
+ *  The heap is specified by following symbols
+ *    __HeapBase: start of the heap section
+ *    __HeapLimit: end of the heap section
+ *
+ *  Both addresses must be aligned to 4 bytes boundary.
+ */
+    ldr     r0, =0xAAAAAAAA
+    ldr     r1, =__HeapBase
+    ldr     r2, =__HeapLimit
+
+    subs    r2, r1
+    ble     .LH0
+
+.LH1:
+    subs    r2, 4
+    str     r0, [r1,r2]
+    bgt     .LH1
+.LH0:
+/* Heap filled with 0xAAAAAAAA */
+
+/*  Fill free memory section with dummy values.
+ *
+ *  The free memory section is specified by following symbols
+ *    __HeapLimit: end of the heap section is start of the free memory section.
+ *    __StackLimit: start of the stack section is endo of the free memory section.
+ *
+ *  Both addresses must be aligned to 4 bytes boundary.
+ */
+    ldr     r0, =0x33333333
+    ldr     r1, =__HeapLimit
+    ldr     r2, =__StackLimit
+
+    subs    r2, r1
+    ble     .LM0
+
+.LM1:
+    subs    r2, 4
+    str     r0, [r1,r2]
+    bgt     .LM1
+.LM0:
+/* free memory section filled with 0x33333333 */
+
 /*  Fill stack section with dummy values.
  *
  *  The stack is specified by following symbols
  *    __StackTop: end of the stack section.
- *    __STACK_SIZE: size of the stack section.
+ *    __StackLimit: start of the stack section.
  *
  *  Both addresses must be aligned to 4 bytes boundary.
  */
-    ldr     r1, =__STACK_SIZE - 4
-    ldr     r2, =__StackTop - __STACK_SIZE
     ldr     r0, =0x55555555
-.LS0:
-    str     r0, [r2, r1]
-    subs    r1, #4
-    bge     .LS0
-/* Srack filled with 0x55555555 */
+    ldr     r1, =__StackLimit
+    ldr     r2, =__StackTop
 
+    subs    r2, r1
+    ble     .LS0
+
+.LS1:
+    subs    r2, 4
+    str     r0, [r1,r2]
+    bgt     .LS1
+.LS0:
+/* Stack filled with 0x55555555 */
+#endif //DEBUG
 
     LDR     R0, =SystemInit
     BLX     R0

@@ -19,6 +19,7 @@
  *   __bss_end__
  *   __end__
  *   end
+ *   __HeapBase
  *   __HeapLimit
  *   __StackLimit
  *   __StackTop
@@ -158,6 +159,7 @@ SECTIONS
 	{
 		__end__ = .;
 		end = __end__;
+		__HeapBase = __end__;
 		*(.heap*)
 		__HeapLimit = .;
 	} > RAM

@@ -6,6 +6,7 @@ LINKER_SCRIPT := Helena_app_nrf51.ld
 
 # Directories for debug, release and dependency files
 DBG_BUILD_DIR := ./bin/debug
+RLS_BUILD_DIR := ./bin/release
 
 # include definitions of toolchain files and sdk path
 include ../Makefile.conf
@@ -29,10 +30,6 @@ SHAREDFLAGS += \
 	-D__STACK_SIZE=0x600 \
 	-D__HEAP_SIZE=0 \
 	-DARM_MATH_CM0 \
-	-DDEBUG \
-	-DHELENA_DEBUG_SWD \
-	-DHELENA_DEBUG_RTT \
-	-DHELENA_DEBUG_FIELD_TESTING
 
 CFLAGS += \
 	-mcpu=cortex-m0 \
@@ -40,8 +37,6 @@ CFLAGS += \
 	-mabi=aapcs \
 	--std=gnu99 \
 	-Wall \
-	-O3 \
-	-g3 \
 	-mfloat-abi=soft \
 	-ffunction-sections \
 	-fdata-sections \
@@ -194,18 +189,32 @@ SRC_FILE_NAMES := $(notdir $(SRC_FILES) $(ASM_FILES))
 # Convert each source file name into the form '$(OBJ_DIR)/$(SRC_FILE).o'.
 OBJ := $(patsubst %,%.o,$(basename $(SRC_FILE_NAMES)))
 DBG_OBJ := $(addprefix $(DBG_BUILD_DIR)/,$(OBJ))
+RLS_OBJ := $(addprefix $(RLS_BUILD_DIR)/,$(OBJ))
 
 .PHONY: debug
 debug: OBJ_DIR := $(DBG_BUILD_DIR)
+debug: SHAREDFLAGS += -DDEBUG -DBTDEBUG -O3
+debug: CFLAGS += -g3
 debug: $(DBG_BUILD_DIR)/$(PROJECT_NAME).hex
 	$(call gendfupackage, $(DBG_BUILD_DIR)/$(PROJECT_NAME))
 	$(call echosize, $(DBG_BUILD_DIR)/$(PROJECT_NAME).elf)
+
+.PHONY: release
+release: OBJ_DIR := $(RLS_BUILD_DIR)
+release: SHAREDFLAGS += -O3
+release: $(RLS_BUILD_DIR)/$(PROJECT_NAME).hex
+	$(call gendfupackage, $(RLS_BUILD_DIR)/$(PROJECT_NAME))
+	$(call echosize, $(RLS_BUILD_DIR)/$(PROJECT_NAME).elf)
 
 .PHONY: all
 all: debug
 
 define gendfupackage
-	@$(NRFUTIL) dfu genpkg --application $1.hex --sd-req 0x0067 $1.zip
+	@$(NRFUTIL) dfu genpkg --application $1.hex \
+						   --dev-type 0x8724 \
+						   --dev-revision 0x0200 \
+						   --sd-req 0x0067 \
+						   $1.zip
 endef
 
 INCLUDES := $(patsubst %,-I%,$(INC_DIRS))
@@ -237,12 +246,35 @@ $(DBG_BUILD_DIR)/$(PROJECT_NAME).elf: $(DBG_OBJ)
 	@echo Linking ELF file: $(notdir $@)
 	@'$(CC)' $(LDFLAGS) $(DBG_OBJ) $(LIB_FILES) -lm -o $@
 
+
+
+$(RLS_BUILD_DIR)/%.o: %.c | $(RLS_BUILD_DIR)
+	@echo Compiling file: $(notdir $<)
+	@'$(CC)' $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(RLS_BUILD_DIR)/%.o: %.S | $(RLS_BUILD_DIR)
+	@echo Compiling file: $(notdir $<)
+	@'$(CC)' $(ASMFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(RLS_BUILD_DIR)/$(PROJECT_NAME).hex: $(RLS_BUILD_DIR)/$(PROJECT_NAME).elf
+	@echo Creating hex file: $(notdir $@)
+	@'$(OBJCOPY)' -O ihex $(RLS_BUILD_DIR)/$(PROJECT_NAME).elf $@
+
+$(RLS_BUILD_DIR)/$(PROJECT_NAME).bin: $(RLS_BUILD_DIR)/$(PROJECT_NAME).elf
+	@echo Creating bin file: $(notdir $@)
+	@'$(OBJCOPY)' -O binary $(RLS_BUILD_DIR)/$(PROJECT_NAME).elf $@
+
+$(RLS_BUILD_DIR)/$(PROJECT_NAME).elf: $(RLS_OBJ)
+	@echo Linking ELF file: $(notdir $@)
+	@'$(CC)' $(LDFLAGS) $(RLS_OBJ) $(LIB_FILES) -lm -o $@
+
 .PHONY: clean
 clean:
 	@rm -rf $(DBG_BUILD_DIR)
+	@rm -rf $(RLS_BUILD_DIR)
 
 .PHONY: help
 help:
 	@echo "The following targets are available:"
 	@echo "    (debug)                - Compile with debug flags"
-	@echo "    all                    - Compile debug target"
+	@echo "    (release)              - Compile release version"

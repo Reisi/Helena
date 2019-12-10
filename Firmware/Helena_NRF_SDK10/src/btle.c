@@ -31,7 +31,8 @@
 #include "fds.h"
 #include "version.h"
 
-#ifdef HELENA_DEBUG_FIELD_TESTING
+#ifdef BTDEBUG
+#include "ble_nus.h"
 #include "debug.h"
 #endif
 
@@ -66,6 +67,10 @@ typedef struct
 /* Private variables ---------------------------------------------------------*/
 static ble_cgw_t cgwGattsData;                  // gatt server handles for the com gateway service
 BLE_LCS_DEF(lcsGattsData, NUM_OF_CONNECTIONS);  // gatt server handles for the light control service
+
+#if BTDEBUG
+static ble_nus_t nusGattsData;                  // gatt server handles for the nordic uart service
+#endif // BTDEBUG
 
 static ble_db_discovery_t discDatabase;         // database for service discovery
 static ble_hids_c_t hidsGattcData;              // gatt client handles for the hid service
@@ -188,8 +193,9 @@ static void bleEvtDispatch(ble_evt_t * pBleEvt)
         ble_conn_params_on_ble_evt(pBleEvt);
         ble_advertising_on_ble_evt(pBleEvt);
         ble_cgw_on_ble_evt(&cgwGattsData, pBleEvt); // the com gateway is only used in peripheral connections
-#ifdef HELENA_DEBUG_FIELD_TESTING
-        debug_OnBleEvt(pBleEvt);
+#ifdef BTDEBUG
+        ble_nus_on_ble_evt(&nusGattsData, pBleEvt);
+        //debug_OnBleEvt(pBleEvt);
 #endif
         onPeriphEvt(pBleEvt);
     }
@@ -208,7 +214,7 @@ static void sysEvtDispatch(uint32_t sysEvt)
     ble_advertising_on_sys_evt(sysEvt);
     fs_sys_event_handler(sysEvt);
     com_OnSysEvt(sysEvt);
-#ifdef HELENA_DEBUG_FIELD_TESTING
+#ifdef BTDEBUG
     debug_OnSysEvent(sysEvt);
 #endif
 }
@@ -475,6 +481,13 @@ static void lcsErrorHandler(uint32_t errCode)
     }
 }
 
+#ifdef BTDEBUG
+static void nusEventHandler(ble_nus_t *pNus, uint8_t *pData, uint16_t length)
+{
+    debug_OnNusEvt(pData, length);
+}
+#endif // BTDEBUG
+
 /**@brief Function for initializing services that will be used by the application.
  */
 static void servicesInit(char const* pDrvRev, btle_lcsFeature_t* pFeature)
@@ -496,11 +509,13 @@ static void servicesInit(char const* pDrvRev, btle_lcsFeature_t* pFeature)
     if (VERSION_PATCH / 10)
         versionString[i++] = (VERSION_PATCH / 10) + '0';
     versionString[i++] = (VERSION_PATCH % 10) + '0';
+#ifdef DEBUG
     versionString[i++] = '-';
     strcpy(&versionString[i], VERSION_LEVEL);
     i = strlen(versionString);
     versionString[i++] = '-';
     itoa(VERSION_BUILD, &versionString[i], 10);
+#endif //DEBUG
     if (pDrvRev != NULL)
     {
         i = strlen(versionString);
@@ -545,6 +560,14 @@ static void servicesInit(char const* pDrvRev, btle_lcsFeature_t* pFeature)
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lcp_attr_md.write_perm);
     errCode = ble_lcs_init(&lcsGattsData, NUM_OF_CONNECTIONS, &lcsInit);
     APP_ERROR_CHECK(errCode);
+
+#ifdef BTDEBUG
+    ble_nus_init_t nusInit;
+    memset(&nusInit, 0, sizeof(nusInit));
+    nusInit.data_handler = &nusEventHandler;
+    errCode = ble_nus_init(&nusGattsData, &nusInit);
+    APP_ERROR_CHECK(errCode);
+#endif // BTDEBUG
 }
 
 /** @brief Error handler for the advertising module
@@ -1254,6 +1277,13 @@ uint32_t btle_SetMode(uint8_t mode, uint16_t connHandle)
 
     return errCode;
 }
+
+#ifdef BTDEBUG
+uint32_t btle_SendNusString(uint8_t* pData, uint16_t len)
+{
+    return ble_nus_string_send(&nusGattsData, pData, len);
+}
+#endif
 
 void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
 {

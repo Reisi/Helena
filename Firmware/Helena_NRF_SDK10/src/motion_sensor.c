@@ -61,7 +61,7 @@ do                                      \
 {                                       \
     if (err_code != 0)                  \
     {                                   \
-        MPU_ERROR_HANDLER(err_code);    \
+        APP_ERROR_HANDLER(-err_code);   \
         return NRF_ERROR_INTERNAL;      \
     }                                   \
 } while(0)
