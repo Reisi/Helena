@@ -404,6 +404,7 @@ static bool extractCalib(char const* pS, uint8_t* buf)
 
 static void calibrateCommand(char const* pSubcommand)
 {
+    /// TODO: move to main context, otherwise the i2c read and write functions might fail
     if (isCalSupported() == false)
     {
         uint32_t errCode;

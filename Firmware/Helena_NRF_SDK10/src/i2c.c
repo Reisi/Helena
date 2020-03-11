@@ -124,7 +124,7 @@ uint32_t i2c_read(uint8_t device_address, uint8_t register_address, uint8_t leng
             if (errCode == NRF_SUCCESS)
             {
                 nrf_drv_twi_enable(&twi_instance);
-                errCode = nrf_drv_twi_tx(&twi_instance, device_address, &register_address, 1, true);
+                errCode = nrf_drv_twi_rx(&twi_instance, device_address, data, length, false);
             }
         }
     }
@@ -164,7 +164,7 @@ uint32_t i2c_write(uint8_t device_address, uint8_t register_address, uint8_t len
             if (errCode == NRF_SUCCESS)
             {
                 nrf_drv_twi_enable(&twi_instance);
-                errCode = nrf_drv_twi_tx(&twi_instance, device_address, &register_address, 1, true);
+                errCode = nrf_drv_twi_tx(&twi_instance, device_address, buffer, length+1, false);
             }
         }
     }

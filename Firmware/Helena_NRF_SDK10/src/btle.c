@@ -397,7 +397,8 @@ static void connParamsInit(void)
  */
 static void cgwDataHandler(ble_cgw_t * pCgw, com_MessageStruct * pMessageRx)
 {
-    APP_ERROR_CHECK(com_Put(pMessageRx));
+    (void)com_Put(pMessageRx);  // there is nothing we can do if the FIFO overruns,
+    //APP_ERROR_CHECK(com_Put(pMessageRx));
 }
 
 /** @brief Event handler for the light control service
