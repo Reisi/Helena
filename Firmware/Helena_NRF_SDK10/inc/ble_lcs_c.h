@@ -62,6 +62,14 @@ typedef enum
     BLE_LCS_C_CP_RV_FAILED          = 4
 } ble_lcs_c_cprv_t;
 
+/**@brief Light Control Service Light Type enumeration */
+typedef enum
+{
+    BLE_LCS_C_LT_HELMET_LIGHT = 0,
+    BLE_LCS_C_LT_BIKE_LIGHT   = 1,
+    BLE_LCS_C_LT_TAIL_LIGHT   = 2,
+} ble_lcs_c_lf_lt_t;
+
 /** @} */
 
 /**
@@ -73,17 +81,34 @@ typedef enum
  *        data fields are present in the light measurement notification package. */
 typedef struct
 {
-    uint16_t intensity_present     : 1;
-    uint16_t flood_status_present  : 1;
-    uint16_t spot_status_present   : 1;
-    uint16_t flood_power_present   : 1;
-    uint16_t spot_power_present    : 1;
-    uint16_t temperature_present   : 1;
-    uint16_t input_voltage_present : 1;
-    uint16_t pitch_present         : 1;
+    uint16_t intensity_present              : 1;
+    union
+    {
+        uint16_t flood_status_present       : 1;
+        uint16_t main_beam_status_present   : 1;
+    };
+    union
+    {
+        uint16_t spot_status_present        : 1;
+        uint16_t high_beam_status_present   : 1;
+    };
+    union
+    {
+        uint16_t flood_power_present        : 1;
+        uint16_t main_beam_power_present    : 1;
+    };
+    union
+    {
+        uint16_t spot_power_present         : 1;
+        uint16_t high_beam_power_present    : 1;
+    };
+    uint16_t temperature_present            : 1;
+    uint16_t input_voltage_present          : 1;
+    uint16_t pitch_present                  : 1;
+    uint16_t battery_soc_present            : 1;
 } ble_lcs_c_lm_flags_t;
 
-/**@brief Light Control Service Light Setup Flags */
+/**@brief Light Control Service Helmet Setup Flags */
 typedef struct
 {
     uint8_t flood             : 1;
@@ -92,14 +117,33 @@ typedef struct
     uint8_t cloned            : 1;
     uint8_t taillight         : 1;
     uint8_t brakelight        : 1;
-} ble_lcs_c_light_setup_t;
+} ble_lcs_c_hlmt_setup_t;
 
 /**@brief Light Control Service Light Mode structure */
 typedef struct
 {
-    ble_lcs_c_light_setup_t setup;
-    uint8_t                 intensity;
-} ble_lcs_c_light_mode_t;
+    ble_lcs_c_hlmt_setup_t setup;
+    uint8_t                intensity;
+} ble_lcs_c_hlmt_mode_t;
+
+/**@brief Light Control Service Bike Light Setup Flags */
+typedef struct
+{
+    uint8_t main_beam          : 1;
+    uint8_t extended_main_beam : 1;
+    uint8_t high_beam          : 1;
+    uint8_t daylight           : 1;
+    uint8_t taillight          : 1;
+    uint8_t brakelight         : 1;
+} ble_lcs_c_bk_setup_t;
+
+/**@brief Light Control Service Bike Light Mode structure */
+typedef struct
+{
+    ble_lcs_c_bk_setup_t setup;
+    uint8_t              main_beam_intensity;
+    uint8_t              high_beam_intensity;
+} ble_lcs_c_bk_mode_t;
 
  /**@brief Light Measurement status flags structure. This contains the light status flags */
 typedef struct
@@ -114,46 +158,137 @@ typedef struct
  *        all data for the Light Measurement characteristic */
 typedef struct
 {
-    ble_lcs_c_lm_flags_t        flags;        /**< flags containing information which data fields are present */
-    ble_lcs_c_light_mode_t      mode;         /**< Light Mode */
-    ble_lcs_c_lm_status_flags_t flood_status; /**< Flood Status flags */
-    ble_lcs_c_lm_status_flags_t spot_status;  /**< Spot Status flags */
-    uint16_t                    flood_power;  /**< Flood beam output power in Watt with a resolution of 1/1000 */
-    uint16_t                    spot_power;   /**< Spot beam output power in Watt with a resolution of 1/1000 */
-    int8_t                      temperature;  /**< Light temperature in degrees Celcius with a resolution of 1 */
-    uint16_t                    input_voltage;/**< Input Voltage in Volt with a resolution of 1/1000 */
-    int8_t                      pitch;        /**< pitch angle in degree with a resolution of 1 */
+    ble_lcs_c_lf_lt_t                   light_type;       /**< Type of light this message is related to */
+    ble_lcs_c_lm_flags_t                flags;            /**< flags containing information which data fields are present */
+    union
+    {
+        struct
+        {
+            ble_lcs_c_hlmt_mode_t       mode;             /**< current helmet mode */
+            ble_lcs_c_lm_status_flags_t flood_status;     /**< Flood Status flags */
+            ble_lcs_c_lm_status_flags_t spot_status;      /**< Spot Status flags */
+            uint16_t                    flood_power;      /**< Flood beam output power in Watt with a resolution of 1/1000 */
+            uint16_t                    spot_power;       /**< Spot beam output power in Watt with a resolution of 1/1000 */
+        } hlmt;
+        struct
+        {
+            ble_lcs_c_bk_mode_t         mode;             /**< current bike mode */
+            ble_lcs_c_lm_status_flags_t main_beam_status; /**< Main Beam Status flags */
+            ble_lcs_c_lm_status_flags_t high_beam_status; /**< High Beam Status flags */
+            uint16_t                    main_beam_power;  /**< Main Beam output power in Watt with a resolution of 1/1000 */
+            uint16_t                    high_beam_power;  /**< High Beam output power in Watt with a resolution of 1/1000 */
+        } bk;
+        //struct
+        //{
+        //    ble_lcs_c_lt_mode_t         mode;             /**< current taillight mode */
+        //    ble_lcs_c_lm_status_flags_t taillight_status; /**< Taillight Status flags */
+        //    uint16_t                  taillight_power;  /**< Taillight output power in Watt with a resolution of 1/1000 */
+        //} tl;
+    };
+    int8_t                              temperature;      /**< Light temperature in degrees Celcius with a resolution of 1 */
+    uint16_t                            input_voltage;    /**< Input Voltage in Volt with a resolution of 1/1000 */
+    int8_t                              pitch;            /**< pitch angle in degree with a resolution of 1 */
+    uint8_t                             battery_soc;      /**< battery state of charge in percent with resolution of 1 */
 } ble_lcs_c_lm_t;
 
-/**@brief Light feature characteristic structure. This contains the supported features */
+/**@brief Configuration feature structure. This contains the supported
+ *        configuration features */
 typedef struct
 {
-    uint16_t flood_supported                : 1;
-    uint16_t spot_supported                 : 1;
-    uint16_t pitch_comp_supported           : 1;
-    uint16_t mode_change_supported          : 1;
-    uint16_t mode_config_supported          : 1;
-    uint16_t mode_grouping_supported        : 1;
-    uint16_t led_config_check_supported     : 1;
-    uint16_t sensor_calibration_supported   : 1;
-    uint16_t current_limitation_supported   : 1;
-    uint16_t external_taillight_supported   : 1;
-    uint16_t external_brake_light_supported : 1;
+    uint8_t mode_change_supported    : 1;
+    uint8_t mode_config_supported    : 1;
+    uint8_t mode_grouping_supported  : 1;
+    uint8_t preferred_mode_supported : 1;
+    uint8_t temporal_mode_supported  : 1;
+} ble_lcs_c_lf_cfg_t;
+
+/**@brief Setup feature structure. This contains the supported setup features
+ *        */
+typedef struct
+{
+    uint8_t led_config_check_supported   : 1;
+    uint8_t sensor_calibration_supported : 1;
+    uint8_t current_limitation_supported : 1;
+} ble_lcs_c_lf_stp_t;
+
+/**@brief Helmet Light feature structure. This contains the supported helmet
+ *        light features */
+typedef struct
+{
+    uint8_t flood_supported               : 1;
+    uint8_t spot_supported                : 1;
+    uint8_t pitch_comp_supported          : 1;
+    uint8_t driver_cloning_supported      : 1;
+    uint8_t external_taillight_supported  : 1;
+    uint8_t external_brakelight_supported : 1;
+} ble_lcs_c_lf_hlmt_t;
+
+/**@brief Bike Light feature structure. This contains the supported bike light
+ *        features */
+typedef struct
+{
+    uint8_t main_beam_supported           : 1;
+    uint8_t extended_main_beam_supported  : 1;
+    uint8_t high_beam_supported           : 1;
+    uint8_t daylight_supported            : 1;
+    uint8_t external_taillight_supported  : 1;
+    uint8_t external_brakelight_supported : 1;
+} ble_lcs_c_lf_bk_t;
+
+/**@brief Taillight feature structure. This contains the supported taillight
+ *        features */
+/*typedef struct
+{
+    tbd.
+} ble_lcs_c_lf_tl_t;*/
+
+typedef struct
+{
+    ble_lcs_c_lf_lt_t            light_type;        /**< Type of this light */
+    ble_lcs_c_lf_cfg_t           cfg_features;      /**< supported configuration features */
+    ble_lcs_c_lf_stp_t           stp_features;      /**< supported setup features */
+    union
+    {
+        ble_lcs_c_lf_hlmt_t      hlmt_features;     /**< supported helmet light features in case of type BLE_LCS_HLMT_BIKE_LIGHT */
+        ble_lcs_c_lf_bk_t        bk_features;       /**< supported bike light features in case of type BLE_LCS_LT_BIKE_LIGHT */
+        //ble_lcs_c_lf_tl_t        tl_features;       /**< supported taillight features in case of type BLE_LCS_LT_TAILLIGHT */
+    };
 } ble_lcs_c_lf_t;
 
-/**@brief Control Point mode configuration response data */
+/**@brief Control Point mode configuration write data
+ *
+ * @note  at this point is not possible to resolve the light type, so it is up
+ * to the user to cast the pointer to the proper data type */
 typedef struct
 {
-    uint8_t                       start;        /**< mode number of the first mode in the list */
-    uint8_t                       num_of_modes; /**< total number of modes in the list */
-    ble_lcs_c_light_mode_t const* pModes;       /**< mode list */
-} ble_lcs_c_cp_mcfg_t;
+    uint8_t      start;                             /**< mode number of the first mode in the list */
+    uint8_t      num_of_bytes;                      /**< the size of the list */
+    void const * pModes;                            /**< a pointer to the first element of the list */
+} ble_lcs_c_cp_mcfg_cmd_t;
+
+/**@brief Control Point mode configuration response data
+ *
+ * @note  at this point is not possible to resolve the light type, so it is up
+ * to the user to cast the pointer to the proper data type */
+typedef struct
+{
+    uint8_t      num_of_bytes;                      /**< the size of the list */
+    void const * pModes;                            /**< a pointer to the first element of the list */
+} ble_lcs_c_cp_mcfg_rcvd_t;
 
 /**@brief Control Point led configuration response data */
-typedef struct
+typedef union
 {
-    uint8_t flood_cnt;                          /**< number of in series connected LEDs an flood side */
-    uint8_t spot_cnt;                           /**< number of in series connected LEDs an spot side */
+    struct
+    {
+        uint8_t flood_cnt;                          /**< number of in series connected LEDs an flood side */
+        uint8_t spot_cnt;                           /**< number of in series connected LEDs an spot side */
+    };
+    struct
+    {
+        uint8_t main_beam_cnt;                      /**< number of in series connected LEDs an main beam side */
+        uint8_t high_beam_cnt;                      /**< number of in series connected LEDs an high beam side */
+    };
 } ble_lcs_c_cp_ledcfg_t;
 
 /**@brief Control Point sensor offset response data */
@@ -165,10 +300,18 @@ typedef struct
 } ble_lcs_c_cp_off_t;
 
 /**@brief Control Point current limit response data */
-typedef struct
+typedef union
 {
-    uint8_t flood;                             /**< current limit in % for flood */
-    uint8_t spot;                              /**< current limit in % for spot */
+    struct
+    {
+        uint8_t flood;                             /**< current limit in % for flood */
+        uint8_t spot;                              /**< current limit in % for spot */
+    };
+    struct
+    {
+        uint8_t main_beam;                         /**< current limit in % for main beam */
+        uint8_t high_beam;                         /**< current limit in % for high beam */
+    };
 } ble_lcs_c_cp_currlmt_t;
 
 /**@brief Light Control Point Response structure */
@@ -180,7 +323,7 @@ typedef struct
     {
         uint8_t mode_cnt;                   /**< number of available modes. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_MODE_CNT */
         uint8_t group_cnt;                  /**< number of groups. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_GRP_CNFG */
-        ble_lcs_c_cp_mcfg_t mode_cfg;       /**< mode configuration. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_MODE_CNFG */
+        ble_lcs_c_cp_mcfg_rcvd_t mode_cfg;  /**< mode configuration. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_MODE_CNFG */
         ble_lcs_c_cp_ledcfg_t led_cfg;      /**< led configuration. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_LED_CNFG and @ref BLE_LCS_C_CP_CMD_CHK_LED_CNFG */
         ble_lcs_c_cp_off_t sens_off;        /**< sensor offset. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_SENS_OFF and @ref BLE_LCS_C_CP_CMD_CALIB_SENS_OFF */
         ble_lcs_c_cp_currlmt_t curr_limit;  /**< current limits. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_LIMITS */
@@ -249,11 +392,11 @@ typedef struct
     ble_lcs_c_cpc_t command;
     union
     {
-        uint8_t                mode_to_set; /**< mode to set. This field will be used for the command @ref BLE_LCS_C_CP_CMD_SET_MODE. */
-        uint8_t                group_cnt;   /**< number of group. This field will be used for the command @ref BLE_LCS_C_CP_CMD_CNFG_GROUP. */
-        uint8_t                start_mode;  /**< start mode for mode list. This field will be used for the command @ref BLE_LCS_C_CP_CMD_REQ_MODE_CNFG. */
-        ble_lcs_c_cp_mcfg_t    mode_cfg;    /**< new list of modes. This field will be used for the command @ref BLE_LCS_C_CP_CMD_CNFG_MODE. */
-        ble_lcs_c_cp_currlmt_t curr_limit;  /**< new current limits. This field will be used for the command @ref BLE_LCS_C_CP_CMD_SET_LIMITS. */
+        uint8_t                 mode_to_set; /**< mode to set. This field will be used for the command @ref BLE_LCS_C_CP_CMD_SET_MODE. */
+        uint8_t                 group_cnt;   /**< number of group. This field will be used for the command @ref BLE_LCS_C_CP_CMD_CNFG_GROUP. */
+        uint8_t                 start_mode;  /**< start mode for mode list. This field will be used for the command @ref BLE_LCS_C_CP_CMD_REQ_MODE_CNFG. */
+        ble_lcs_c_cp_mcfg_cmd_t mode_cfg;    /**< new list of modes. This field will be used for the command @ref BLE_LCS_C_CP_CMD_CNFG_MODE. */
+        ble_lcs_c_cp_currlmt_t  curr_limit;  /**< new current limits. This field will be used for the command @ref BLE_LCS_C_CP_CMD_SET_LIMITS. */
     } params;
 } ble_lcs_c_cp_write_t;
 

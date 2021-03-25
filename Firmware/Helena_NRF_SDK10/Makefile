@@ -1,15 +1,31 @@
-# The PROJECT_NAME can be changed arbitrarily (it does not depend on anything).
-PROJECT_NAME := Helena_app
+# The HELENA_PROJECT_NAME can be changed arbitrarily (it does not depend on anything).
+#HELENA_PROJECT_NAME := Helena_app
+#BILLINA_PROJECT_NAME := Billina_app
 
 # The LINKER_SCRIPT is usually in the same directory as the Makefile.
 LINKER_SCRIPT := Helena_app_nrf51.ld
 
-# Directories for debug, release and dependency files
-DBG_BUILD_DIR := ./bin/debug
-RLS_BUILD_DIR := ./bin/release
-
 # include definitions of toolchain files and sdk path
 include ../Makefile.conf
+
+# check for valid target
+ifeq ($(MAKECMDGOALS),)
+$(error no target set, call make with target goal, e.g. 'make helena', 'make helena_dbg', ...)
+endif
+ifeq ($(MAKECMDGOALS),clean)
+$(not supported at the moment, delete files manually)
+endif
+ifeq ($(findstring clean_,$(MAKECMDGOALS)),clean_)
+# do something to clean target
+TARGET_DIR := $(subst clean_,,$(MAKECMDGOALS))
+else
+TARGET_DIR := $(MAKECMDGOALS)
+endif
+
+# Directories for binary and object files
+BUILD_DIR := ./bin/$(TARGET_DIR)
+
+
 
 # Toolchain commands
 CC              := '$(GNU_INSTALL_ROOT)/bin/$(GNU_PREFIX)-gcc'
@@ -30,6 +46,7 @@ SHAREDFLAGS += \
 	-D__STACK_SIZE=0x600 \
 	-D__HEAP_SIZE=0 \
 	-DARM_MATH_CM0 \
+	-O3 \
 
 CFLAGS += \
 	-mcpu=cortex-m0 \
@@ -53,7 +70,7 @@ ASMFLAGS += \
 
 LDFLAGS += \
 	-Xlinker \
-	-Map=$(OBJ_DIR)/$(PROJECT_NAME).map \
+	-Map=$(BUILD_DIR)/$(HELENA_PROJECT_NAME).map \
 	-mthumb \
 	-mabi=aapcs \
 	-T$(LINKER_SCRIPT) \
@@ -80,7 +97,6 @@ SRC_FILES += \
 	./src/fastmath.c \
 	./src/hmi.c \
 	./src/i2c.c \
-	./src/light.c \
 	./src/main.c \
 	./src/motion_sensor.c \
 	./src/power.c \
@@ -170,9 +186,28 @@ INC_DIRS += \
     $(CMSIS_INSTALL_ROOT)/CMSIS/DSP/Include \
     $(CMSIS_INSTALL_ROOT)/CMSIS/Core/Include
 
+# include target dependent files
+ifeq ($(findstring helena,$(MAKECMDGOALS)), helena)
+SRC_FILES += ./src/light_helena.c
+SHAREDFLAGS += -DHELENA
+HELENA_PROJECT_NAME := Helena_app
+endif
+ifeq ($(findstring billina,$(MAKECMDGOALS)), billina)
+SRC_FILES += ./src/light_billy.c
+SHAREDFLAGS += -DBILLY
+HELENA_PROJECT_NAME := Billina_app
+endif
+# add debug flags for debug targets
+ifeq ($(findstring dbg,$(MAKECMDGOALS)), dbg)
+SHAREDFLAGS += -DDEBUG -DBTDEBUG
+CFLAGS += -g3
+endif
+
 # Convert to absolute paths and sort to remove duplicates.
 SRC_FILES := $(sort $(foreach f,$(SRC_FILES),$(abspath $(f))))
 INC_DIRS := $(sort $(foreach d,$(INC_DIRS),$(abspath $(d))))
+SRC_DIRS := $(dir $(SRC_FILES) $(ASM_FILES))
+SRC_FILE_NAMES := $(notdir $(SRC_FILES) $(ASM_FILES))
 
 # This directory needs to be added after the main list is sorted because it
 # contains its own copy of 'nrf_drv_config.h' that will conflict with the
@@ -181,33 +216,36 @@ INC_DIRS += \
     $(NRF_SDK_INSTALL_ROOT)/components/drivers_nrf/config \
     $(NRF_SDK_INSTALL_ROOT)/components/ble/common \
 
-
-SRC_DIRS := $(dir $(SRC_FILES) $(ASM_FILES))
-
-SRC_FILE_NAMES := $(notdir $(SRC_FILES) $(ASM_FILES))
-
 # Convert each source file name into the form '$(OBJ_DIR)/$(SRC_FILE).o'.
 OBJ := $(patsubst %,%.o,$(basename $(SRC_FILE_NAMES)))
-DBG_OBJ := $(addprefix $(DBG_BUILD_DIR)/,$(OBJ))
-RLS_OBJ := $(addprefix $(RLS_BUILD_DIR)/,$(OBJ))
+OBJ_FILES := $(addprefix $(BUILD_DIR)/,$(OBJ))
 
-.PHONY: debug
-debug: OBJ_DIR := $(DBG_BUILD_DIR)
-debug: SHAREDFLAGS += -DDEBUG -DBTDEBUG -O3
-debug: CFLAGS += -g3
-debug: $(DBG_BUILD_DIR)/$(PROJECT_NAME).hex
-	$(call gendfupackage, $(DBG_BUILD_DIR)/$(PROJECT_NAME))
-	$(call echosize, $(DBG_BUILD_DIR)/$(PROJECT_NAME).elf)
+INCLUDES := $(patsubst %,-I%,$(INC_DIRS))
 
-.PHONY: release
-release: OBJ_DIR := $(RLS_BUILD_DIR)
-release: SHAREDFLAGS += -O3
-release: $(RLS_BUILD_DIR)/$(PROJECT_NAME).hex
-	$(call gendfupackage, $(RLS_BUILD_DIR)/$(PROJECT_NAME))
-	$(call echosize, $(RLS_BUILD_DIR)/$(PROJECT_NAME).elf)
+vpath %.c $(SRC_DIRS)
+vpath %.S $(SRC_DIRS)
 
-.PHONY: all
-all: debug
+$(TARGET_DIR): $(BUILD_DIR)/$(HELENA_PROJECT_NAME).hex
+	$(call gendfupackage, $(BUILD_DIR)/$(HELENA_PROJECT_NAME))
+	$(call echosize, $(BUILD_DIR)/$(HELENA_PROJECT_NAME).elf)
+
+$(BUILD_DIR)/$(HELENA_PROJECT_NAME).hex: $(BUILD_DIR)/$(HELENA_PROJECT_NAME).elf
+	@echo Creating hex file: $(notdir $@)
+	@'$(OBJCOPY)' -O ihex $(BUILD_DIR)/$(HELENA_PROJECT_NAME).elf $@
+
+$(BUILD_DIR)/$(HELENA_PROJECT_NAME).elf: $(OBJ_FILES) | $(BUILD_DIR)
+	@echo Linking ELF file: $(notdir $@)
+	@'$(CC)' $(LDFLAGS) $(OBJ_FILES) $(LIB_FILES) -lm -o $@
+
+$(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
+	@echo Compiling file: $(notdir $<)
+	@'$(CC)' $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/%.o: %.S | $(BUILD_DIR)
+	@echo Compiling file: $(notdir $<)
+	@'$(CC)' $(ASMFLAGS) $(INCLUDES) -c -o $@ $<
+
+
 
 define gendfupackage
 	@$(NRFUTIL) dfu genpkg --application $1.hex \
@@ -217,64 +255,14 @@ define gendfupackage
 						   $1.zip
 endef
 
-INCLUDES := $(patsubst %,-I%,$(INC_DIRS))
-
-vpath %.c $(SRC_DIRS)
-vpath %.S $(SRC_DIRS)
-
 define echosize
 	@'$(SIZE)' $1
 endef
 
-$(DBG_BUILD_DIR)/%.o: %.c | $(DBG_BUILD_DIR)
-	@echo Compiling file: $(notdir $<)
-	@'$(CC)' $(CFLAGS) $(INCLUDES) -c -o $@ $<
-
-$(DBG_BUILD_DIR)/%.o: %.S | $(DBG_BUILD_DIR)
-	@echo Compiling file: $(notdir $<)
-	@'$(CC)' $(ASMFLAGS) $(INCLUDES) -c -o $@ $<
-
-$(DBG_BUILD_DIR)/$(PROJECT_NAME).hex: $(DBG_BUILD_DIR)/$(PROJECT_NAME).elf
-	@echo Creating hex file: $(notdir $@)
-	@'$(OBJCOPY)' -O ihex $(DBG_BUILD_DIR)/$(PROJECT_NAME).elf $@
-
-$(DBG_BUILD_DIR)/$(PROJECT_NAME).bin: $(DBG_BUILD_DIR)/$(PROJECT_NAME).elf
-	@echo Creating bin file: $(notdir $@)
-	@'$(OBJCOPY)' -O binary $(DBG_BUILD_DIR)/$(PROJECT_NAME).elf $@
-
-$(DBG_BUILD_DIR)/$(PROJECT_NAME).elf: $(DBG_OBJ)
-	@echo Linking ELF file: $(notdir $@)
-	@'$(CC)' $(LDFLAGS) $(DBG_OBJ) $(LIB_FILES) -lm -o $@
-
-
-
-$(RLS_BUILD_DIR)/%.o: %.c | $(RLS_BUILD_DIR)
-	@echo Compiling file: $(notdir $<)
-	@'$(CC)' $(CFLAGS) $(INCLUDES) -c -o $@ $<
-
-$(RLS_BUILD_DIR)/%.o: %.S | $(RLS_BUILD_DIR)
-	@echo Compiling file: $(notdir $<)
-	@'$(CC)' $(ASMFLAGS) $(INCLUDES) -c -o $@ $<
-
-$(RLS_BUILD_DIR)/$(PROJECT_NAME).hex: $(RLS_BUILD_DIR)/$(PROJECT_NAME).elf
-	@echo Creating hex file: $(notdir $@)
-	@'$(OBJCOPY)' -O ihex $(RLS_BUILD_DIR)/$(PROJECT_NAME).elf $@
-
-$(RLS_BUILD_DIR)/$(PROJECT_NAME).bin: $(RLS_BUILD_DIR)/$(PROJECT_NAME).elf
-	@echo Creating bin file: $(notdir $@)
-	@'$(OBJCOPY)' -O binary $(RLS_BUILD_DIR)/$(PROJECT_NAME).elf $@
-
-$(RLS_BUILD_DIR)/$(PROJECT_NAME).elf: $(RLS_OBJ)
-	@echo Linking ELF file: $(notdir $@)
-	@'$(CC)' $(LDFLAGS) $(RLS_OBJ) $(LIB_FILES) -lm -o $@
-
-.PHONY: clean
-clean:
-	@rm -rf $(DBG_BUILD_DIR)
-	@rm -rf $(RLS_BUILD_DIR)
-
 .PHONY: help
 help:
 	@echo "The following targets are available:"
-	@echo "    (debug)                - Compile with debug flags"
-	@echo "    (release)              - Compile release version"
+	@echo "    (helena_dbg)          - Compile helena with debug flags"
+	@echo "    (helena)              - Compile helena release version"
+	@echo "    (billina_dbg)         - Compile billina (billy firmware for hellena hardware) with debug flags"
+	@echo "    (billina)             - Compile release (billy firmware for hellena hardware) version"

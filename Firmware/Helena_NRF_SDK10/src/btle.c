@@ -59,7 +59,11 @@ typedef struct
 #define UUID16_SIZE                     2
 #define UUID128_SIZE                    16
 
+#ifdef HELENA
 #define DEVICE_NAME                     "Helena"
+#elif defined BILLY
+#define DEVICE_NAME                     "Billina"
+#endif // BILLY
 #define DEVICE_APPEARANCE               BLE_APPEARANCE_GENERIC_CYCLING
 
 #define LCS_NOTIFY_PERIOD               APP_TIMER_TICKS(1000, APP_TIMER_PRESCALER)
@@ -433,7 +437,11 @@ static void lcsCpEventHandler(ble_lcs_ctrlpt_t * pLcsCtrlpt,
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_CONFIG_MODE;
         evt.lcscpEventParams.modeToConfig.modeNumber = pEvt->p_params->mode_config.mode_number_start;
         evt.lcscpEventParams.modeToConfig.listEntries = pEvt->p_params->mode_config.mode_entries;
-        evt.lcscpEventParams.modeToConfig.pConfig = (btle_LcsModeConfig_t*)pEvt->p_params->mode_config.config;
+#ifdef HELENA
+        evt.lcscpEventParams.modeToConfig.pConfig = (btle_LcsModeConfig_t*)pEvt->p_params->mode_config.config_hlmt;
+#elif defined BILLY
+        evt.lcscpEventParams.modeToConfig.pConfig = (btle_LcsModeConfig_t*)pEvt->p_params->mode_config.config_bk;
+#endif // defined
         break;
     case BLE_LCS_CTRLPT_EVT_CNFG_GROUP:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_CONFIG_GROUP;
@@ -456,8 +464,13 @@ static void lcsCpEventHandler(ble_lcs_ctrlpt_t * pLcsCtrlpt,
         break;
     case BLE_LCS_CTRLPT_EVT_SET_LIMITS:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_SET_LIMITS;
+#ifdef HELENA
         evt.lcscpEventParams.currentLimits.floodInPercent = pEvt->p_params->current_limits.flood;
         evt.lcscpEventParams.currentLimits.spotInPercent = pEvt->p_params->current_limits.spot;
+#elif defined BILLY
+        evt.lcscpEventParams.currentLimits.mainBeamInPercent = pEvt->p_params->current_limits.main_beam;
+        evt.lcscpEventParams.currentLimits.highBeamInPercent = pEvt->p_params->current_limits.high_beam;
+#endif // defined
         break;
     case BLE_LCS_CTRLPT_EVT_REQ_PREF_MODE:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_REQ_PREF_MODE;
@@ -545,16 +558,25 @@ static void servicesInit(char const* pDrvRev, btle_lcsFeature_t* pFeature)
     if (state.handler != NULL)                      // control point can not be
         lcsInit.cp_evt_handler = lcsCpEventHandler; // included without event handler
     lcsInit.error_handler = lcsErrorHandler;
-    lcsInit.features.flood_supported = pFeature->floodSupported;
-    lcsInit.features.spot_supported = pFeature->spotSupported;
-    lcsInit.features.pitch_comp_supported = pFeature->pitchSupported;
-    lcsInit.features.mode_change_supported = 1;
-    lcsInit.features.mode_config_supported = 1;
-    lcsInit.features.mode_grouping_supported = 1;
-    lcsInit.features.led_config_check_supported = 1;
-    lcsInit.features.sensor_calibration_supported = 1;
-    lcsInit.features.current_limitation_supported = 1;
-    lcsInit.features.preferred_mode_supported = 1;
+#ifdef HELENA
+    lcsInit.feature.light_type = BLE_LCS_LT_HELMET_LIGHT;
+    lcsInit.feature.hlmt_features.flood_supported = pFeature->floodSupported;
+    lcsInit.feature.hlmt_features.spot_supported = pFeature->spotSupported;
+    lcsInit.feature.hlmt_features.pitch_comp_supported = pFeature->pitchSupported;
+    lcsInit.feature.stp_features.sensor_calibration_supported = pFeature->pitchSupported;
+#elif defined BILLY
+    lcsInit.feature.light_type = BLE_LCS_LT_BIKE_LIGHT;
+    lcsInit.feature.bk_features.main_beam_supported = pFeature->mainBeamSupported;
+    lcsInit.feature.bk_features.high_beam_supported = pFeature->highBeamSupported;
+    lcsInit.feature.stp_features.sensor_calibration_supported = 1;  /// to do: only allow for successful initialization of sensor
+#endif // defined
+    lcsInit.feature.cfg_features.mode_change_supported = 1;
+    lcsInit.feature.cfg_features.mode_config_supported = 1;
+    lcsInit.feature.cfg_features.mode_grouping_supported = 1;
+    lcsInit.feature.cfg_features.preferred_mode_supported = 1;
+    lcsInit.feature.cfg_features.temporal_mode_supported = 0;
+    lcsInit.feature.stp_features.led_config_check_supported = 1;
+    lcsInit.feature.stp_features.current_limitation_supported = 1;
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lm_attr_md.cccd_write_perm);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lf_attr_md.read_perm);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lcp_attr_md.cccd_write_perm);
@@ -712,39 +734,69 @@ void lcsCEventHandler(ble_lcs_c_t * pBleLcsC, ble_lcs_c_evt_t * pEvt)
             evt.evt = BTLE_EVT_LCS;
             evt.subEvt.lcs = BTLE_EVT_LCS_MEAS_RECEIVED;
             evt.connHandle = pEvt->p_server->conn_handle;
-
-            evt.lcsmEventParams.mode.setup.flood             = pEvt->data.measurement.mode.setup.flood;
-            evt.lcsmEventParams.mode.setup.spot              = pEvt->data.measurement.mode.setup.spot;
-            evt.lcsmEventParams.mode.setup.pitchCompensation = pEvt->data.measurement.mode.setup.pitchCompensation;
-            evt.lcsmEventParams.mode.setup.cloned            = pEvt->data.measurement.mode.setup.cloned;
-            evt.lcsmEventParams.mode.setup.taillight         = pEvt->data.measurement.mode.setup.taillight;
-            evt.lcsmEventParams.mode.setup.brakelight        = pEvt->data.measurement.mode.setup.brakelight;
-
+#ifdef HELENA
+            evt.lcsmEventParams.mode.setup.flood             = pEvt->data.measurement.hlmt.mode.setup.flood;
+            evt.lcsmEventParams.mode.setup.spot              = pEvt->data.measurement.hlmt.mode.setup.spot;
+            evt.lcsmEventParams.mode.setup.pitchCompensation = pEvt->data.measurement.hlmt.mode.setup.pitchCompensation;
+            evt.lcsmEventParams.mode.setup.cloned            = pEvt->data.measurement.hlmt.mode.setup.cloned;
+            evt.lcsmEventParams.mode.setup.taillight         = pEvt->data.measurement.hlmt.mode.setup.taillight;
+            evt.lcsmEventParams.mode.setup.brakelight        = pEvt->data.measurement.hlmt.mode.setup.brakelight;
             if (pEvt->data.measurement.flags.intensity_present)
             {
-                if (pEvt->data.measurement.mode.setup.pitchCompensation)
-                    evt.lcsmEventParams.mode.illuminanceInLux = pEvt->data.measurement.mode.intensity;
+                if (pEvt->data.measurement.hlmt.mode.setup.pitchCompensation)
+                    evt.lcsmEventParams.mode.illuminanceInLux = pEvt->data.measurement.hlmt.mode.intensity;
                 else
-                    evt.lcsmEventParams.mode.intensityInPercent = pEvt->data.measurement.mode.intensity;
+                    evt.lcsmEventParams.mode.intensityInPercent = pEvt->data.measurement.hlmt.mode.intensity;
             }
             if (pEvt->data.measurement.flags.flood_status_present)
             {
-                evt.lcsmEventParams.statusFlood.overcurrent    = pEvt->data.measurement.flood_status.overcurrent;
-                evt.lcsmEventParams.statusFlood.inputVoltage   = pEvt->data.measurement.flood_status.voltage;
-                evt.lcsmEventParams.statusFlood.temperature    = pEvt->data.measurement.flood_status.temperature;
-                evt.lcsmEventParams.statusFlood.dutyCycleLimit = pEvt->data.measurement.flood_status.dutycycle;
+                evt.lcsmEventParams.statusFlood.overcurrent    = pEvt->data.measurement.hlmt.flood_status.overcurrent;
+                evt.lcsmEventParams.statusFlood.inputVoltage   = pEvt->data.measurement.hlmt.flood_status.voltage;
+                evt.lcsmEventParams.statusFlood.temperature    = pEvt->data.measurement.hlmt.flood_status.temperature;
+                evt.lcsmEventParams.statusFlood.dutyCycleLimit = pEvt->data.measurement.hlmt.flood_status.dutycycle;
             }
             if (pEvt->data.measurement.flags.spot_status_present)
             {
-                evt.lcsmEventParams.statusSpot.overcurrent    = pEvt->data.measurement.spot_status.overcurrent;
-                evt.lcsmEventParams.statusSpot.inputVoltage   = pEvt->data.measurement.spot_status.voltage;
-                evt.lcsmEventParams.statusSpot.temperature    = pEvt->data.measurement.spot_status.temperature;
-                evt.lcsmEventParams.statusSpot.dutyCycleLimit = pEvt->data.measurement.spot_status.dutycycle;
+                evt.lcsmEventParams.statusSpot.overcurrent    = pEvt->data.measurement.hlmt.spot_status.overcurrent;
+                evt.lcsmEventParams.statusSpot.inputVoltage   = pEvt->data.measurement.hlmt.spot_status.voltage;
+                evt.lcsmEventParams.statusSpot.temperature    = pEvt->data.measurement.hlmt.spot_status.temperature;
+                evt.lcsmEventParams.statusSpot.dutyCycleLimit = pEvt->data.measurement.hlmt.spot_status.dutycycle;
             }
             if (pEvt->data.measurement.flags.flood_power_present)
-                evt.lcsmEventParams.powerFlood = pEvt->data.measurement.flood_power;
+                evt.lcsmEventParams.powerFlood = pEvt->data.measurement.hlmt.flood_power;
             if (pEvt->data.measurement.flags.spot_power_present)
-                evt.lcsmEventParams.powerSpot = pEvt->data.measurement.spot_power;
+                evt.lcsmEventParams.powerSpot = pEvt->data.measurement.hlmt.spot_power;
+#elif defined BILLY
+            evt.lcsmEventParams.mode.setup.mainBeam          = pEvt->data.measurement.bk.mode.setup.main_beam;
+            evt.lcsmEventParams.mode.setup.extendedMainBeam  = pEvt->data.measurement.bk.mode.setup.extended_main_beam;
+            evt.lcsmEventParams.mode.setup.highBeam          = pEvt->data.measurement.bk.mode.setup.high_beam;
+            evt.lcsmEventParams.mode.setup.daylight          = pEvt->data.measurement.bk.mode.setup.daylight;
+            evt.lcsmEventParams.mode.setup.taillight         = pEvt->data.measurement.bk.mode.setup.taillight;
+            evt.lcsmEventParams.mode.setup.brakelight        = pEvt->data.measurement.bk.mode.setup.brakelight;
+            if (pEvt->data.measurement.flags.intensity_present)
+            {
+                evt.lcsmEventParams.mode.mainBeamIntensityInPercent = pEvt->data.measurement.bk.mode.main_beam_intensity;
+                evt.lcsmEventParams.mode.highBeamIntensityInPercent = pEvt->data.measurement.bk.mode.high_beam_intensity;
+            }
+            if (pEvt->data.measurement.flags.main_beam_status_present)
+            {
+                evt.lcsmEventParams.statusMainBeam.overcurrent    = pEvt->data.measurement.bk.main_beam_status.overcurrent;
+                evt.lcsmEventParams.statusMainBeam.inputVoltage   = pEvt->data.measurement.bk.main_beam_status.voltage;
+                evt.lcsmEventParams.statusMainBeam.temperature    = pEvt->data.measurement.bk.main_beam_status.temperature;
+                evt.lcsmEventParams.statusMainBeam.dutyCycleLimit = pEvt->data.measurement.bk.main_beam_status.dutycycle;
+            }
+            if (pEvt->data.measurement.flags.high_beam_status_present)
+            {
+                evt.lcsmEventParams.statusHighBeam.overcurrent    = pEvt->data.measurement.bk.high_beam_status.overcurrent;
+                evt.lcsmEventParams.statusHighBeam.inputVoltage   = pEvt->data.measurement.bk.high_beam_status.voltage;
+                evt.lcsmEventParams.statusHighBeam.temperature    = pEvt->data.measurement.bk.high_beam_status.temperature;
+                evt.lcsmEventParams.statusHighBeam.dutyCycleLimit = pEvt->data.measurement.bk.high_beam_status.dutycycle;
+            }
+            if (pEvt->data.measurement.flags.main_beam_power_present)
+                evt.lcsmEventParams.powerMainBeam = pEvt->data.measurement.bk.main_beam_power;
+            if (pEvt->data.measurement.flags.spot_power_present)
+                evt.lcsmEventParams.powerHighBeam = pEvt->data.measurement.bk.high_beam_power;
+#endif // BILLY
             if (pEvt->data.measurement.flags.temperature_present)
                 evt.lcsmEventParams.temperature = pEvt->data.measurement.temperature;
             if (pEvt->data.measurement.flags.input_voltage_present)
@@ -1089,37 +1141,74 @@ uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData)
         return NRF_SUCCESS;
 
     memset(&notifyData, 0, sizeof(ble_lcs_lm_t));
-    notifyData.mode.setup.flood = pData->mode.setup.flood ? 1 : 0;
-    notifyData.mode.setup.spot = pData->mode.setup.spot ? 1 : 0;
-    notifyData.mode.setup.pitchCompensation = pData->mode.setup.pitchCompensation ? 1 : 0;
-    notifyData.mode.setup.cloned = pData->mode.setup.cloned ? 1 : 0;
-    notifyData.mode.setup.taillight = pData->mode.setup.taillight ? 1 : 0;
-    notifyData.mode.setup.brakelight = pData->mode.setup.brakelight ? 1 : 0;
+#ifdef HELENA
+    notifyData.light_type = BLE_LCS_LT_HELMET_LIGHT;
+    notifyData.hlmt.mode.setup.flood = pData->mode.setup.flood ? 1 : 0;
+    notifyData.hlmt.mode.setup.spot = pData->mode.setup.spot ? 1 : 0;
+    notifyData.hlmt.mode.setup.pitchCompensation = pData->mode.setup.pitchCompensation ? 1 : 0;
+    notifyData.hlmt.mode.setup.cloned = pData->mode.setup.cloned ? 1 : 0;
+    notifyData.hlmt.mode.setup.taillight = pData->mode.setup.taillight ? 1 : 0;
+    notifyData.hlmt.mode.setup.brakelight = pData->mode.setup.brakelight ? 1 : 0;
     if (pData->mode.setup.flood || pData->mode.setup.spot)
     {
         notifyData.flags.intensity_present = 1;
-        notifyData.mode.intensity = pData->mode.intensityInPercent;  // don't care if pitch compensated or not, variables share same location
+        notifyData.hlmt.mode.intensity = pData->mode.intensityInPercent;  // don't care if pitch compensated or not, variables share same location
     }
     if (pData->mode.setup.flood)
     {
         notifyData.flags.flood_power_present = 1;
         notifyData.flags.flood_status_present = 1;
-        notifyData.flood_power = pData->powerFlood;
-        notifyData.flood_status.overcurrent = pData->statusFlood.overcurrent ? 1 : 0;
-        notifyData.flood_status.voltage = pData->statusFlood.inputVoltage ? 1 : 0;
-        notifyData.flood_status.temperature = pData->statusFlood.temperature ? 1 : 0;
-        notifyData.flood_status.dutycycle = pData->statusFlood.dutyCycleLimit ? 1 : 0;
+        notifyData.hlmt.flood_power = pData->powerFlood;
+        notifyData.hlmt.flood_status.overcurrent = pData->statusFlood.overcurrent ? 1 : 0;
+        notifyData.hlmt.flood_status.voltage = pData->statusFlood.inputVoltage ? 1 : 0;
+        notifyData.hlmt.flood_status.temperature = pData->statusFlood.temperature ? 1 : 0;
+        notifyData.hlmt.flood_status.dutycycle = pData->statusFlood.dutyCycleLimit ? 1 : 0;
     }
     if (pData->mode.setup.spot)
     {
         notifyData.flags.spot_power_present = 1;
         notifyData.flags.spot_status_present = 1;
-        notifyData.spot_power = pData->powerSpot;
-        notifyData.spot_status.overcurrent = pData->statusSpot.overcurrent ? 1 : 0;
-        notifyData.spot_status.voltage = pData->statusSpot.inputVoltage ? 1 : 0;
-        notifyData.spot_status.temperature = pData->statusSpot.temperature ? 1 : 0;
-        notifyData.spot_status.dutycycle = pData->statusSpot.dutyCycleLimit ? 1 : 0;
+        notifyData.hlmt.spot_power = pData->powerSpot;
+        notifyData.hlmt.spot_status.overcurrent = pData->statusSpot.overcurrent ? 1 : 0;
+        notifyData.hlmt.spot_status.voltage = pData->statusSpot.inputVoltage ? 1 : 0;
+        notifyData.hlmt.spot_status.temperature = pData->statusSpot.temperature ? 1 : 0;
+        notifyData.hlmt.spot_status.dutycycle = pData->statusSpot.dutyCycleLimit ? 1 : 0;
     }
+#elif defined BILLY
+    notifyData.light_type = BLE_LCS_LT_BIKE_LIGHT;
+    notifyData.bk.mode.setup.main_beam = pData->mode.setup.mainBeam ? 1 : 0;
+    notifyData.bk.mode.setup.extended_main_beam = pData->mode.setup.extendedMainBeam ? 1 : 0;
+    notifyData.bk.mode.setup.high_beam = pData->mode.setup.highBeam ? 1 : 0;
+    notifyData.bk.mode.setup.daylight = pData->mode.setup.daylight ? 1 : 0;
+    notifyData.bk.mode.setup.taillight = pData->mode.setup.taillight ? 1 : 0;
+    notifyData.bk.mode.setup.brakelight = pData->mode.setup.brakelight ? 1 : 0;
+    if (pData->mode.setup.mainBeam || pData->mode.setup.extendedMainBeam || pData->mode.setup.highBeam)
+    {
+        notifyData.flags.intensity_present = 1;
+        notifyData.bk.mode.main_beam_intensity = pData->mode.mainBeamIntensityInPercent;
+        notifyData.bk.mode.main_beam_intensity = pData->mode.highBeamIntensityInPercent;
+    }
+    if (pData->mode.setup.mainBeam || pData->mode.setup.extendedMainBeam)
+    {
+        notifyData.flags.main_beam_power_present        = 1;
+        notifyData.flags.main_beam_status_present       = 1;
+        notifyData.bk.main_beam_power              = pData->powerMainBeam;
+        notifyData.bk.main_beam_status.overcurrent = pData->statusMainBeam.overcurrent ? 1 : 0;
+        notifyData.bk.main_beam_status.voltage     = pData->statusMainBeam.inputVoltage ? 1 : 0;
+        notifyData.bk.main_beam_status.temperature = pData->statusMainBeam.temperature ? 1 : 0;
+        notifyData.bk.main_beam_status.dutycycle   = pData->statusMainBeam.dutyCycleLimit ? 1 : 0;
+    }
+    if (pData->mode.setup.highBeam)
+    {
+        notifyData.flags.high_beam_power_present   = 1;
+        notifyData.flags.high_beam_status_present  = 1;
+        notifyData.bk.high_beam_power              = pData->powerHighBeam;
+        notifyData.bk.high_beam_status.overcurrent = pData->statusHighBeam.overcurrent ? 1 : 0;
+        notifyData.bk.high_beam_status.voltage     = pData->statusHighBeam.inputVoltage ? 1 : 0;
+        notifyData.bk.high_beam_status.temperature = pData->statusHighBeam.temperature ? 1 : 0;
+        notifyData.bk.high_beam_status.dutycycle   = pData->statusHighBeam.dutyCycleLimit ? 1 : 0;
+    }
+#endif // defined
     if (pData->temperature >= -40 && pData->temperature <= 85)
     {
         notifyData.flags.temperature_present = 1;
@@ -1172,13 +1261,18 @@ uint32_t btle_SendEventResponse(const btle_LcscpEventResponse_t *pRsp, uint16_t 
         rsp.params.group_config = pRsp->responseParams.groupCnt;
         break;
     case BTLE_EVT_LCSCP_REQ_MODE_CONFIG:
-        rsp.params.mode_config_list.p_list = (ble_lcs_light_mode_t*)pRsp->responseParams.modeList.pList;
+        rsp.params.mode_config_list.p_list_hlmt = (ble_lcs_hlmt_mode_t*)pRsp->responseParams.modeList.pList;
         rsp.params.mode_config_list.num_of_entries = pRsp->responseParams.modeList.listEntries;
         break;
     case BTLE_EVT_LCSCP_REQ_LED_CONFIG:
     case BTLE_EVT_LCSCP_CHECK_LED_CONFIG:
+#ifdef HELENA
         rsp.params.led_config.cnt_flood = pRsp->responseParams.ledConfig.floodCnt;
         rsp.params.led_config.cnt_spot = pRsp->responseParams.ledConfig.spotCnt;
+#elif defined BILLY
+        rsp.params.led_config.cnt_main_beam = pRsp->responseParams.ledConfig.mainBeamCnt;
+        rsp.params.led_config.cnt_high_beam = pRsp->responseParams.ledConfig.highBeamCnt;
+#endif // defined
         break;
     case BTLE_EVT_LCSCP_REQ_SENS_OFFSET:
     case BTLE_EVT_LCSCP_CALIB_SENS_OFFSET:
@@ -1187,8 +1281,13 @@ uint32_t btle_SendEventResponse(const btle_LcscpEventResponse_t *pRsp, uint16_t 
         rsp.params.sens_offset.z = pRsp->responseParams.sensOffset.z;
         break;
     case BTLE_EVT_LCSCP_REQ_LIMITS:
+#ifdef HELENA
         rsp.params.current_limits.flood = pRsp->responseParams.currentLimits.floodInPercent;
         rsp.params.current_limits.spot = pRsp->responseParams.currentLimits.spotInPercent;
+#elif defined BILLY
+        rsp.params.current_limits.main_beam = pRsp->responseParams.currentLimits.mainBeamInPercent;
+        rsp.params.current_limits.high_beam = pRsp->responseParams.currentLimits.highBeamInPercent;
+#endif // BILLY
         break;
     case BTLE_EVT_LCSCP_REQ_PREF_MODE:
         rsp.params.pref_mode = pRsp->responseParams.prefMode;

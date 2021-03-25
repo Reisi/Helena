@@ -33,11 +33,11 @@ static uint32_t light_measurement_char_add(ble_lcs_t * p_lcs, const ble_lcs_init
     ble_gatts_attr_md_t attr_md;
     ble_uuid_t          ble_uuid;
     uint8_t             init_value[BLE_LCS_LM_MIN_CHAR_LEN];
-    union
+    /*union
     {
         ble_lcs_light_setup_t raw;
         uint8_t               encoded;
-    } setup;
+    } setup;*/
 
     memset(&cccd_md, 0, sizeof(ble_gatts_attr_md_t));
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&cccd_md.read_perm);
@@ -64,8 +64,8 @@ static uint32_t light_measurement_char_add(ble_lcs_t * p_lcs, const ble_lcs_init
     attr_md.vlen    = 1;
 
     memset(init_value, 0, sizeof(init_value));
-    setup.raw = p_lcs_init->initial_mode.setup;
-    init_value[BLE_LCS_LM_MIN_CHAR_LEN - 1] = setup.encoded;
+    //setup.raw = p_lcs_init->initial_mode.setup;
+    init_value[BLE_LCS_LM_MIN_CHAR_LEN - 1] = 0; //setup.encoded;
 
     memset(&attr_char_value, 0, sizeof(ble_gatts_attr_t));
     attr_char_value.p_uuid    = &ble_uuid;
@@ -87,13 +87,44 @@ static uint32_t light_feature_char_add(ble_lcs_t * p_lcs, const ble_lcs_init_t *
     ble_gatts_attr_t    attr_char_value;
     ble_gatts_attr_md_t attr_md;
     ble_uuid_t          ble_uuid;
+    uint8_t init_value_encoded[4];
+
+    init_value_encoded[0] = (uint8_t)p_lcs_init->feature.light_type;
     union
     {
-        ble_lcs_lf_t raw;
-        uint16_t     encoded;
-    } init_value = {.raw = p_lcs_init->features};
-    uint8_t init_value_encoded[2];
-    uint16_encode(init_value.encoded, init_value_encoded);
+        ble_lcs_lf_cfg_t raw;
+        uint8_t          encoded;
+    } init_value_cfg = {.raw = p_lcs_init->feature.cfg_features};
+    init_value_encoded[1] = init_value_cfg.encoded;
+    union
+    {
+        ble_lcs_lf_stp_t raw;
+        uint8_t          encoded;
+    } init_value_stp = {.raw = p_lcs_init->feature.stp_features};
+    init_value_encoded[2] = init_value_stp.encoded;
+    union
+    {
+        ble_lcs_lf_hlmt_t hlmt;
+        ble_lcs_lf_bk_t   bk;
+        //ble_lcs_lf_tl_t   tl;
+        uint8_t           encoded;
+    } init_value_lght;
+    switch (p_lcs_init->feature.light_type)
+    {
+    case BLE_LCS_LT_HELMET_LIGHT:
+        init_value_lght.hlmt = p_lcs_init->feature.hlmt_features;
+        break;
+    case BLE_LCS_LT_BIKE_LIGHT:
+        init_value_lght.bk   = p_lcs_init->feature.bk_features;
+        break;
+    /*case BLE_LCS_LT_TL_LIGHT:
+        init_value_lght.tl   = p_lcs_init->tl_features;
+        break;*/
+    default:
+        init_value_lght.encoded = 0;
+        break;
+    }
+    init_value_encoded[3] = init_value_lght.encoded;
 
     memset(&char_md, 0, sizeof(ble_gatts_char_md_t));
     char_md.char_props.read   = 1;
@@ -276,80 +307,163 @@ static uint8_t lm_encode(const ble_lcs_lm_t * p_lcs_lm, const ble_lcs_lf_t * p_f
 
     union
     {
-        ble_lcs_light_setup_t raw;
+        ble_lcs_hlmt_setup_t  hlmt;
+        ble_lcs_bk_setup_t    bk;
+        //ble_lcs_tl_setup_t    tl;
         uint8_t               encoded;
     } setup;
 
-    // encode flags
-    flags.raw = p_lcs_lm->flags;
-    if (p_features->flood_supported == 0)
-    {
-        flags.raw.flood_status_present = 0;
-        flags.raw.flood_power_present = 0;
-    }
-    if (p_features->spot_supported == 0)
-    {
-        flags.raw.spot_status_present = 0;
-        flags.raw.spot_power_present = 0;
-    }
-    if (p_features->pitch_comp_supported == 0)
-    {
-        flags.raw.pitch_present = 0;
-    }
-    len += uint16_encode(flags.encoded & BLE_LCS_LM_FLAGS_MASK, &p_encoded_buffer[len]);
+    p_encoded_buffer[len++] = (uint8_t)p_lcs_lm->light_type;
 
-    // encode setup
-    setup.raw = p_lcs_lm->mode.setup;
-    p_encoded_buffer[len++] = setup.encoded;
-
-    // encode intensity
-    if (flags.raw.intensity_present)
+    switch (p_lcs_lm->light_type)
     {
-        p_encoded_buffer[len++] = p_lcs_lm->mode.intensity;
-    }
+    case BLE_LCS_LT_HELMET_LIGHT:
+        // encode flags
+        flags.raw = p_lcs_lm->flags;
+        /*if (p_features->hlmt_features.flood_supported == 0)
+        {
+            flags.raw.flood_status_present = 0;
+            flags.raw.flood_power_present = 0;
+        }
+        if (p_features->hlmt_features.spot_supported == 0)
+        {
+            flags.raw.spot_status_present = 0;
+            flags.raw.spot_power_present = 0;
+        }
+        if (p_features->hlmt_features.pitch_comp_supported == 0)
+        {
+            flags.raw.pitch_present = 0;
+        }*/
+        len += uint16_encode(flags.encoded & BLE_LCS_LM_FLAGS_MASK, &p_encoded_buffer[len]);
 
-    // encode flood status
-    if (flags.raw.flood_status_present)
-    {
-        status_flags.raw = p_lcs_lm->flood_status;
-        p_encoded_buffer[len++] = status_flags.encoded & BLE_LCS_LM_STATUS_FLAGS_MASK;
-    }
+        // encode setup
+        setup.hlmt = p_lcs_lm->hlmt.mode.setup;
+        p_encoded_buffer[len++] = setup.encoded;
 
-    // encode spot status
-    if (flags.raw.spot_status_present)
-    {
-        status_flags.raw = p_lcs_lm->spot_status;
-        p_encoded_buffer[len++] = status_flags.encoded & BLE_LCS_LM_STATUS_FLAGS_MASK;
-    }
+        // encode intensity
+        if (flags.raw.intensity_present)
+        {
+            p_encoded_buffer[len++] = p_lcs_lm->hlmt.mode.intensity;
+        }
 
-    // encode flood output power
-    if (flags.raw.flood_power_present)
-    {
-        len += uint16_encode(p_lcs_lm->flood_power, &p_encoded_buffer[len]);
-    }
+        // encode flood status
+        if (flags.raw.flood_status_present)
+        {
+            status_flags.raw = p_lcs_lm->hlmt.flood_status;
+            p_encoded_buffer[len++] = status_flags.encoded & BLE_LCS_LM_STATUS_FLAGS_MASK;
+        }
 
-    // encode spot output power
-    if (flags.raw.spot_power_present)
-    {
-        len += uint16_encode(p_lcs_lm->spot_power, &p_encoded_buffer[len]);
-    }
+        // encode spot status
+        if (flags.raw.spot_status_present)
+        {
+            status_flags.raw = p_lcs_lm->hlmt.spot_status;
+            p_encoded_buffer[len++] = status_flags.encoded & BLE_LCS_LM_STATUS_FLAGS_MASK;
+        }
 
-    // encode temperature
-    if (flags.raw.temperature_present)
-    {
-        p_encoded_buffer[len++] = p_lcs_lm->temperature;
-    }
+        // encode flood output power
+        if (flags.raw.flood_power_present)
+        {
+            len += uint16_encode(p_lcs_lm->hlmt.flood_power, &p_encoded_buffer[len]);
+        }
 
-    // encode input voltage
-    if (flags.raw.input_voltage_present)
-    {
-        len += uint16_encode(p_lcs_lm->input_voltage, &p_encoded_buffer[len]);
-    }
+        // encode spot output power
+        if (flags.raw.spot_power_present)
+        {
+            len += uint16_encode(p_lcs_lm->hlmt.spot_power, &p_encoded_buffer[len]);
+        }
 
-    // encode pitch
-    if (flags.raw.pitch_present)
-    {
-        p_encoded_buffer[len++] = p_lcs_lm->pitch;
+        // encode temperature
+        if (flags.raw.temperature_present)
+        {
+            p_encoded_buffer[len++] = p_lcs_lm->temperature;
+        }
+
+        // encode input voltage
+        if (flags.raw.input_voltage_present)
+        {
+            len += uint16_encode(p_lcs_lm->input_voltage, &p_encoded_buffer[len]);
+        }
+
+        // encode pitch
+        if (flags.raw.pitch_present)
+        {
+            p_encoded_buffer[len++] = p_lcs_lm->pitch;
+        }
+
+        break;
+    case BLE_LCS_LT_BIKE_LIGHT:
+        // encode flags
+        flags.raw = p_lcs_lm->flags;
+        /*if (p_features->bk_features.main_beam_supported == 0 &&
+            p_features->bk_features.extended_main_beam_supported == 0)
+        {
+            flags.raw.main_beam_status_present = 0;
+            flags.raw.main_beam_power_present = 0;
+        }
+        if (p_features->bk_features.high_beam_supported == 0)
+        {
+            flags.raw.high_beam_status_present = 0;
+            flags.raw.high_beam_power_present = 0;
+        }*/
+        len += uint16_encode(flags.encoded & BLE_LCS_LM_FLAGS_MASK, &p_encoded_buffer[len]);
+
+        // encode setup
+        setup.bk = p_lcs_lm->bk.mode.setup;
+        p_encoded_buffer[len++] = setup.encoded;
+
+        // encode intensity
+        if (flags.raw.intensity_present)
+        {
+            p_encoded_buffer[len++] = p_lcs_lm->bk.mode.main_beam_intensity;
+            p_encoded_buffer[len++] = p_lcs_lm->bk.mode.high_beam_intensity;
+        }
+
+        // encode main beam status
+        if (flags.raw.main_beam_status_present)
+        {
+            status_flags.raw = p_lcs_lm->bk.main_beam_status;
+            p_encoded_buffer[len++] = status_flags.encoded & BLE_LCS_LM_STATUS_FLAGS_MASK;
+        }
+
+        // encode high beam status
+        if (flags.raw.high_beam_status_present)
+        {
+            status_flags.raw = p_lcs_lm->bk.high_beam_status;
+            p_encoded_buffer[len++] = status_flags.encoded & BLE_LCS_LM_STATUS_FLAGS_MASK;
+        }
+
+        // encode main beam output power
+        if (flags.raw.main_beam_power_present)
+        {
+            len += uint16_encode(p_lcs_lm->bk.main_beam_power, &p_encoded_buffer[len]);
+        }
+
+        // encode high beam output power
+        if (flags.raw.high_beam_power_present)
+        {
+            len += uint16_encode(p_lcs_lm->bk.high_beam_power, &p_encoded_buffer[len]);
+        }
+
+        // encode temperature
+        if (flags.raw.temperature_present)
+        {
+            p_encoded_buffer[len++] = p_lcs_lm->temperature;
+        }
+
+        // encode input voltage
+        if (flags.raw.input_voltage_present)
+        {
+            len += uint16_encode(p_lcs_lm->input_voltage, &p_encoded_buffer[len]);
+        }
+
+        // encode inclination
+        if (flags.raw.pitch_present)
+        {
+            p_encoded_buffer[len++] = p_lcs_lm->pitch;
+        }
+        break;
+    default:
+        break;
     }
 
     return len;
@@ -375,7 +489,7 @@ uint32_t ble_lcs_init(ble_lcs_t * p_lcs, uint8_t max_clients, const ble_lcs_init
 
     // Initialize service structure
     p_lcs->evt_handler = p_lcs_init->evt_handler;
-    p_lcs->features    = p_lcs_init->features;
+    p_lcs->feature     = p_lcs_init->feature;
 
     while (max_clients)
     {
@@ -422,7 +536,7 @@ uint32_t ble_lcs_init(ble_lcs_t * p_lcs, uint8_t max_clients, const ble_lcs_init
     memset(&ctrlpt_init, 0, sizeof(ble_lcs_ctrlpt_init_t));
     ctrlpt_init.uuid_type          = p_lcs->uuid_type;
     ctrlpt_init.lc_ctrlpt_attr_md  = p_lcs_init->lcs_lcp_attr_md;
-    ctrlpt_init.supported_features = p_lcs_init->features;
+    ctrlpt_init.feature            = p_lcs_init->feature;
     ctrlpt_init.service_handle     = p_lcs->service_handle;
     ctrlpt_init.evt_handler        = p_lcs_init->cp_evt_handler;
     ctrlpt_init.error_handler      = p_lcs_init->error_handler;
@@ -483,7 +597,7 @@ uint32_t ble_lcs_light_measurement_send(const ble_lcs_t * p_lcs, uint16_t conn_h
         uint16_t               hvx_len;
         ble_gatts_hvx_params_t hvx_params;
 
-        len     = lm_encode(p_lcs_lm, &p_lcs->features, encoded_data);
+        len     = lm_encode(p_lcs_lm, &p_lcs->feature, encoded_data);
         hvx_len = len;
 
         memset(&hvx_params, 0, sizeof(ble_gatts_hvx_params_t));

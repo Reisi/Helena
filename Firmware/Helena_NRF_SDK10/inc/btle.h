@@ -78,28 +78,6 @@ typedef enum
     BTLE_EVT_LCSCP_SET_PREF_MODE                // set preferred mode
 } btle_LcsCtrlPtEventTypes_t;
 
-/**< available light setup for light control service */
-typedef struct
-{
-    bool flood             : 1;                 // flood active
-    bool spot              : 1;                 // spot active
-    bool pitchCompensation : 1;                 // pitch compensation enabled
-    bool cloned            : 1;                 // output cloned to both drivers
-    bool taillight         : 1;                 // external taillight enabled
-    bool brakelight        : 1;                 // external brake light enabled
-} btle_LcsLightSetup_t;
-
-/**< btle light configuration type */
-typedef struct
-{
-    btle_LcsLightSetup_t setup;
-    union
-    {
-        uint8_t intensityInPercent;             // used for setups without pitch compensation
-        uint8_t illuminanceInLux;               // used for setups with pitch compensation
-    };
-} btle_LcsModeConfig_t;
-
 /**< available light status flags for btle module */
 typedef struct
 {
@@ -109,14 +87,55 @@ typedef struct
     bool dutyCycleLimit : 1;                    // flag set if either min. or max. duty-cycle is reached
 } btle_lcsStatusFlags_t;
 
+/**< available light setup for light control service */
+typedef struct
+{
+#ifdef HELENA
+    bool flood             : 1;                 // flood active
+    bool spot              : 1;                 // spot active
+    bool pitchCompensation : 1;                 // pitch compensation enabled
+    bool cloned            : 1;                 // output cloned to both drivers
+#elif defined BILLY
+    bool mainBeam          : 1;                 // main beam active
+    bool extendedMainBeam  : 1;                 // extended main beam active
+    bool highBeam          : 1;                 // high beam active
+    bool daylight          : 1;                 // daylight active
+#endif //BILLY
+    bool taillight         : 1;                 // external taillight enabled
+    bool brakelight        : 1;                 // external brake light enabled
+} btle_LcsLightSetup_t;
+
+/**< btle light configuration type */
+typedef struct
+{
+    btle_LcsLightSetup_t setup;
+#ifdef HELENA
+    union
+    {
+        uint8_t intensityInPercent;             // used for setups without pitch compensation
+        uint8_t illuminanceInLux;               // used for setups with pitch compensation
+    };
+#elif defined BILLY
+    uint8_t mainBeamIntensityInPercent;
+    uint8_t highBeamIntensityInPercent;
+#endif //BILLY
+} btle_LcsModeConfig_t;
+
 /**< light data structure */
 typedef struct
 {
     btle_LcsModeConfig_t mode;                  // mode configuration, setup will always be included, intensity just if spot and/or flood are/is enabled
+#ifdef HELENA
     btle_lcsStatusFlags_t statusFlood;          // status of flood, will be included if flood is enabled
     btle_lcsStatusFlags_t statusSpot;           // status of spot, will be included if spot is enabled
     uint16_t powerFlood;                        // flood output power in mW, will be included if flood is active
     uint16_t powerSpot;                         // spot output power in mW, will be included if spot is active
+#elif defined BILLY
+    btle_lcsStatusFlags_t statusMainBeam;       // status of main beam, will be included if main beam or extended main beam is enabled
+    btle_lcsStatusFlags_t statusHighBeam;       // status of high beam, will be included if high beam is enabled
+    uint16_t powerMainBeam;                     // main beam output power in mW, will be included if main beam or extended main beam is active
+    uint16_t powerHighBeam;                     // high beam output power in mW, will be included if high beam is active
+#endif //BILLY
     int8_t temperature;                         // light temperature in °C, will be included if value is in range -40..85
     uint16_t inputVoltage;                      // input voltage in mV, will be included if value > 0
     int8_t pitch;                               // pitch angle in °, will be included if value is in range -90..+90
@@ -135,10 +154,15 @@ typedef union
     uint8_t groupConfig;                        // parameter for event type BTLE_EVT_LCSCP_CONFIG_GROUP
     struct
     {
+#ifdef HELENA
         int8_t floodInPercent;                  // flood current limit in % (related to hardware limit)
         int8_t spotInPercent;                   // spot current limit in % (related to hardware limit)
+#elif defined BILLY
+        int8_t mainBeamInPercent;               // main beam current limit in % (related to hardware limit)
+        int8_t highBeamInPercent;               // high beam current limit in % (related to hardware limit)
+#endif //BILLY
     } currentLimits;                            // parameter for event type BTLE_EVT_LCSCP_SET_LIMITS
-            uint8_t prefMode;                   // parameter for event type BTLE_EVT_LCSCP_SET_PREF_MODE
+    uint8_t prefMode;                           // parameter for event type BTLE_EVT_LCSCP_SET_PREF_MODE
 } btle_lcsCtrlPtEvent_t;
 
 /**< btle event structure */
@@ -184,8 +208,13 @@ typedef struct
         } modeList;                             // response parameter for event type BTLE_EVT_REQ_MODE_CONFIG
         struct
         {
+#ifdef HELENA
             uint8_t floodCnt;                   // number of leds in series connection connected to flood driver
             uint8_t spotCnt;                    // number of leds in series connection connected to spot driver
+#elif defined BILLY
+            uint8_t mainBeamCnt;                // number of leds in series connection connected to main beam driver
+            uint8_t highBeamCnt;                // number of leds in series connection connected to high beam driver
+#endif //BILLY
         } ledConfig;                            // response parameter for event type BTLE_EVT_LCSCP_REQ_LED_CONFIG and BTLE_EVT_LCSCP_CHECK_LED_CONFIG
         struct
         {
@@ -195,8 +224,13 @@ typedef struct
         } sensOffset;                           // response parameter for event type BTLE_EVT_LCSCP_REQ_SENS_OFFSET and BTLE_EVT_LCSCP_CALIB_SENS_OFFSET */
         struct
         {
+#ifdef HELENA
             int8_t floodInPercent;              // flood current limit in % (related to hardware limit)
             int8_t spotInPercent;               // spot current limit in % (related to hardware limit)
+#elif defined BILLY
+            int8_t mainBeamInPercent;           // main beam current limit in % (related to hardware limit)
+            int8_t highBeamInPercent;           // high beam current limit in % (related to hardware limit)
+#endif //BILLY
         } currentLimits;                        // response parameter for event type BTLE_EVT_LCSCP_REQ_LIMITS
         uint8_t prefMode;                       // response parameter for event type BTLE_EVT_LCSCP_REQ_PREF_MODE
     } responseParams;
@@ -208,10 +242,16 @@ typedef void (*btle_eventHandler_t)(btle_event_t * pEvt);
 /**< supported feature structure */
 typedef struct
 {
-    uint8_t floodSupported : 1;
-    uint8_t spotSupported  : 1;
-    uint8_t pitchSupported : 1;
+#ifdef HELENA
+    uint8_t floodSupported    : 1;
+    uint8_t spotSupported     : 1;
+    uint8_t pitchSupported    : 1;
     /// TODO: expand!
+#elif defined BILLY
+    uint8_t mainBeamSupported : 1;
+    uint8_t highBeamSupported : 1;
+
+#endif //BILLY
 } btle_lcsFeature_t;
 
 /**< scan mode */

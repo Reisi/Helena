@@ -10,16 +10,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ### Fixed
 ### Known Issues
 
+## [2.0.0]
+### Added
+ - added build target for "Billy" mode, a setup especially for bike lights 
+   without pitch compensation, but separate driver current for low and high 
+   beam.
+
+### Changed
+ - light control services was modified and extended to meet requirements for 
+   bicycle light
+
+### Removed
+
+### Fixed
+
+### Known Issues
+
+
 ## [1.1.0] - 2020-03-11
 ### Added
 - re-implemented reset survive (lamp keeps its mode even if it is reset by 
   watchdog)
 - release version
+
 ### Changed
 - reworked debug interface
+
 ### Removed
+
 ### Fixed
+
 ### Known Issues
+- Update from version 0.X might result in an infinite error loop. 
+  Workaround: flash back to old firmware and perform factory reset, then update
+  will work
 
 ## [1.0.0] - 2019-12-03
 ### Added
@@ -55,3 +79,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
   write operations are working.
 
 ### Known Issues
+- Update from version 0.X might result in an infinite error loop. 
+  Workaround: flash back to old firmware and perform factory reset, then update
+  will work

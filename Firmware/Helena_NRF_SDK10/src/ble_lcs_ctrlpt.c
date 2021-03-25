@@ -148,11 +148,13 @@ static bool is_cccd_configured(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, uint16_t conn_ha
  *
  * @param[in]    rcvd_val       received write value
  * @param[in]    len            value length
+ * @param[in]    light_type     type of light
  * @param[out]   decoded_ctrlpt decoded control point structure
  */
-static uint32_t lcs_ctrlpt_decode(uint8_t             * p_rcvd_val,
-                                 uint8_t               len,
-                                 ble_lcs_ctrlpt_val_t * p_write_val)
+static uint32_t lcs_ctrlpt_decode(uint8_t              * p_rcvd_val,
+                                  uint8_t                len,
+                                  ble_lcs_ctrlpt_t     * p_lcs_ctrlpt,
+                                  ble_lcs_ctrlpt_val_t * p_write_val)
 {
     uint8_t pos = 0;
 
@@ -184,22 +186,41 @@ static uint32_t lcs_ctrlpt_decode(uint8_t             * p_rcvd_val,
             break;
 
         case BLE_LCS_CTRLPT_OP_CODE_CNFG_MODE:
-            if (len - 2 > BLE_LCS_CTRLPT_MAX_NUM_OF_MODES * 2)
+            if ((p_lcs_ctrlpt->feature.light_type == BLE_LCS_LT_HELMET_LIGHT &&
+                 ((len - 2 > BLE_LCS_CTRLPT_MAX_NUM_OF_MODES * 2) || ((len - 2) % 2 != 0))) ||
+                (p_lcs_ctrlpt->feature.light_type == BLE_LCS_LT_BIKE_LIGHT &&
+                 ((len - 2 > BLE_LCS_CTRLPT_MAX_NUM_OF_MODES * 3) || ((len - 2) % 3 != 0))))
             {
                 return NRF_ERROR_INVALID_PARAM;
             }
+
             p_write_val->params.mode_config.mode_number_start = p_rcvd_val[pos++];
             p_write_val->params.mode_config.mode_entries = 0;
             for (uint_fast8_t i = 0; pos < len; i++)
             {
                 union
                 {
-                    ble_lcs_light_setup_t decoded;
-                    uint8_t               raw;
+                    ble_lcs_hlmt_setup_t hlmt_decoded;
+                    ble_lcs_bk_setup_t   bk_decoded;
+                    uint8_t              raw;
                 } setup;
                 setup.raw = p_rcvd_val[pos++];
-                p_write_val->params.mode_config.config[i].setup = setup.decoded;
-                p_write_val->params.mode_config.config[i].intensity = p_rcvd_val[pos++];
+
+                switch (p_lcs_ctrlpt->feature.light_type)
+                {
+                case BLE_LCS_LT_HELMET_LIGHT:
+                    p_write_val->params.mode_config.config_hlmt[i].setup = setup.hlmt_decoded;
+                    p_write_val->params.mode_config.config_hlmt[i].intensity = p_rcvd_val[pos++];
+                    break;
+                case BLE_LCS_LT_BIKE_LIGHT:
+                    p_write_val->params.mode_config.config_bk[i].setup = setup.bk_decoded;
+                    p_write_val->params.mode_config.config_bk[i].main_beam_intensity = p_rcvd_val[pos++];
+                    p_write_val->params.mode_config.config_bk[i].high_beam_intensity = p_rcvd_val[pos++];
+                    break;
+                case BLE_LCS_LT_TAIL_LIGHT:
+                default:
+                    break;
+                }
                 p_write_val->params.mode_config.mode_entries++;
             }
             break;
@@ -234,11 +255,13 @@ static uint32_t lcs_ctrlpt_decode(uint8_t             * p_rcvd_val,
 /**@brief encode a control point response indication.
  *
  * @param[in]   p_ctrlpt_rsp  structure containing response data to be encoded
+ * @param[in]   light_tape    type of light
  * @param[out]  p_data        pointer where data needs to be written
  * @return                    size of encoded data
  */
-static int ctrlpt_rsp_encode(const ble_lcs_ctrlpt_rsp_t  * p_ctrlpt_rsp,
-                             uint8_t               * p_data)
+static int ctrlpt_rsp_encode(const ble_lcs_ctrlpt_rsp_t * p_ctrlpt_rsp,
+                             ble_lcs_ctrlpt_t           * p_lcs_ctrlpt,
+                             uint8_t                    * p_data)
 {
     uint8_t len = 0;
 
@@ -261,12 +284,35 @@ static int ctrlpt_rsp_encode(const ble_lcs_ctrlpt_rsp_t  * p_ctrlpt_rsp,
                 {
                     union
                     {
-                        ble_lcs_light_setup_t raw;
+                        ble_lcs_hlmt_setup_t  hlmt_raw;
+                        ble_lcs_bk_setup_t    bk_raw;
                         uint8_t               encoded;
                     } setup;
-                    setup.raw = p_ctrlpt_rsp->params.mode_config_list.p_list[i].setup;
-                    p_data[len++] = setup.encoded;
-                    p_data[len++] = p_ctrlpt_rsp->params.mode_config_list.p_list[i].intensity;
+
+                    switch (p_lcs_ctrlpt->feature.light_type)
+                    {
+                    case BLE_LCS_LT_HELMET_LIGHT:
+                        if (len + 2 < BLE_LCS_CTRLPT_MAX_LEN)
+                        {
+                            setup.hlmt_raw = p_ctrlpt_rsp->params.mode_config_list.p_list_hlmt[i].setup;
+                            p_data[len++] = setup.encoded;
+                            p_data[len++] = p_ctrlpt_rsp->params.mode_config_list.p_list_hlmt[i].intensity;
+                        }
+                        break;
+                    case BLE_LCS_LT_BIKE_LIGHT:
+                        if (len + 3 < BLE_LCS_CTRLPT_MAX_LEN)
+                        {
+                            setup.bk_raw  = p_ctrlpt_rsp->params.mode_config_list.p_list_bk[i].setup;
+                            p_data[len++] = setup.encoded;
+                            p_data[len++] = p_ctrlpt_rsp->params.mode_config_list.p_list_bk[i].main_beam_intensity;
+                            p_data[len++] = p_ctrlpt_rsp->params.mode_config_list.p_list_bk[i].high_beam_intensity;
+                        }
+                        break;
+                    case BLE_LCS_LT_TAIL_LIGHT:
+                        break;
+                    default:
+                        break;
+                    }
                 }
                 break;
             case BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG:
@@ -306,7 +352,7 @@ static bool is_feature_supported(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_lcs_ctrlpt
            break;
 
         case BLE_LCS_CTRLPT_OP_CODE_REQ_GRP_CNFG:
-            if (p_lcs_ctrlpt->supported_features.mode_grouping_supported == 1)
+            if (p_lcs_ctrlpt->feature.cfg_features.mode_grouping_supported == 1)
             {
                 supported = true;
             }
@@ -317,21 +363,21 @@ static bool is_feature_supported(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_lcs_ctrlpt
             break;
 
         case BLE_LCS_CTRLPT_OP_CODE_SET_MODE:
-            if (p_lcs_ctrlpt->supported_features.mode_change_supported == 1)
+            if (p_lcs_ctrlpt->feature.cfg_features.mode_change_supported == 1)
             {
                 supported = true;
             }
             break;
 
         case BLE_LCS_CTRLPT_OP_CODE_CNFG_MODE:
-            if (p_lcs_ctrlpt->supported_features.mode_config_supported == 1)
+            if (p_lcs_ctrlpt->feature.cfg_features.mode_config_supported == 1)
             {
                 supported = true;
             }
             break;
 
         case BLE_LCS_CTRLPT_OP_CODE_CNFG_GROUP:
-            if (p_lcs_ctrlpt->supported_features.mode_grouping_supported == 1)
+            if (p_lcs_ctrlpt->feature.cfg_features.mode_grouping_supported == 1)
             {
                 supported = true;
             }
@@ -342,7 +388,7 @@ static bool is_feature_supported(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_lcs_ctrlpt
             break;
 
         case BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG:
-            if (p_lcs_ctrlpt->supported_features.led_config_check_supported == 1)
+            if (p_lcs_ctrlpt->feature.stp_features.led_config_check_supported == 1)
             {
                 supported = true;
             }
@@ -350,7 +396,7 @@ static bool is_feature_supported(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_lcs_ctrlpt
 
         case BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF:
         case BLE_LCS_CTRLPT_OP_CODE_REQ_SENS_OFF:
-            if (p_lcs_ctrlpt->supported_features.sensor_calibration_supported == 1)
+            if (p_lcs_ctrlpt->feature.stp_features.sensor_calibration_supported == 1)
             {
                 supported = true;
             }
@@ -358,7 +404,7 @@ static bool is_feature_supported(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_lcs_ctrlpt
 
         case BLE_LCS_CTRLPT_OP_CODE_REQ_LIMITS:
         case BLE_LCS_CTRLPT_OP_CODE_SET_LIMITS:
-            if (p_lcs_ctrlpt->supported_features.current_limitation_supported == 1)
+            if (p_lcs_ctrlpt->feature.stp_features.current_limitation_supported == 1)
             {
                 supported = true;
             }
@@ -366,7 +412,7 @@ static bool is_feature_supported(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, ble_lcs_ctrlpt
 
         case BLE_LCS_CTRLPT_OP_CODE_REQ_PREF_MODE:
         case BLE_LCS_CTRLPT_OP_CODE_SET_PREF_MODE:
-            if (p_lcs_ctrlpt->supported_features.preferred_mode_supported == 1)
+            if (p_lcs_ctrlpt->feature.cfg_features.preferred_mode_supported == 1)
             {
                 supported = true;
             }
@@ -435,7 +481,7 @@ static void on_ctrlpt_write(ble_lcs_ctrlpt_t       * p_lcs_ctrlpt,
     }
 
     ble_lcs_ctrlpt_val_t rcvd_ctrlpt;
-    err_code = lcs_ctrlpt_decode(p_evt_write->data, p_evt_write->len, &rcvd_ctrlpt);
+    err_code = lcs_ctrlpt_decode(p_evt_write->data, p_evt_write->len, p_lcs_ctrlpt, &rcvd_ctrlpt);
 
     if (err_code != NRF_SUCCESS)
     {
@@ -710,11 +756,11 @@ uint32_t ble_lcs_ctrlpt_init(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, uint8_t max_client
     }
     m_num_of_clients = max_clients;
 
-    p_lcs_ctrlpt->uuid_type          = p_lcs_ctrlpt_init->uuid_type;
-    p_lcs_ctrlpt->supported_features = p_lcs_ctrlpt_init->supported_features;
-    p_lcs_ctrlpt->service_handle     = p_lcs_ctrlpt_init->service_handle;
-    p_lcs_ctrlpt->evt_handler        = p_lcs_ctrlpt_init->evt_handler;
-    p_lcs_ctrlpt->error_handler      = p_lcs_ctrlpt_init->error_handler;
+    p_lcs_ctrlpt->uuid_type      = p_lcs_ctrlpt_init->uuid_type;
+    p_lcs_ctrlpt->feature        = p_lcs_ctrlpt_init->feature;
+    p_lcs_ctrlpt->service_handle = p_lcs_ctrlpt_init->service_handle;
+    p_lcs_ctrlpt->evt_handler    = p_lcs_ctrlpt_init->evt_handler;
+    p_lcs_ctrlpt->error_handler  = p_lcs_ctrlpt_init->error_handler;
 
     while (max_clients)
     {
@@ -814,7 +860,7 @@ uint32_t ble_lcs_ctrlpt_mode_resp(ble_lcs_ctrlpt_t * p_lcs_ctrlpt, uint16_t conn
 
     p_client->procedure_status = BLE_LCS_CTRLPT_RSP_CODE_IND_PENDING;
 
-    p_client->response.len = ctrlpt_rsp_encode(p_rsps,
+    p_client->response.len = ctrlpt_rsp_encode(p_rsps, p_lcs_ctrlpt,
                                                p_client->response.encoded_rsp);
 
     lcs_ctrlpt_resp_send(p_lcs_ctrlpt, conn_handle);

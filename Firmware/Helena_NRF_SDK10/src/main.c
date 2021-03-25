@@ -39,8 +39,12 @@
 #define MODE_INVALID                UINT8_MAX
 
 #define FDSINSTANCE                 0xCAFE      // number identifying fds data for main module
-#define FDSMODECONFIG_V13           0x600D      // number identifying mode configuration fds data till v0.13
-#define FDSMODECONFIG               0x80DE      // number identifying mode configuration fds data from v0.14
+#ifdef HELENA
+#define FDSMODECONFIG_V13           0x600D      // number identifying mode configuration fds data for Hellena till v0.13
+#define FDSMODECONFIG               0x80DE      // number identifying mode configuration fds data for Hellena from v0.14
+#elif defined BILLY
+#define FDSMODECONFIG               0x80DE      // number identifying mode configuration fds data for Billy from v2.0.0
+#endif // BILLY
 
 #define LEDVOLTAGE                  3           // used to calculate output power from led current
 
@@ -50,6 +54,7 @@
 #define MINIMUM_INPUT_VOLTAGE       (3 << 10)   // 3V per cell in q6_10_t
 #define SHUTDOWN_DELAY              (APP_TIMER_TICKS(1000, APP_TIMER_PRESCALER))
 
+#ifdef HELENA
 #define MODES_DEFAULT                                               \
 {                                                                   \
     .mode =                                                         \
@@ -66,6 +71,24 @@
     .groups = 2,                                                    \
     .prefMode = MODE_INVALID                                        \
 }
+#elif defined BILLY
+#define MODES_DEFAULT                                               \
+{                                                                   \
+    .mode =                                                         \
+    {   /* MB,    EMB,   HB,    dayl., tail,  brake,  inMB, inHb */ \
+        {{ true,  false, false, false, false, false}, 210,  0   },  \
+        {{ true,  false, true,  false, false, false}, 210,  210 },  \
+        {{ true,  false, false, false, false, false}, 90,   0   },  \
+        {{ false, false, true,  false, false, false}, 0,    210 },  \
+        {{ false, false, false, false, false, false}, 0,    0   },  \
+        {{ false, false, false, false, false, false}, 0,    0   },  \
+        {{ false, false, false, false, false, false}, 0,    0   },  \
+        {{ false, false, false, false, false, false}, 0,    0   }   \
+    },                                                              \
+    .groups = 2,                                                    \
+    .prefMode = 0                                                   \
+}
+#endif // BILLY
 
 /* Private typedef -----------------------------------------------------------*/
 /** @brief bluetooth module related status flags
@@ -113,38 +136,50 @@ typedef struct
     modeState_t *pMode;                     // mode state
 } state_t;
 
-/** @brief helena mode setup flags
+/** @brief light mode setup flags
  */
 typedef struct
 {
+#ifdef HELENA
     bool lightFlood             : 1;        // light flood active
     bool lightSpot              : 1;        // light spot active
     bool lightPitchCompensation : 1;        // light pitch compensation
     bool lightCloned            : 1;        // light output cloned to both drivers, ignored if both flood and spot are enabled
+#elif defined BILLY
+    bool lightMainBeam          : 1;        // main beam flood active
+    bool lightExtendedMainBeam  : 1;        // extended main beam spot active, just a dummy, will be ignored
+    bool lightHighBeam          : 1;        // high beam active
+    bool lightDaylight          : 1;        // daylight active, just a dummy, will be ignored
+#endif // BILLY
     bool comTaillight           : 1;        // secondary taillight enabled through com module
     bool comBrakelight          : 1;        // brake detection enabled end enabled through com module
-} helenaModeSetup_t;
+} lightModeSetup_t;
 
-/** @brief helena mode structure
+/** @brief light mode structure
  */
 typedef struct
 {
-    helenaModeSetup_t setup;                // setup of this mode
+    lightModeSetup_t setup;                 // setup of this mode
+#ifdef HELENA
     union
     {
         q8_t intensity;                     // light intensity in case of pitchCompensation is false
         uint8_t illuminanceInLux;           // light illuminance in case of pitchCompensation is true
     };
-} helenaMode_t;
+#elif defined BILLY
+    q8_t intensityMainBeam;                 // main beam intensity
+    q8_t intensityHighBeam;                 // high beam intensity
+#endif // BILLY
+} lightMode_t;
 
 /** @brief helena configuration structure
  */
 typedef struct
 {
-    helenaMode_t mode[MAX_NUM_OF_MODES];
+    lightMode_t mode[MAX_NUM_OF_MODES];
     uint8_t groups;
     uint8_t prefMode;
-} helenaConfig_t;
+} lightConfig_t;
 
 /** @brief helena mode types for versions 0.13 and lower
  */
@@ -183,10 +218,10 @@ typedef struct
 
 /* Private variables ---------------------------------------------------------*/
 APP_TIMER_DEF(mainTimerId);                                         // timer instance for main timer
-//static hmi_buttonState_t buttonVolUp, buttonVolDown;                // remote button states
+//static hmi_buttonState_t buttonVolUp, buttonVolDown;              // remote button states
 static modeState_t modeState __attribute__((section(".noinit")));   // mode states
 static state_t state = {.pMode = &modeState};                       // device states
-static helenaConfig_t modeConfig = MODES_DEFAULT;                   // modes and grouping configuration
+static lightConfig_t modeConfig = MODES_DEFAULT;                    // modes and grouping configuration
 static light_driverConfig_t ledConfiguration;                       // led and driver information
 
 static char const* pDriverRevision[LIGHT_DRIVERREVUNKNOWN] =
@@ -315,8 +350,9 @@ static bool isGroupConfigValid(uint8_t groupConfig)
 
 /** @brief function to check if mode configuration is valid
  */
-static bool isModeConfigValid(const helenaMode_t * pMode)
+static bool isModeConfigValid(const lightMode_t * pMode)
 {
+#ifdef HELENA
     // cloned mode is not possible if both drivers are on
     if (pMode->setup.lightFlood && pMode->setup.lightSpot && pMode->setup.lightCloned)
         return false;
@@ -328,27 +364,46 @@ static bool isModeConfigValid(const helenaMode_t * pMode)
     if ((pMode->setup.lightFlood || pMode->setup.lightSpot) && pMode->intensity == 0)
         return false;
     return true;
+#elif defined BILLY
+    // just check if light "switch" and intensities match
+    if (pMode->setup.lightMainBeam && pMode->intensityMainBeam == 0)
+        return false;
+    if (pMode->setup.lightHighBeam && pMode->intensityHighBeam == 0)
+        return false;
+    if (!pMode->setup.lightMainBeam && pMode->intensityMainBeam != 0)
+        return false;
+    if (!pMode->setup.lightHighBeam && pMode->intensityHighBeam != 0)
+        return false;
+    return true;
+#endif // BILLY
 }
 
 /** @brief helper function to convert device modes to btle modes
  */
-static void convertModetoBtleMode(helenaMode_t const* pMode, btle_LcsModeConfig_t* pBtleMode, uint8_t numOfModes)
+static void convertModetoBtleMode(lightMode_t const* pMode, btle_LcsModeConfig_t* pBtleMode, uint8_t numOfModes)
 {
     while (numOfModes--)
     {
         memset(pBtleMode, 0, sizeof(btle_LcsModeConfig_t));
-
+#ifdef HELENA
         pBtleMode->setup.flood = pMode->setup.lightFlood;
         pBtleMode->setup.spot = pMode->setup.lightSpot;
         pBtleMode->setup.pitchCompensation = pMode->setup.lightPitchCompensation;
         pBtleMode->setup.cloned = pMode->setup.lightCloned;
-        pBtleMode->setup.taillight = pMode->setup.comTaillight;
-        pBtleMode->setup.brakelight = pMode->setup.comBrakelight;
         if (pMode->setup.lightPitchCompensation)
             pBtleMode->illuminanceInLux = pMode->illuminanceInLux;
         else
             pBtleMode->intensityInPercent = (pMode->intensity * 100) / 256;
-
+#elif defined BILLY
+        pBtleMode->setup.mainBeam = pMode->setup.lightMainBeam;
+        pBtleMode->setup.extendedMainBeam = false;
+        pBtleMode->setup.highBeam = pMode->setup.lightHighBeam;
+        pBtleMode->setup.daylight = false;
+        pBtleMode->mainBeamIntensityInPercent = (pMode->intensityMainBeam * 100) / 256;
+        pBtleMode->highBeamIntensityInPercent = (pMode->intensityHighBeam * 100) / 256;
+#endif // BILLY
+        pBtleMode->setup.taillight = pMode->setup.comTaillight;
+        pBtleMode->setup.brakelight = pMode->setup.comBrakelight;
         pBtleMode++;
         pMode++;
     }
@@ -356,23 +411,30 @@ static void convertModetoBtleMode(helenaMode_t const* pMode, btle_LcsModeConfig_
 
 /** @brief helper function to convert btle modes to device modes
  */
-static bool convertBtleModeToMode(btle_LcsModeConfig_t const* pBtleMode, helenaMode_t* pMode, uint8_t numOfModes)
+static bool convertBtleModeToMode(btle_LcsModeConfig_t const* pBtleMode, lightMode_t* pMode, uint8_t numOfModes)
 {
     while (numOfModes--)
     {
-        memset(pMode, 0, sizeof(helenaMode_t));
-
+        memset(pMode, 0, sizeof(lightMode_t));
+#ifdef HELENA
         pMode->setup.lightFlood = pBtleMode->setup.flood;
         pMode->setup.lightSpot = pBtleMode->setup.spot;
         pMode->setup.lightPitchCompensation = pBtleMode->setup.pitchCompensation;
         pMode->setup.lightCloned = pBtleMode->setup.cloned;
-        pMode->setup.comTaillight = pBtleMode->setup.taillight;
-        pMode->setup.comBrakelight = pBtleMode->setup.brakelight;
-
         if (pMode->setup.lightPitchCompensation)
             pMode->illuminanceInLux = pBtleMode->illuminanceInLux;
         else
             pMode->intensity = (pBtleMode->intensityInPercent * 256) / 100;
+#elif defined BILLY
+        pMode->setup.lightMainBeam = pBtleMode->setup.mainBeam;
+        pMode->setup.lightExtendedMainBeam = false; //pBtle->setup.extendedMainBeam;
+        pMode->setup.lightHighBeam = pBtleMode->setup.highBeam;
+        pMode->setup.lightDaylight = false; //pBtle->setup.daylight;
+        pMode->intensityMainBeam = (pBtleMode->mainBeamIntensityInPercent * 256) / 100;
+        pMode->intensityHighBeam = (pBtleMode->highBeamIntensityInPercent * 256) / 100;
+#endif // BILLY
+        pMode->setup.comTaillight = pBtleMode->setup.taillight;
+        pMode->setup.comBrakelight = pBtleMode->setup.brakelight;
 
         if (!isModeConfigValid(pMode))
             return false;
@@ -397,10 +459,16 @@ static void enterMode(uint8_t mode, uint16_t connHandle)
 
 /** @brief function to check if a mode is a light mode (spot and/or flood are/is enabled)
  */
-static bool isLightMode(helenaMode_t const* const pMode)
+static bool isLightMode(lightMode_t const* const pMode)
 {
     if (pMode != NULL &&
-        pMode->intensity && (pMode->setup.lightFlood || pMode->setup.lightSpot))
+#ifdef HELENA
+        pMode->intensity && (pMode->setup.lightFlood || pMode->setup.lightSpot)
+#elif defined BILLY
+        ((pMode->intensityMainBeam && pMode->setup.lightMainBeam) ||
+        (pMode->intensityHighBeam && pMode->setup.lightHighBeam))
+#endif // BILLY
+        )
         return true;
     else
         return false;
@@ -413,7 +481,7 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
     static union
     {
         btle_LcsModeConfig_t btle[MAX_NUM_OF_MODES];
-        helenaMode_t main[MAX_NUM_OF_MODES];
+        lightMode_t main[MAX_NUM_OF_MODES];
     } modes;
     btle_LcscpEventResponse_t rsp;
     uint32_t errCode;
@@ -484,7 +552,7 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
             break;
         }
 
-        memcpy(&modeConfig.mode[start], modes.main, sizeof(helenaMode_t) * numOfModes);
+        memcpy(&modeConfig.mode[start], modes.main, sizeof(lightMode_t) * numOfModes);
         errCode = updateModeConfig();
         if (errCode == NRF_SUCCESS)
         {
@@ -522,8 +590,13 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
         break;
     case BTLE_EVT_LCSCP_REQ_LED_CONFIG:
         rsp.retCode = BTLE_RET_SUCCESS;
+#ifdef HELENA
         rsp.responseParams.ledConfig.floodCnt = ledConfiguration.floodCount;
         rsp.responseParams.ledConfig.spotCnt = ledConfiguration.spotCount;
+#elif defined BILLY
+        rsp.responseParams.ledConfig.mainBeamCnt = ledConfiguration.mainBeamCount;
+        rsp.responseParams.ledConfig.highBeamCnt = ledConfiguration.highBeamCount;
+#endif // BILLY
         break;
     case BTLE_EVT_LCSCP_CHECK_LED_CONFIG:
         if (state.btle.isGroupCountPending != BTLE_CONN_HANDLE_INVALID ||
@@ -563,19 +636,29 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
         return;
     case BTLE_EVT_LCSCP_REQ_LIMITS:
     {
-        q8_t floodLimit, spotLimit;
-        if (light_GetLimits(&floodLimit, &spotLimit) == NRF_SUCCESS)
+        q8_t limits[2];
+        if (light_GetLimits(&limits[0], &limits[1]) == NRF_SUCCESS)
         {
             rsp.retCode = BTLE_RET_SUCCESS;
-            rsp.responseParams.currentLimits.floodInPercent = (floodLimit * 100) >> 8;
-            rsp.responseParams.currentLimits.spotInPercent = (spotLimit * 100) >> 8;
+#ifdef HELENA
+            rsp.responseParams.currentLimits.floodInPercent = (limits[0] * 100) >> 8;
+            rsp.responseParams.currentLimits.spotInPercent = (limits[1] * 100) >> 8;
+#elif defined BILLY
+            rsp.responseParams.currentLimits.mainBeamInPercent = (limits[0] * 100) >> 8;
+            rsp.responseParams.currentLimits.highBeamInPercent = (limits[1] * 100) >> 8;
+#endif // BILLY
         }
         else
             rsp.retCode = BTLE_RET_FAILED;
     }   break;
     case BTLE_EVT_LCSCP_SET_LIMITS:
-        if (light_SetLimits((q8_t)((pEvt->lcscpEventParams.currentLimits.floodInPercent << 8) / 100),
-                            (q8_t)((pEvt->lcscpEventParams.currentLimits.spotInPercent << 8) / 100)) == NRF_SUCCESS)
+#ifdef HELENA
+        if (light_SetLimits((q8_t)((pEvt->lcscpEventParams.currentLimits.floodInPercent * 256) / 100),
+                            (q8_t)((pEvt->lcscpEventParams.currentLimits.spotInPercent * 256) / 100)) == NRF_SUCCESS)
+#elif defined BILLY
+        if (light_SetLimits((q8_t)((pEvt->lcscpEventParams.currentLimits.mainBeamInPercent * 256) / 100),
+                            (q8_t)((pEvt->lcscpEventParams.currentLimits.highBeamInPercent * 256) / 100)) == NRF_SUCCESS)
+#endif // BILLY
             rsp.retCode = BTLE_RET_SUCCESS;
         else
             rsp.retCode = BTLE_RET_FAILED;
@@ -754,12 +837,13 @@ static void movementEventHandler()
     state.idleTimeout = IDLE_TIMEOUT;
 }
 
+#ifdef HELENA
 /** @brief function to convert old configurations (<= v0.13) to new configuration structure
  */
-static void convertV13ToMode(helenaConfig_t* pNew, helenaConfigV13_t const* pOld)
+static void convertV13ToMode(lightConfig_t* pNew, helenaConfigV13_t const* pOld)
 {
     uint8_t numOfModes = MAX_NUM_OF_MODES_V13 < MAX_NUM_OF_MODES ? MAX_NUM_OF_MODES_V13 : MAX_NUM_OF_MODES;
-    helenaMode_t* pModeNew = pNew->mode;
+    lightMode_t* pModeNew = pNew->mode;
     helenaModeV13_t const* pModeOld = pOld->modes;
 
     while(numOfModes--)
@@ -789,6 +873,7 @@ static void convertV13ToMode(helenaConfig_t* pNew, helenaConfigV13_t const* pOld
     pNew->groups = pOld->modeGroups;
     pNew->prefMode = MODE_INVALID;
 }
+#endif // HELENA
 
 /** @brief function to load the mode configuration
  *
@@ -803,18 +888,20 @@ static void loadModeConfig()
     fds_find_token_t token;
     fds_record_desc_t descriptor;
     fds_record_key_t key;
-    helenaConfig_t modeCfg;
+    lightConfig_t modeCfg;
 
     memset(&modeCfg, 0, sizeof(modeCfg));
 
     key.instance = FDSINSTANCE;
     key.type = FDSMODECONFIG;
     errCode = fds_find(key.type, key.instance, &descriptor, &token);    // search for configuration in flash
+#ifdef HELENA
     if (errCode == NRF_ERROR_NOT_FOUND)
     {
         key.type = FDSMODECONFIG_V13;
         errCode = fds_find(key.type, key.instance, &descriptor, &token);// search for old configuration if new one not found
     }
+#endif // HELENA
     if (errCode == NRF_SUCCESS)                                         // data found, copy (or convert) into temporary buffer
     {
         fds_record_t record;
@@ -822,13 +909,15 @@ static void loadModeConfig()
         if (fds_open(&descriptor, &record) == NRF_SUCCESS)
         {
             if (key.type == FDSMODECONFIG)
-                memcpy(&modeCfg, (helenaConfig_t*)record.p_data, record.header.tl.length_words * 4);
+                memcpy(&modeCfg, (lightConfig_t*)record.p_data, record.header.tl.length_words * 4);
+#ifdef HELENA
             else if (key.type == FDSMODECONFIG_V13)
             {
                 convertV13ToMode(&modeCfg, (helenaConfigV13_t*)record.p_data);
                 //APP_ERROR_CHECK(fds_clear(&descriptor));/// TODO: delete old config from flash
                 errCode = NRF_ERROR_NOT_FOUND;  // set to not found to make sure converted data will be saved to flash
             }
+#endif
             APP_ERROR_CHECK(fds_close(&descriptor));
         }
     }
@@ -860,13 +949,16 @@ static void loadModeConfig()
             errCode = fds_write(&descriptor, key, 1, &chunk);   // write record
         else //if(!isValid)
             errCode = fds_update(&descriptor, key, 1, &chunk);  // or update
-        APP_ERROR_CHECK(errCode);
+        if (errCode != NRF_ERROR_NO_MEM) // if converting from old config or changing from helene to billy there is the chance that there is not
+        {                                // enough space left. Garbage collection should be run and and write request should be repeated, but
+            APP_ERROR_CHECK(errCode);    // currently this is only supported for requests from the ble module.
+        }
     }
 }
 
 /** @brief function to change helena power state
  */
-static uint32_t setHelenaState(powerState_t newState)
+static uint32_t setPowerState(powerState_t newState)
 {
     if (state.power == newState)
         return NRF_SUCCESS;
@@ -968,11 +1060,11 @@ static void mainInit(void)
     }
     if (state.pMode->currentMode != MODE_OFF && isLightMode(&modeConfig.mode[state.pMode->currentMode]))
     {
-        APP_ERROR_CHECK(setHelenaState(POWER_ON));
+        APP_ERROR_CHECK(setPowerState(POWER_ON));
     }
     else
     {
-        APP_ERROR_CHECK(setHelenaState(POWER_IDLE));
+        APP_ERROR_CHECK(setPowerState(POWER_IDLE));
     }
 }
 
@@ -1097,11 +1189,11 @@ static void processButtons(hmi_buttonState_t* pButtons)
 
 /** @brief function to handle the status led
  */
-static void ledHandling(light_limiterActive_t flood, light_limiterActive_t spot, btleStatus_t *pBtleData)
+static void ledHandling(light_limiterActive_t led1, light_limiterActive_t led2, btleStatus_t *pBtleData)
 {
     // red led indicating if any voltage or temperature limiting is active
     if (state.power >= POWER_IDLE &&
-        (flood.voltage || flood.temperature || spot.voltage || spot.temperature))
+        (led1.voltage || led1.temperature || led2.voltage || led2.temperature))
         hmi_SetLed(HMI_LEDRED, HMI_LEDON);
     else
         hmi_SetLed(HMI_LEDRED, HMI_LEDOFF);
@@ -1117,9 +1209,10 @@ static void ledHandling(light_limiterActive_t flood, light_limiterActive_t spot,
  */
 static void updateLightMsgData(const light_status_t * pStatus)
 {
-    cmh_helmetLight_t helmetBeam;
+#ifdef HELENA
+    cmh_light_t helmetBeam;
 
-    memset(&helmetBeam, 0, sizeof(cmh_helmetLight_t));
+    memset(&helmetBeam, 0, sizeof(cmh_light_t));
     if (pStatus->flood.current || pStatus->spot.current)
         helmetBeam.overcurrentError = 1;
     if (pStatus->flood.voltage || pStatus->spot.voltage)
@@ -1128,8 +1221,8 @@ static void updateLightMsgData(const light_status_t * pStatus)
         helmetBeam.temperatureError = 1;
     if (pStatus->flood.dutycycle || pStatus->spot.dutycycle)
         helmetBeam.directdriveError = 1;
-    helmetBeam.mode = state.pMode->currentMode == 0 ? cmh_LIGHTLOW :
-                      state.pMode->currentMode == 1 ? cmh_LIGHTFULL :
+    helmetBeam.mode = state.pMode->currentMode == 2 ? cmh_LIGHTLOW :
+                      state.pMode->currentMode == 3 ? cmh_LIGHTFULL :
                       cmh_LIGHTOFF;
     helmetBeam.current = ((pStatus->currentFlood + pStatus->currentSpot) * 1000ul) >> 10;
     helmetBeam.temperature = (pStatus->temperature * 10l) >> 4;
@@ -1137,16 +1230,56 @@ static void updateLightMsgData(const light_status_t * pStatus)
 
     // ignore error codes
     (void)cmh_UpdateHelmetLight(&helmetBeam);
+
+#elif defined BILLY
+
+    cmh_light_t mainBeam, highBeam;
+
+    memset(&mainBeam, 0, sizeof(cmh_light_t));
+    if (pStatus->mainBeam.current)
+        mainBeam.overcurrentError = 1;
+    if (pStatus->mainBeam.voltage)
+        mainBeam.voltageError = 1;
+    if (pStatus->mainBeam.temperature)
+        mainBeam.temperatureError = 1;
+    if (pStatus->mainBeam.dutycycle)
+        mainBeam.directdriveError = 1;
+    mainBeam.mode = (state.pMode->currentMode == 0 || state.pMode->currentMode == 2) ? cmh_LIGHTLOW :
+                    state.pMode->currentMode == 1 ? cmh_LIGHTFULL :
+                    cmh_LIGHTOFF;
+    mainBeam.current = (pStatus->currentMainBeam * 1000ul) >> 10;
+    mainBeam.temperature = (pStatus->temperature * 10l) >> 4;
+    mainBeam.voltage = (pStatus->inputVoltage * 1000ul) >> 10;
+
+    memset(&highBeam, 0, sizeof(cmh_light_t));
+    if (pStatus->highBeam.current)
+        highBeam.overcurrentError = 1;
+    if (pStatus->highBeam.voltage)
+        highBeam.voltageError = 1;
+    if (pStatus->highBeam.temperature)
+        highBeam.temperatureError = 1;
+    if (pStatus->highBeam.dutycycle)
+        highBeam.directdriveError = 1;
+    highBeam.mode = (state.pMode->currentMode == 1 || state.pMode->currentMode == 3) ? cmh_LIGHTFULL :
+                    cmh_LIGHTOFF;
+    highBeam.current = (pStatus->currentHighBeam * 1000ul) >> 10;
+    highBeam.temperature = (pStatus->temperature * 10l) >> 4;
+    highBeam.voltage = (pStatus->inputVoltage * 1000ul) >> 10;
+
+    // ignore error codes
+    (void)cmh_UpdateMainBeam(&mainBeam);
+    (void)cmh_UpdateHighBeam(&highBeam);
+#endif // defined
 }
 
 /** @brief function to update the light informations for the ble module
  */
-static void updateLightBtleData(helenaMode_t const * const pMode, light_status_t const* pStatus, q15_t pitch)
+static void updateLightBtleData(lightMode_t const * const pMode, light_status_t const* pStatus, q15_t pitch)
 {
+#ifdef HELENA
     btle_lcsMeasurement_t helmetBeam;
-    uint16_t powerFlood, powerSpot;
-    helenaMode_t const* pM;
-    uint16_t ledVoltFlood, ledVoltSpot;
+    uint16_t powerFlood, powerSpot, ledVoltFlood, ledVoltSpot;
+    lightMode_t const* pM;
 
     ledVoltFlood = ledConfiguration.floodCount == LIGHT_LEDCONFIG_UNKNOWN ? LEDVOLTAGE :
                    ledConfiguration.floodCount * LEDVOLTAGE;
@@ -1193,6 +1326,55 @@ static void updateLightBtleData(helenaMode_t const * const pMode, light_status_t
     }
 
    (void)btle_UpdateLcsMeasurements(&helmetBeam);
+
+#elif defined BILLY
+
+    btle_lcsMeasurement_t bikeBeam;
+    uint16_t powerMain, powerHigh, ledVoltMain, ledVoltHigh;
+    lightMode_t const* pM;
+
+    ledVoltMain = ledConfiguration.mainBeamCount == LIGHT_LEDCONFIG_UNKNOWN ? LEDVOLTAGE :
+                  ledConfiguration.mainBeamCount * LEDVOLTAGE;
+    ledVoltHigh = ledConfiguration.highBeamCount == LIGHT_LEDCONFIG_UNKNOWN ? LEDVOLTAGE :
+                  ledConfiguration.highBeamCount * LEDVOLTAGE;
+
+    powerMain = (pStatus->currentMainBeam * ledVoltMain * 1000ul) >> 10;
+    powerHigh = (pStatus->currentHighBeam * ledVoltHigh * 1000ul) >> 10;
+
+    pM = pMode;     // copy pointer, convert function will increase pointer
+    if (pM != NULL)
+        convertModetoBtleMode(pM, &bikeBeam.mode, 1);
+    else
+        memset(&bikeBeam.mode, 0, sizeof(bikeBeam.mode));
+
+    bikeBeam.statusMainBeam.overcurrent = pStatus->mainBeam.current;
+    bikeBeam.statusMainBeam.inputVoltage = pStatus->mainBeam.voltage;
+    bikeBeam.statusMainBeam.temperature = pStatus->mainBeam.temperature;
+    bikeBeam.statusMainBeam.dutyCycleLimit = pStatus->mainBeam.dutycycle;
+    bikeBeam.statusHighBeam.overcurrent = pStatus->highBeam.current;
+    bikeBeam.statusHighBeam.inputVoltage = pStatus->highBeam.voltage;
+    bikeBeam.statusHighBeam.temperature = pStatus->highBeam.temperature;
+    bikeBeam.statusHighBeam.dutyCycleLimit = pStatus->highBeam.dutycycle;
+    bikeBeam.temperature = (int16_t)(pStatus->temperature >> 4) - 273;
+    bikeBeam.inputVoltage = (pStatus->inputVoltage * 1000ul) >> 10;
+    bikeBeam.powerMainBeam = powerMain;
+    bikeBeam.powerHighBeam = powerHigh;
+    if (pitch < 0)
+        pitch = INT8_MIN;
+    else
+    {
+        if (pitch >= (1 << 14))             // convert 0°..360° to -180°..180°
+            pitch -= (1l << 15);
+        if (pitch > (1 << 13))              // flip 90°..180° to 90°..0°
+            pitch = (1 << 14) - pitch;
+        else if (-pitch > (1 << 13))        // flip -90°..-180° to -90°..0°
+            pitch = -1 * (1 << 14) - pitch;
+        pitch = (pitch * 360l) >> 15;       // convert into degree
+        bikeBeam.pitch = pitch;
+    }
+
+   (void)btle_UpdateLcsMeasurements(&bikeBeam);
+#endif // defined
 }
 
 static void brakeDetection(bool indicate)
@@ -1205,7 +1387,7 @@ static void powerStateCheck()
 {
     uint32_t errCode;
     uint8_t currentMode = state.pMode->currentMode;
-    helenaMode_t* pMode = currentMode == MODE_OFF ? NULL : &modeConfig.mode[currentMode];
+    lightMode_t* pMode = currentMode == MODE_OFF ? NULL : &modeConfig.mode[currentMode];
     powerState_t newPowerState = state.power;
 
     // change to ON mode necessary ?
@@ -1253,7 +1435,7 @@ static void powerStateCheck()
 
     if (newPowerState != state.power)
     {
-        errCode = setHelenaState(newPowerState);
+        errCode = setPowerState(newPowerState);
         APP_ERROR_CHECK(errCode);
     }
 
@@ -1272,8 +1454,14 @@ static void ledConfigCheck()
             rsp.retCode = BTLE_RET_SUCCESS;
         else
             rsp.retCode = BTLE_RET_FAILED;
+#ifdef HELENA
         rsp.responseParams.ledConfig.floodCnt = ledConfiguration.floodCount;
         rsp.responseParams.ledConfig.spotCnt = ledConfiguration.spotCount;
+#elif defined BILLY
+        rsp.responseParams.ledConfig.mainBeamCnt = ledConfiguration.mainBeamCount;
+        rsp.responseParams.ledConfig.highBeamCnt = ledConfiguration.highBeamCount;
+
+#endif // defined
         APP_ERROR_CHECK(btle_SendEventResponse(&rsp, state.btle.isLedConfigCheckPending));
 
         state.btle.isLedConfigCheckPending = BTLE_CONN_HANDLE_INVALID;
@@ -1312,9 +1500,14 @@ int main(void)
     ms_Init(movementEventHandler);
 
     btle_lcsFeature_t features;
+#ifdef HELENA
     features.pitchSupported = 1;
     features.floodSupported = ledConfiguration.floodCount ? 1 : 0;  // supported if unknown
     features.spotSupported = ledConfiguration.spotCount ? 1 : 0;    // supported if unknown
+#elif defined BILLY
+    features.mainBeamSupported = ledConfiguration.mainBeamCount ? 1 : 0;  // supported if unknown
+    features.highBeamSupported = ledConfiguration.highBeamCount ? 1 : 0;    // supported if unknown
+#endif // defined
     char const* pDrvRev = ledConfiguration.rev == LIGHT_DRIVERREVUNKNOWN ? NULL :
                           pDriverRevision[ledConfiguration.rev];
     btle_Init(false, pDrvRev, &features, btleEventHandler);
@@ -1328,8 +1521,8 @@ int main(void)
 
     while (1)
     {
-        helenaMode_t const* pLightMode;
-        light_status_t const* pLightStatus;
+        lightMode_t const* pLightMode;
+        light_status_t const* pLightStatus = NULL;
 
         // communication check
         com_MessageStruct const* pMessageIn = com_Check();
@@ -1372,6 +1565,7 @@ int main(void)
             }
 
             // update light
+#ifdef HELENA
             light_mode_t lightMode = {{0}};
             if (pLightMode != NULL)
             {
@@ -1389,6 +1583,19 @@ int main(void)
             pitch &= 0x7FFF;
             errCode = light_UpdateTargets(&lightMode, (q15_t)pitch, &pLightStatus);
             APP_ERROR_CHECK(errCode);
+#elif defined BILLY
+            light_mode_t lightMode = {{0}};
+            if (pLightMode != NULL)
+            {
+                lightMode.setup.mainBeam = pLightMode->setup.lightMainBeam;
+                lightMode.setup.highBeam = pLightMode->setup.lightHighBeam;
+                lightMode.intensityMainBeam = pLightMode->intensityMainBeam;
+                lightMode.intensityHighBeam = pLightMode->intensityHighBeam;
+            }
+
+            errCode = light_UpdateTargets(&lightMode, &pLightStatus);
+            APP_ERROR_CHECK(errCode);
+#endif // defined
 
             // update brake indicator
             brakeDetection(msData.isBraking);
@@ -1405,7 +1612,14 @@ int main(void)
         }
 
         // set status leds
-        ledHandling(pLightStatus->flood, pLightStatus->spot, &state.btle);
+        if (pLightStatus != NULL)
+        {
+#ifdef HELENA
+            ledHandling(pLightStatus->flood, pLightStatus->spot, &state.btle);
+#elif defined BILLY
+            ledHandling(pLightStatus->mainBeam, pLightStatus->highBeam, &state.btle);
+#endif // defined
+        }
 
         light_Execute();
         debug_Execute();

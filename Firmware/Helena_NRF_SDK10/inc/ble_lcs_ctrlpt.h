@@ -57,16 +57,29 @@ typedef enum
 /**@brief Light Control Control Point mode configuration structure */
 typedef struct
 {
-    uint8_t              mode_number_start;
-    uint8_t              mode_entries;
-    ble_lcs_light_mode_t config[BLE_LCS_CTRLPT_MAX_NUM_OF_MODES];
+    uint8_t                 mode_number_start;
+    uint8_t                 mode_entries;
+    union
+    {
+        ble_lcs_hlmt_mode_t config_hlmt[BLE_LCS_CTRLPT_MAX_NUM_OF_MODES];
+        ble_lcs_bk_mode_t   config_bk[BLE_LCS_CTRLPT_MAX_NUM_OF_MODES];
+        //ble_lcs_tl_mode_t   config_tl[BLE_LCS_CTRLPT_MAX_NUM_OF_MODES];
+    };
 } ble_lcs_ctrlpt_mode_cnfg_t;
 
 /**@brief Light Control Control Point set current limits structure */
-typedef struct
+typedef union
 {
-    int8_t  flood;
-    int8_t  spot;
+    struct
+    {
+        int8_t  flood;
+        int8_t  spot;
+    };
+    struct
+    {
+        int8_t  main_beam;
+        int8_t  high_beam;
+    };
 } ble_lcs_ctrlpt_set_limits_t;
 
 /**@brief Light Control Service Control Point write values */
@@ -145,15 +158,27 @@ typedef enum
 /**@brief Light Control Control Point Response parameter for BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNFG */
 typedef struct
 {
-    ble_lcs_light_mode_t * p_list;
-    uint8_t                num_of_entries;
+    union
+    {
+        ble_lcs_hlmt_mode_t * p_list_hlmt;
+        ble_lcs_bk_mode_t   * p_list_bk;
+    };
+    uint8_t                         num_of_entries;
 } ble_lcs_ctrlpt_rsp_param_mode_config_t;
 
 /**@brief Light Control Control Point Response parameter for BLE_LCS_CTRLPT_OP_CODE_REQ_LED_CNFG and BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG */
-typedef struct
+typedef union
 {
-    uint8_t cnt_flood;
-    uint8_t cnt_spot;
+    struct
+    {
+        uint8_t cnt_flood;
+        uint8_t cnt_spot;
+    };
+    struct
+    {
+        uint8_t cnt_main_beam;
+        uint8_t cnt_high_beam;
+    };
 } ble_lcs_ctrlpt_rsp_param_led_config_t;
 
 /**@brief Light Control Control Point Response parameter for BLE_LCS_CTRLPT_OP_CODE_REQ_SENS_OFF and BLE_LCS_CTRLPT_OP_CODE_CALIB_SENS_OFF */
@@ -165,10 +190,18 @@ typedef struct
 } ble_lcs_ctrlpt_rsp_param_sens_offset_t;
 
 /**@brief Light Control Control Point Response parameter for  BLE_LCS_CTRLPT_OP_CODE_REQ_LIMITS */
-typedef struct
+typedef union
 {
-    int8_t flood;
-    int8_t spot;
+    struct
+    {
+        int8_t flood;
+        int8_t spot;
+    };
+    struct
+    {
+        int8_t main_beam;
+        int8_t high_beam;
+    };
 } ble_lcs_ctrlpt_rsp_param_limits_t;
 
 /**@brief Light Control Control Point response parameter values */
@@ -205,7 +238,7 @@ typedef struct
 {
     uint8_t                      uuid_type;         /**< UUID type for Light Control Service Base UUID. */
     ble_srv_cccd_security_mode_t lc_ctrlpt_attr_md; /**< Initial security level for cycling speed and cadence control point attribute */
-    ble_lcs_lf_t                 supported_features;/**< Supported features */
+    ble_lcs_lf_t                 feature;           /**< supported light features */
     uint16_t                     service_handle;    /**< Handle of the parent service (as provided by the BLE stack) */
     ble_lcs_ctrlpt_evt_handler_t evt_handler;       /**< event handler */
     ble_srv_error_handler_t      error_handler;     /**< Function to be called in case of an error */
@@ -216,7 +249,7 @@ typedef struct
 struct ble_lcs_ctrlpt_s
 {
     uint8_t                        uuid_type;         /**< UUID type for Light Control Service Base UUID. */
-    ble_lcs_lf_t                   supported_features;/**< supported control point features */
+    ble_lcs_lf_t                   feature;           /**< supported light features */
     uint16_t                       service_handle;    /**< Handle of the parent service (as provided by the BLE stack) */
     ble_gatts_char_handles_t       lc_ctrlpt_handles; /**< Handles related to the Light Control Control Point characteristic */
     ble_lcs_ctrlpt_evt_handler_t   evt_handler;       /**< event handler */

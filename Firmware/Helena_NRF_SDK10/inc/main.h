@@ -13,7 +13,12 @@
 #define MAIN_H
 
 /* Includes ------------------------------------------------------------------*/
-#include "light.h"
+#ifdef HELENA
+#include "light_helena.h"
+#endif // HELENA
+#ifdef BILLY
+#include "light_billy.h"
+#endif // BILLY
 
 /* Exported types ------------------------------------------------------------*/
 

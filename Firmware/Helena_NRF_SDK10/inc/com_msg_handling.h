@@ -38,8 +38,6 @@ typedef struct
     uint16_t voltage;               // voltage in mV
 } cmh_light_t;
 
-typedef cmh_light_t cmh_helmetLight_t;
-
 typedef struct
 {
     cmh_lightMode_t mainBeam;
@@ -76,12 +74,30 @@ void cmh_Execute(void);
  */
 void cmh_ComMessageCheck(const com_MessageStruct * pMessageIn);
 
+#ifdef BILLY
+/** @brief function to update main beam data
+ *
+ * @param[in]   pLight  main beam data
+ * @return      NRF_SUCCESS
+ */
+uint32_t cmh_UpdateMainBeam(cmh_light_t* pLight);
+
+/** @brief function to update high beam data
+ *
+ * @param[in]   pLight  main beam data
+ * @return      NRF_SUCCESS
+ */
+uint32_t cmh_UpdateHighBeam(cmh_light_t* pLight);
+
+#elif defined HELENA
+
 /** @brief function to update helmet light data
  *
  * @param[in]   pLight  helmet light data
  * @return      NRF_SUCCESS
  */
-uint32_t cmh_UpdateHelmetLight(cmh_helmetLight_t* pLight);
+uint32_t cmh_UpdateHelmetLight(cmh_light_t* pLight);
+#endif // HELENA
 
 /** @brief function to enable com based taillight
  *

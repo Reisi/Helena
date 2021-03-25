@@ -10,8 +10,8 @@
 #ifndef VERSION_H_INCLUDED
 #define VERSION_H_INCLUDED
 
-#define VERSION_MAJOR   1
-#define VERSION_MINOR   1
+#define VERSION_MAJOR   2
+#define VERSION_MINOR   0
 #define VERSION_PATCH   0
 
 #define VERSION_LEVEL   "beta"

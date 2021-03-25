@@ -12,8 +12,9 @@
 
 #define TX_BUFFER_MASK       0x03                   /**< TX Buffer mask, must be a mask of contiguous zeroes, followed by contiguous sequence of ones: 000...111. */
 #define TX_BUFFER_SIZE       (TX_BUFFER_MASK + 1)   /**< Size of the send buffer, which is 1 higher than the mask. */
-#define MAX_MODES_TO_CHANGE  1
-#define WRITE_MESSAGE_LENGTH (2+MAX_MODES_TO_CHANGE*2)                /**< Length of the write message changing up to 8 modes. */
+
+#define WRITE_MESSAGE_LENGTH  5 // 20                  /**< The maximum size of a control point cmd message, limited for due to lack of memory */
+#define MAX_MODE_LIST_LENGTH  (WRITE_MESSAGE_LENGTH-2) /**< The maximum size of a mode list that can be sent */
 
 
 
@@ -192,46 +193,86 @@ static void decode_measurement(uint8_t const * p_data, ble_lcs_c_lm_t * p_meas)
     union
     {
         ble_lcs_c_lm_status_flags_t decoded;
-        uint8_t                      encoded;
+        uint8_t                     encoded;
     } status_flags;
 
     union
     {
-        ble_lcs_c_light_setup_t decoded;
+        ble_lcs_c_hlmt_setup_t  decoded_hlmt;
+        ble_lcs_c_bk_setup_t    decoded_bk;
         uint8_t                 encoded;
     } setup;
+
+    p_meas->light_type = *p_data++;
 
     flags.encoded = uint16_decode(p_data);
     p_meas->flags = flags.decoded;
     p_data += 2;
 
     setup.encoded = *p_data++;
-    p_meas->mode.setup = setup.decoded;
 
-    if (flags.decoded.intensity_present)
+    switch (p_meas->light_type)
     {
-        p_meas->mode.intensity = *p_data++;
+    case BLE_LCS_C_LT_HELMET_LIGHT:
+        p_meas->hlmt.mode.setup = setup.decoded_hlmt;
+        if (flags.decoded.intensity_present)
+        {
+            p_meas->hlmt.mode.intensity = *p_data++;
+        }
+        if (flags.decoded.flood_status_present)
+        {
+            status_flags.encoded = *p_data++;
+            p_meas->hlmt.flood_status = status_flags.decoded;
+        }
+        if (flags.decoded.spot_status_present)
+        {
+            status_flags.encoded = *p_data++;
+            p_meas->hlmt.spot_status = status_flags.decoded;
+        }
+        if (flags.decoded.flood_power_present)
+        {
+            p_meas->hlmt.flood_power = uint16_decode(p_data);
+            p_data += 2;
+        }
+        if (flags.decoded.spot_power_present)
+        {
+            p_meas->hlmt.spot_power = uint16_decode(p_data);
+            p_data += 2;
+        }
+        break;
+    case BLE_LCS_C_LT_BIKE_LIGHT:
+        p_meas->bk.mode.setup = setup.decoded_bk;
+        if (flags.decoded.intensity_present)
+        {
+            p_meas->bk.mode.main_beam_intensity = *p_data++;
+            p_meas->bk.mode.high_beam_intensity = *p_data++;
+        }
+        if (flags.decoded.main_beam_status_present)
+        {
+            status_flags.encoded = *p_data++;
+            p_meas->bk.main_beam_status = status_flags.decoded;
+        }
+        if (flags.decoded.high_beam_status_present)
+        {
+            status_flags.encoded = *p_data++;
+            p_meas->bk.high_beam_status = status_flags.decoded;
+        }
+        if (flags.decoded.main_beam_power_present)
+        {
+            p_meas->bk.high_beam_power = uint16_decode(p_data);
+            p_data += 2;
+        }
+        if (flags.decoded.high_beam_power_present)
+        {
+            p_meas->bk.high_beam_power = uint16_decode(p_data);
+            p_data += 2;
+        }
+        break;
+    case BLE_LCS_C_LT_TAIL_LIGHT:
+    default:
+        break;
     }
-    if (flags.decoded.flood_status_present)
-    {
-        status_flags.encoded = *p_data++;
-        p_meas->flood_status = status_flags.decoded;
-    }
-    if (flags.decoded.spot_status_present)
-    {
-        status_flags.encoded = *p_data++;
-        p_meas->spot_status = status_flags.decoded;
-    }
-    if (flags.decoded.flood_power_present)
-    {
-        p_meas->flood_power = uint16_decode(p_data);
-        p_data += 2;
-    }
-    if (flags.decoded.spot_power_present)
-    {
-        p_meas->spot_power = uint16_decode(p_data);
-        p_data += 2;
-    }
+
     if (flags.decoded.temperature_present)
     {
         p_meas->temperature = *p_data++;
@@ -278,9 +319,8 @@ static bool decode_control_point(uint8_t const * p_data, uint16_t size, ble_lcs_
         p_cp->params.group_cnt = *p_data;
         return true;
     case BLE_LCS_C_CP_CMD_REQ_MODE_CNFG:
-        p_cp->params.mode_cfg.start = *p_data++;
-        p_cp->params.mode_cfg.num_of_modes = (size - 3) / 2;
-        p_cp->params.mode_cfg.pModes = (ble_lcs_c_light_mode_t const*)p_data;   // <- working?
+        p_cp->params.mode_cfg.num_of_bytes = size - 3;
+        p_cp->params.mode_cfg.pModes = (void const*)p_data;   // <- working?
         return true;
     case BLE_LCS_C_CP_CMD_REQ_LED_CNFG:
     case BLE_LCS_C_CP_CMD_CHK_LED_CNFG:
@@ -513,24 +553,18 @@ static uint32_t encode_control_point(const ble_lcs_c_cp_write_t* p_command, uint
         *p_len += 1;
         return NRF_SUCCESS;
     case BLE_LCS_C_CP_CMD_CNFG_MODE:
-        if (p_command->params.mode_cfg.num_of_modes > MAX_MODES_TO_CHANGE)
+        if (p_command->params.mode_cfg.num_of_bytes > MAX_MODE_LIST_LENGTH)
         {
             *p_len = 0;
             return NRF_ERROR_NO_MEM;
         }
         *p_data++ = p_command->params.mode_cfg.start;
         *p_len += 1;
-        for (uint_fast8_t i = 0; i < p_command->params.mode_cfg.num_of_modes; i++)
+        for (uint_fast8_t i = 0; i < p_command->params.mode_cfg.num_of_bytes; i++)
         {
-            union
-            {
-                ble_lcs_c_light_setup_t decoded;
-                uint8_t                 encoded;
-            } setup;
-            setup.decoded = p_command->params.mode_cfg.pModes[i].setup;
-            *p_data++ = setup.encoded;
-            *p_data++ = p_command->params.mode_cfg.pModes[i].intensity;
-            *p_len += 2;
+            uint8_t* pModes = (uint8_t*)p_command->params.mode_cfg.pModes;
+            *p_data++ = pModes[i];
+            *p_len += 1;
         }
         return NRF_SUCCESS;
     case BLE_LCS_C_CP_CMD_SET_LIMITS:
