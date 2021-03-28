@@ -10,21 +10,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ### Fixed
 ### Known Issues
 
-## [2.0.0]
+## [2.0.1] - 2021-03-28
 ### Added
- - added build target for "Billy" mode, a setup especially for bike lights 
-   without pitch compensation, but separate driver current for low and high 
-   beam.
 
 ### Changed
- - light control services was modified and extended to meet requirements for 
-   bicycle light
 
 ### Removed
 
 ### Fixed
+- changing between helena and billina firmware now possible without loss of 
+  settings
 
 ### Known Issues
+- automatic led count detection might deliver wrong led count
+
+
+## [2.0.0] - 2021-03-25
+### Added
+- added build target for "Billy" mode, a setup especially for bike lights 
+  without pitch compensation, but separate driver current for low and high 
+  beam.
+
+### Changed
+- light control services was modified and extended to meet requirements for 
+  bicycle light
+
+### Removed
+
+### Fixed
+- update from version 0.X will not end in an error loop anymore
+
+### Known Issues
+- when changing for helena to billina firmware (and vice versa) settings will 
+  reset to defaults
+- automatic led count detection might deliver wrong led count
 
 
 ## [1.1.0] - 2020-03-11
@@ -44,6 +63,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - Update from version 0.X might result in an infinite error loop. 
   Workaround: flash back to old firmware and perform factory reset, then update
   will work
+- automatic led count detection might deliver wrong led count
 
 ## [1.0.0] - 2019-12-03
 ### Added

@@ -43,7 +43,7 @@
 #define FDSMODECONFIG_V13           0x600D      // number identifying mode configuration fds data for Hellena till v0.13
 #define FDSMODECONFIG               0x80DE      // number identifying mode configuration fds data for Hellena from v0.14
 #elif defined BILLY
-#define FDSMODECONFIG               0x80DE      // number identifying mode configuration fds data for Billy from v2.0.0
+#define FDSMODECONFIG               0x8177      // number identifying mode configuration fds data for Billy from v2.0.1
 #endif // BILLY
 
 #define LEDVOLTAGE                  3           // used to calculate output power from led current
