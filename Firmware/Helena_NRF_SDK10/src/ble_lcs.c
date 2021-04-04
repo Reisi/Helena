@@ -341,51 +341,51 @@ static uint8_t lm_encode(const ble_lcs_lm_t * p_lcs_lm, const ble_lcs_lf_t * p_f
         p_encoded_buffer[len++] = setup.encoded;
 
         // encode intensity
-        if (flags.raw.intensity_present)
+        if (flags.raw.hlmt.intensity_present)
         {
             p_encoded_buffer[len++] = p_lcs_lm->hlmt.mode.intensity;
         }
 
         // encode flood status
-        if (flags.raw.flood_status_present)
+        if (flags.raw.hlmt.flood_status_present)
         {
             status_flags.raw = p_lcs_lm->hlmt.flood_status;
             p_encoded_buffer[len++] = status_flags.encoded & BLE_LCS_LM_STATUS_FLAGS_MASK;
         }
 
         // encode spot status
-        if (flags.raw.spot_status_present)
+        if (flags.raw.hlmt.spot_status_present)
         {
             status_flags.raw = p_lcs_lm->hlmt.spot_status;
             p_encoded_buffer[len++] = status_flags.encoded & BLE_LCS_LM_STATUS_FLAGS_MASK;
         }
 
         // encode flood output power
-        if (flags.raw.flood_power_present)
+        if (flags.raw.hlmt.flood_power_present)
         {
             len += uint16_encode(p_lcs_lm->hlmt.flood_power, &p_encoded_buffer[len]);
         }
 
         // encode spot output power
-        if (flags.raw.spot_power_present)
+        if (flags.raw.hlmt.spot_power_present)
         {
             len += uint16_encode(p_lcs_lm->hlmt.spot_power, &p_encoded_buffer[len]);
         }
 
         // encode temperature
-        if (flags.raw.temperature_present)
+        if (flags.raw.hlmt.temperature_present)
         {
             p_encoded_buffer[len++] = p_lcs_lm->temperature;
         }
 
         // encode input voltage
-        if (flags.raw.input_voltage_present)
+        if (flags.raw.hlmt.input_voltage_present)
         {
             len += uint16_encode(p_lcs_lm->input_voltage, &p_encoded_buffer[len]);
         }
 
         // encode pitch
-        if (flags.raw.pitch_present)
+        if (flags.raw.hlmt.pitch_present)
         {
             p_encoded_buffer[len++] = p_lcs_lm->pitch;
         }
@@ -412,52 +412,52 @@ static uint8_t lm_encode(const ble_lcs_lm_t * p_lcs_lm, const ble_lcs_lf_t * p_f
         p_encoded_buffer[len++] = setup.encoded;
 
         // encode intensity
-        if (flags.raw.intensity_present)
+        if (flags.raw.bk.intensity_present)
         {
             p_encoded_buffer[len++] = p_lcs_lm->bk.mode.main_beam_intensity;
             p_encoded_buffer[len++] = p_lcs_lm->bk.mode.high_beam_intensity;
         }
 
         // encode main beam status
-        if (flags.raw.main_beam_status_present)
+        if (flags.raw.bk.main_beam_status_present)
         {
             status_flags.raw = p_lcs_lm->bk.main_beam_status;
             p_encoded_buffer[len++] = status_flags.encoded & BLE_LCS_LM_STATUS_FLAGS_MASK;
         }
 
         // encode high beam status
-        if (flags.raw.high_beam_status_present)
+        if (flags.raw.bk.high_beam_status_present)
         {
             status_flags.raw = p_lcs_lm->bk.high_beam_status;
             p_encoded_buffer[len++] = status_flags.encoded & BLE_LCS_LM_STATUS_FLAGS_MASK;
         }
 
         // encode main beam output power
-        if (flags.raw.main_beam_power_present)
+        if (flags.raw.bk.main_beam_power_present)
         {
             len += uint16_encode(p_lcs_lm->bk.main_beam_power, &p_encoded_buffer[len]);
         }
 
         // encode high beam output power
-        if (flags.raw.high_beam_power_present)
+        if (flags.raw.bk.high_beam_power_present)
         {
             len += uint16_encode(p_lcs_lm->bk.high_beam_power, &p_encoded_buffer[len]);
         }
 
         // encode temperature
-        if (flags.raw.temperature_present)
+        if (flags.raw.bk.temperature_present)
         {
             p_encoded_buffer[len++] = p_lcs_lm->temperature;
         }
 
         // encode input voltage
-        if (flags.raw.input_voltage_present)
+        if (flags.raw.bk.input_voltage_present)
         {
             len += uint16_encode(p_lcs_lm->input_voltage, &p_encoded_buffer[len]);
         }
 
         // encode inclination
-        if (flags.raw.pitch_present)
+        if (flags.raw.bk.pitch_present)
         {
             p_encoded_buffer[len++] = p_lcs_lm->pitch;
         }

@@ -227,34 +227,43 @@ struct ble_lcs_s
 
 /**@brief Light Measurement Flags structure. This contains information which
  *        data fields are present in the light measurement notification
- *        package. */
+ *        package responding to a helmet light. */
 typedef struct
 {
-    uint16_t intensity_present              : 1;
-    union
-    {
-        uint16_t flood_status_present       : 1;
-        uint16_t main_beam_status_present   : 1;
-    };
-    union
-    {
-        uint16_t spot_status_present        : 1;
-        uint16_t high_beam_status_present   : 1;
-    };
-    union
-    {
-        uint16_t flood_power_present        : 1;
-        uint16_t main_beam_power_present    : 1;
-    };
-    union
-    {
-        uint16_t spot_power_present         : 1;
-        uint16_t high_beam_power_present    : 1;
-    };
-    uint16_t temperature_present            : 1;
-    uint16_t input_voltage_present          : 1;
-    uint16_t pitch_present                  : 1;
-    uint16_t battery_soc_present            : 1;
+    uint16_t intensity_present          : 1;
+    uint16_t flood_status_present       : 1;
+    uint16_t spot_status_present        : 1;
+    uint16_t flood_power_present        : 1;
+    uint16_t spot_power_present         : 1;
+    uint16_t temperature_present        : 1;
+    uint16_t input_voltage_present      : 1;
+    uint16_t pitch_present              : 1;
+    uint16_t battery_soc_present        : 1;
+} ble_lcs_lm_hlmt_flags_t;
+
+/**@brief Light Measurement Flags structure. This contains information which
+ *        data fields are present in the light measurement notification
+ *        package responding to a bike light. */
+typedef struct
+{
+    uint16_t intensity_present          : 1;
+    uint16_t main_beam_status_present   : 1;
+    uint16_t high_beam_status_present   : 1;
+    uint16_t main_beam_power_present    : 1;
+    uint16_t high_beam_power_present    : 1;
+    uint16_t temperature_present        : 1;
+    uint16_t input_voltage_present      : 1;
+    uint16_t pitch_present              : 1;
+    uint16_t battery_soc_present        : 1;
+} ble_lcs_lm_bk_flags_t;
+
+/**@brief Light Measurement Flags structure. This contains information which
+ *        data fields are present in the light measurement notification
+ *        package. */
+typedef union
+{
+    ble_lcs_lm_hlmt_flags_t hlmt;
+    ble_lcs_lm_bk_flags_t   bk;
 } ble_lcs_lm_flags_t;
 
 #define BLE_LCS_LM_FLAGS_MASK   0x01FF

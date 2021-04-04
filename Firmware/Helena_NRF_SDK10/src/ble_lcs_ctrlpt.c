@@ -292,7 +292,7 @@ static int ctrlpt_rsp_encode(const ble_lcs_ctrlpt_rsp_t * p_ctrlpt_rsp,
                     switch (p_lcs_ctrlpt->feature.light_type)
                     {
                     case BLE_LCS_LT_HELMET_LIGHT:
-                        if (len + 2 < BLE_LCS_CTRLPT_MAX_LEN)
+                        if (len + 2 <= BLE_LCS_CTRLPT_MAX_LEN)
                         {
                             setup.hlmt_raw = p_ctrlpt_rsp->params.mode_config_list.p_list_hlmt[i].setup;
                             p_data[len++] = setup.encoded;
@@ -300,7 +300,7 @@ static int ctrlpt_rsp_encode(const ble_lcs_ctrlpt_rsp_t * p_ctrlpt_rsp,
                         }
                         break;
                     case BLE_LCS_LT_BIKE_LIGHT:
-                        if (len + 3 < BLE_LCS_CTRLPT_MAX_LEN)
+                        if (len + 3 <= BLE_LCS_CTRLPT_MAX_LEN)
                         {
                             setup.bk_raw  = p_ctrlpt_rsp->params.mode_config_list.p_list_bk[i].setup;
                             p_data[len++] = setup.encoded;

@@ -1151,13 +1151,13 @@ uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData)
     notifyData.hlmt.mode.setup.brakelight = pData->mode.setup.brakelight ? 1 : 0;
     if (pData->mode.setup.flood || pData->mode.setup.spot)
     {
-        notifyData.flags.intensity_present = 1;
+        notifyData.flags.hlmt.intensity_present = 1;
         notifyData.hlmt.mode.intensity = pData->mode.intensityInPercent;  // don't care if pitch compensated or not, variables share same location
     }
     if (pData->mode.setup.flood)
     {
-        notifyData.flags.flood_power_present = 1;
-        notifyData.flags.flood_status_present = 1;
+        notifyData.flags.hlmt.flood_power_present = 1;
+        notifyData.flags.hlmt.flood_status_present = 1;
         notifyData.hlmt.flood_power = pData->powerFlood;
         notifyData.hlmt.flood_status.overcurrent = pData->statusFlood.overcurrent ? 1 : 0;
         notifyData.hlmt.flood_status.voltage = pData->statusFlood.inputVoltage ? 1 : 0;
@@ -1166,13 +1166,28 @@ uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData)
     }
     if (pData->mode.setup.spot)
     {
-        notifyData.flags.spot_power_present = 1;
-        notifyData.flags.spot_status_present = 1;
+        notifyData.flags.hlmt.spot_power_present = 1;
+        notifyData.flags.hlmt.spot_status_present = 1;
         notifyData.hlmt.spot_power = pData->powerSpot;
         notifyData.hlmt.spot_status.overcurrent = pData->statusSpot.overcurrent ? 1 : 0;
         notifyData.hlmt.spot_status.voltage = pData->statusSpot.inputVoltage ? 1 : 0;
         notifyData.hlmt.spot_status.temperature = pData->statusSpot.temperature ? 1 : 0;
         notifyData.hlmt.spot_status.dutycycle = pData->statusSpot.dutyCycleLimit ? 1 : 0;
+    }
+    if (pData->temperature >= -40 && pData->temperature <= 85)
+    {
+        notifyData.flags.hlmt.temperature_present = 1;
+        notifyData.temperature = pData->temperature;
+    }
+    if (pData->inputVoltage != 0)
+    {
+        notifyData.flags.hlmt.input_voltage_present = 1;
+        notifyData.input_voltage = pData->inputVoltage;;
+    }
+    if (pData->pitch >= -90 && pData->pitch <= 90)
+    {
+        notifyData.flags.hlmt.pitch_present = 1;
+        notifyData.pitch = pData->pitch;
     }
 #elif defined BILLY
     notifyData.light_type = BLE_LCS_LT_BIKE_LIGHT;
@@ -1184,14 +1199,14 @@ uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData)
     notifyData.bk.mode.setup.brakelight = pData->mode.setup.brakelight ? 1 : 0;
     if (pData->mode.setup.mainBeam || pData->mode.setup.extendedMainBeam || pData->mode.setup.highBeam)
     {
-        notifyData.flags.intensity_present = 1;
+        notifyData.flags.bk.intensity_present = 1;
         notifyData.bk.mode.main_beam_intensity = pData->mode.mainBeamIntensityInPercent;
         notifyData.bk.mode.main_beam_intensity = pData->mode.highBeamIntensityInPercent;
     }
     if (pData->mode.setup.mainBeam || pData->mode.setup.extendedMainBeam)
     {
-        notifyData.flags.main_beam_power_present        = 1;
-        notifyData.flags.main_beam_status_present       = 1;
+        notifyData.flags.bk.main_beam_power_present        = 1;
+        notifyData.flags.bk.main_beam_status_present       = 1;
         notifyData.bk.main_beam_power              = pData->powerMainBeam;
         notifyData.bk.main_beam_status.overcurrent = pData->statusMainBeam.overcurrent ? 1 : 0;
         notifyData.bk.main_beam_status.voltage     = pData->statusMainBeam.inputVoltage ? 1 : 0;
@@ -1200,30 +1215,31 @@ uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData)
     }
     if (pData->mode.setup.highBeam)
     {
-        notifyData.flags.high_beam_power_present   = 1;
-        notifyData.flags.high_beam_status_present  = 1;
+        notifyData.flags.bk.high_beam_power_present   = 1;
+        notifyData.flags.bk.high_beam_status_present  = 1;
         notifyData.bk.high_beam_power              = pData->powerHighBeam;
         notifyData.bk.high_beam_status.overcurrent = pData->statusHighBeam.overcurrent ? 1 : 0;
         notifyData.bk.high_beam_status.voltage     = pData->statusHighBeam.inputVoltage ? 1 : 0;
         notifyData.bk.high_beam_status.temperature = pData->statusHighBeam.temperature ? 1 : 0;
         notifyData.bk.high_beam_status.dutycycle   = pData->statusHighBeam.dutyCycleLimit ? 1 : 0;
     }
-#endif // defined
     if (pData->temperature >= -40 && pData->temperature <= 85)
     {
-        notifyData.flags.temperature_present = 1;
+        notifyData.flags.bk.temperature_present = 1;
         notifyData.temperature = pData->temperature;
     }
     if (pData->inputVoltage != 0)
     {
-        notifyData.flags.input_voltage_present = 1;
+        notifyData.flags.bk.input_voltage_present = 1;
         notifyData.input_voltage = pData->inputVoltage;;
     }
     if (pData->pitch >= -90 && pData->pitch <= 90)
     {
-        notifyData.flags.pitch_present = 1;
+        notifyData.flags.bk.pitch_present = 1;
         notifyData.pitch = pData->pitch;
     }
+#endif // defined
+
 
     (void)app_timer_cnt_get(&lastTimeSent);
 

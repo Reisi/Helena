@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ### Fixed
 ### Known Issues
 
+## [2.0.2] - 2021-03-30
+### Added
+
+### Changed
+
+### Removed
+
+### Fixed
+- mode request not using full message length
+- wrong flags in measurement data
+
+### Known Issues
+- automatic led count detection might deliver wrong led count
+
 ## [2.0.1] - 2021-03-28
 ### Added
 
