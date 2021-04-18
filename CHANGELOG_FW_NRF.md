@@ -10,6 +10,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ### Fixed
 ### Known Issues
 
+## [2.1.0] - 2021-04-18
+### Added
+- support for R51 "The Lord of Rings" Remote Control
+
+### Changed
+- behavior of preferred mode
+- removed service discovery für HID service and replaced it with hardcoded 
+  presets.
+
+### Removed
+
+### Fixed
+- several fixes concerning data storage
+
+### Known Issues
+- automatic led count detection might deliver wrong led count
+
 ## [2.0.2] - 2021-03-30
 ### Added
 

@@ -203,7 +203,7 @@ void sm_evt_handler(sm_evt_t const * p_sm_evt)
             pm_evt.params.link_secure_failed_evt.error.error_type = PM_ERROR_TYPE_SEC_STATUS;
             pm_evt.params.link_secure_failed_evt.error.error_src
                 = p_sm_evt->params.pairing_failed.error_src;
-            pm_evt.params.link_secure_failed_evt.error.error.sec_status 
+            pm_evt.params.link_secure_failed_evt.error.error.sec_status
                 = p_sm_evt->params.pairing_failed.auth_status;
             break;
 
@@ -267,7 +267,7 @@ void sm_evt_handler(sm_evt_t const * p_sm_evt)
                         : PM_LINK_SECURED_PROCEDURE_PAIRING;
             pm_evt.params.link_secure_failed_evt.error.error_type = PM_ERROR_TYPE_PM_SEC_ERROR;
             pm_evt.params.link_secure_failed_evt.error.error_src  = BLE_GAP_SEC_STATUS_SOURCE_LOCAL;
-            pm_evt.params.link_secure_failed_evt.error.error.pm_sec_error 
+            pm_evt.params.link_secure_failed_evt.error.error.pm_sec_error
                 = PM_SEC_ERROR_SMP_TIMEOUT;
             break;
     }
@@ -613,6 +613,8 @@ void pm_peer_delete_all(void)
     while (pdb_next_peer_id_get(PM_PEER_ID_INVALID) != PM_PEER_ID_INVALID)
     {
         current_peer_id = pdb_next_peer_id_get(current_peer_id);
+        if (current_peer_id == PM_PEER_ID_INVALID)
+            break;
         pm_peer_delete(current_peer_id);
     }
 }

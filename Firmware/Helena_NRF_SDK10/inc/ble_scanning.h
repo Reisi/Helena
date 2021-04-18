@@ -172,6 +172,8 @@ uint32_t ble_scanning_whitelist_reply(ble_gap_whitelist_t * p_whitelist);
  *
  * @details This function temporarily disables whitelist scanning.
  *          Calling this function resets the current time-out countdown.
+ *          This is disabled by calling either @ref ble_scanning_start or
+ *          ref ble_scanning_pause.
  *
  * @param[in] scanning_mode  scanning mode.
  *

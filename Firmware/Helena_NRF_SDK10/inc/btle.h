@@ -38,6 +38,9 @@ typedef enum
 typedef enum
 {
     BTLE_EVT_CONN_CENTRAL_SEARCH_START,
+    // BTLE_EVT_CONN_CENTRAL_SEARCH_FOR_NEW,
+    // BTLE_EVT_CONN_CENTRAL_SEARCH_LOWLATENCY,
+    // BTLE_EVT_CONN_CENTRAL_SEARCH_LOWPOWER,
     BTLE_EVT_CONN_CENTRAL_SEARCH_STOP,
     BTLE_EVT_CONN_CENTRAL_CONNECTED,
     BTLE_EVT_CONN_CENTRAL_DISCONNECTED,
@@ -47,10 +50,19 @@ typedef enum
 
 typedef enum
 {
-    BTLE_EVT_HID_VOL_UP_SHORT,
-    BTLE_EVT_HID_VOL_UP_LONG,
-    BTLE_EVT_HID_VOL_DOWN_SHORT,
-    BTLE_EVT_HID_VOL_DOWN_LONG
+    // events related to the xiaomi yi remote control
+    BTLE_EVT_HID_XIA_MAIN_PRESSED,              // main button pressed
+    BTLE_EVT_HID_XIA_MAIN_RELEASED,             // main button released
+    BTLE_EVT_HID_XIA_SEC_PRESSED,               // secondary button pressed
+    BTLE_EVT_HID_XIA_SEC_RELEASED,              // secondary button released
+    // events related to the R51 remote control (in audio mode, presentation mode not evaluated)
+    BTLE_EVT_HID_R51_PLAYPAUSE,                 // play/pause button pressed
+    BTLE_EVT_HID_R51_VOL_UP,                    // volume up button pressed
+    BTLE_EVT_HID_R51_VOL_DOWN,                  // volume down button pressed
+    BTLE_EVT_HID_R51_NEXT_TRACK,                // double click on volume up button
+    BTLE_EVT_HID_R51_PREV_TRACK,                // double click on volume down button
+    BTLE_EVT_HID_R51_CC,                        // mode button clicked
+    BTLE_EVT_HID_CNT
 } btle_hidEventType_t;
 
 typedef enum

@@ -203,19 +203,22 @@ ret_code_t gscm_local_db_cache_apply(uint16_t conn_handle)
     uint32_t             sys_attr_flags  = (SYS_ATTR_BOTH);
     bool                 all_attributes_applied = true;
 
-    if (peer_id == PM_PEER_ID_INVALID)
+    /*if (peer_id == PM_PEER_ID_INVALID)
     {
         return BLE_ERROR_INVALID_CONN_HANDLE;
-    }
+    }*/
 
-    err_code = pdb_read_buf_get(peer_id, PM_PEER_DATA_ID_GATT_LOCAL, &peer_data, NULL);
-    if (err_code == NRF_SUCCESS)
+    if (peer_id != PM_PEER_ID_INVALID)
     {
-        pm_peer_data_local_gatt_db_flash_t const * p_local_gatt_db = peer_data.data.p_local_gatt_db;
-        p_sys_attr_data                                            = sys_attr_data;
-        sys_attr_len                                               = p_local_gatt_db->len;
-        sys_attr_flags                                             = p_local_gatt_db->flags;
-        memcpy(sys_attr_data, p_local_gatt_db->p_data, MIN(sys_attr_len, sizeof(sys_attr_data)));
+        err_code = pdb_read_buf_get(peer_id, PM_PEER_DATA_ID_GATT_LOCAL, &peer_data, NULL);
+        if (err_code == NRF_SUCCESS)
+        {
+            pm_peer_data_local_gatt_db_flash_t const * p_local_gatt_db = peer_data.data.p_local_gatt_db;
+            p_sys_attr_data                                            = sys_attr_data;
+            sys_attr_len                                               = p_local_gatt_db->len;
+            sys_attr_flags                                             = p_local_gatt_db->flags;
+            memcpy(sys_attr_data, p_local_gatt_db->p_data, MIN(sys_attr_len, sizeof(sys_attr_data)));
+        }
     }
 
     do

@@ -22,11 +22,13 @@
 #include "ble_cgw.h"
 #include "ble_lcs.h"
 #include "ble_hids_c.h"
+#include "ble_hids_c_hardcoded.h"
 #include "ble_lcs_c.h"
 #include "ble_advertising.h"
 #include "ble_db_discovery.h"
 #include "ble_scanning.h"
 #include "peer_manager.h"
+#include "id_manager.h"
 #include "fstorage.h"
 #include "fds.h"
 #include "version.h"
@@ -34,16 +36,26 @@
 #ifdef BTDEBUG
 #include "ble_nus.h"
 #include "debug.h"
+#include "SEGGER_RTT.h"
 #endif
 
 /* External variables --------------------------------------------------------*/
 
 /* Private typedef -----------------------------------------------------------*/
+typedef enum
+{
+    CENTRAL_NONE = 0,               // no device connected
+    CENTRAL_LIGHT,                  // light device
+    CENTRAL_XIAOMI,                 // Xiaomi Yi Remote
+    CENTRAL_R51                     // R51 remote
+} centralDevice_t;
+
 typedef struct
 {
     btle_eventHandler_t handler;    // event handler given at initialization
     btle_scanMode_t scanConfig;     // current scan configuration
     ble_scan_mode_t scanMode;       // current scan mode
+    centralDevice_t centralDevice;  // current device type in central connetion
     uint16_t connHandleCentral;     // connection handle related to central connection
     uint16_t connHandlePeriph;      // connection handle related to peripheral connection
 } state_t;
@@ -102,6 +114,41 @@ static void onCentralEvt(ble_evt_t * pBleEvt)
         evt.connHandle = pBleEvt->evt.gap_evt.conn_handle;
         state.handler(&evt);
 
+        // secure link if device is not bonded yet, but not for R51 remotes,
+        // these remotes won't let helena reconnect after bonding
+        pm_link_status_t linkStatus;
+        (void)pm_link_status_get(state.connHandleCentral, &linkStatus);
+        if (state.centralDevice == CENTRAL_R51)
+        {
+            // check if this is a new R51 remote, if yes store device address
+            pm_peer_id_t idDummy;
+            (void)pm_peer_id_get(pBleEvt->evt.gap_evt.conn_handle, &idDummy); // always returns NRF_SUCCESS
+            if (idDummy == PM_PEER_ID_INVALID)
+            {
+                pm_store_token_t dummyToken;
+                static pm_peer_data_bonding_t bondingData;
+                uint32_t errCode;
+
+                memset(&bondingData, 0, sizeof(bondingData));
+                bondingData.own_role = BLE_GAP_ROLE_CENTRAL;
+                errCode = im_ble_addr_get(pBleEvt->evt.gap_evt.conn_handle, &bondingData.peer_id.id_addr_info);
+                APP_ERROR_CHECK(errCode);
+                errCode = pm_peer_new(&bondingData, &idDummy, &dummyToken);
+                APP_ERROR_CHECK(errCode);
+                /// TODO: check if garbage collection is necessary here
+            }
+        }
+        else if (linkStatus.connected && !linkStatus.bonded && !linkStatus.encrypted)
+        {
+            if (linkStatus.bonded)
+                errCode = pm_link_secure(state.connHandleCentral, false);// for non R51 devices secure link
+            else
+                errCode = pm_link_secure(state.connHandleCentral, true);
+            if (errCode == NRF_ERROR_NO_MEM)                            // run garbage collection, peer manager will try to save again
+                errCode = fds_gc();
+            APP_ERROR_CHECK(errCode);
+        }
+
         // start database discovery
         if (discDatabase.discovery_in_progress == false)
         {
@@ -110,13 +157,23 @@ static void onCentralEvt(ble_evt_t * pBleEvt)
             APP_ERROR_CHECK(errCode);
         }
 
-        // secure link if device is not bonded yet
-        pm_link_status_t linkStatus;
-        (void)pm_link_status_get(state.connHandleCentral, &linkStatus);
-        if (linkStatus.connected && !linkStatus.bonded && !linkStatus.encrypted)
+        // activate notifications here, and not in the database discovery event handler (not available with hardcoded devices)
+        if (state.centralDevice == CENTRAL_XIAOMI || state.centralDevice == CENTRAL_R51)
         {
-            errCode = pm_link_secure(state.connHandleCentral, true);
+            errCode = ble_hids_c_report_notif_enable(&hidsGattcData, 2, true);
             APP_ERROR_CHECK(errCode);
+            hidsGattcData.conn_handle = pBleEvt->evt.gap_evt.conn_handle;
+        }
+        break;
+
+    case BLE_GAP_EVT_TIMEOUT:
+        if (pBleEvt->evt.gap_evt.params.timeout.src == BLE_GAP_TIMEOUT_SRC_CONN)
+        {
+            // if connection failed central device has to be reset
+            if (state.centralDevice == CENTRAL_XIAOMI || state.centralDevice == CENTRAL_R51)
+                hidsGattcData.conn_handle = BLE_CONN_HANDLE_INVALID;
+            state.centralDevice = CENTRAL_NONE;
+            /// TODO: restart scanning
         }
         break;
 
@@ -127,12 +184,24 @@ static void onCentralEvt(ble_evt_t * pBleEvt)
         state.handler(&evt);
 
         state.connHandleCentral = BLE_CONN_HANDLE_INVALID;
+        state.centralDevice = CENTRAL_NONE;
         break;
 
     case BLE_GAP_EVT_CONN_PARAM_UPDATE_REQUEST:
-        errCode = sd_ble_gap_conn_param_update(pBleEvt->evt.gap_evt.conn_handle, &pBleEvt->evt.gap_evt.params.conn_param_update_request.conn_params);
+    {
+        ble_gap_conn_params_t newParams = pBleEvt->evt.gap_evt.params.conn_param_update_request.conn_params;
+
+        // R51 remotes wanna have connection intervals from 250 to 500 msec, thats to lazy!!
+        if (state.centralDevice == CENTRAL_R51 && newParams.min_conn_interval > MSEC_TO_UNITS(100, UNIT_1_25_MS))
+        {
+            newParams.min_conn_interval = MSEC_TO_UNITS(50, UNIT_1_25_MS);
+            newParams.max_conn_interval = MSEC_TO_UNITS(100, UNIT_1_25_MS);
+        }
+
+        errCode = sd_ble_gap_conn_param_update(pBleEvt->evt.gap_evt.conn_handle, &newParams);
         APP_ERROR_CHECK(errCode);
-        break;
+
+    }   break;
 
     default:
         break;
@@ -154,6 +223,8 @@ static void onPeriphEvt(ble_evt_t * pBleEvt)
         evt.subEvt.conn = BTLE_EVT_CONN_PERIPH_CONNECTED;
         evt.connHandle = pBleEvt->evt.gap_evt.conn_handle;
         state.handler(&evt);
+
+        /// TODO: maybe bonding request?
 
         // start database discovery
         if (discDatabase.discovery_in_progress == false)
@@ -182,10 +253,19 @@ static void onPeriphEvt(ble_evt_t * pBleEvt)
  */
 static void bleEvtDispatch(ble_evt_t * pBleEvt)
 {
-    ble_conn_state_on_ble_evt(pBleEvt);
-    pm_ble_evt_handler(pBleEvt);
+    //SEGGER_RTT_printf(0, "evt %d\r\n", pBleEvt->header.evt_id);
+    //if (pBleEvt->header.evt_id == BLE_GAP_EVT_DISCONNECTED)
+    //    SEGGER_RTT_printf(0, "  rsn %d\r\n", pBleEvt->evt.gap_evt.params.disconnected.reason);
 
+    ble_conn_state_on_ble_evt(pBleEvt);
     uint8_t role = ble_conn_state_role(pBleEvt->evt.gap_evt.conn_handle);
+
+    // not possible to reconnect to R51 remotes after bonding, but they won't
+    // disconnect if bonding is not performed, so let's just ignore the
+    // request until I have a better idea.
+    if (role != BLE_GAP_ROLE_CENTRAL || state.centralDevice != CENTRAL_R51 ||
+        pBleEvt->header.evt_id != BLE_GAP_EVT_SEC_REQUEST)
+        pm_ble_evt_handler(pBleEvt);
 
     // database discovery and light control service (client and server) are used in both directions
     ble_db_discovery_on_ble_evt(&discDatabase, pBleEvt);
@@ -199,7 +279,6 @@ static void bleEvtDispatch(ble_evt_t * pBleEvt)
         ble_cgw_on_ble_evt(&cgwGattsData, pBleEvt); // the com gateway is only used in peripheral connections
 #ifdef BTDEBUG
         ble_nus_on_ble_evt(&nusGattsData, pBleEvt);
-        //debug_OnBleEvt(pBleEvt);
 #endif
         onPeriphEvt(pBleEvt);
     }
@@ -233,15 +312,12 @@ static void pmEvtHandler(pm_evt_t const * pEvt)
 
     switch(pEvt->evt_id)
     {
-    case PM_EVT_LINK_SECURED:
-        break;
-
     case PM_EVT_LINK_SECURE_FAILED:
-        /** In some cases, when securing fails, it can be restarted directly. Sometimes it can
-         *  be restarted, but only after changing some Security Parameters. Sometimes, it cannot
-         *  be restarted until the link is disconnected and reconnected. Sometimes it is
-         *  impossible, to secure the link, or the peer device does not support it. How to
-         *  handle this error is highly application dependent. */
+        // In some cases, when securing fails, it can be restarted directly. Sometimes it can
+        // be restarted, but only after changing some Security Parameters. Sometimes, it cannot
+        // be restarted until the link is disconnected and reconnected. Sometimes it is
+        // impossible, to secure the link, or the peer device does not support it. How to
+        // handle this error is highly application dependent.
         if (pEvt->params.link_secure_failed_evt.error.error_type == PM_ERROR_TYPE_PM_SEC_ERROR)
         {
             switch (pEvt->params.link_secure_failed_evt.error.error.pm_sec_error)
@@ -283,10 +359,6 @@ static void pmEvtHandler(pm_evt_t const * pEvt)
         APP_ERROR_CHECK(pEvt->params.error_unexpected_evt.error);
         break;
 
-    //case PM_EVT_PEER_DATA_UPDATED:
-    //    APP_ERROR_CHECK_BOOL(false);
-    //    break;
-
     case PM_EVT_PEER_DATA_UPDATE_FAILED:
         APP_ERROR_CHECK_BOOL(false);
         break;
@@ -296,6 +368,11 @@ static void pmEvtHandler(pm_evt_t const * pEvt)
         pm_local_database_has_changed();
         break;
 
+    case PM_EVT_BONDED_PEER_CONNECTED:
+    case PM_EVT_LINK_SECURED:
+    case PM_EVT_PEER_DATA_UPDATED:
+    case PM_EVT_LOCAL_DB_CACHE_APPLIED:
+    case PM_EVT_SERVICE_CHANGED_INDICATION_SENT:
     default:
         break;
     }
@@ -401,8 +478,7 @@ static void connParamsInit(void)
  */
 static void cgwDataHandler(ble_cgw_t * pCgw, com_MessageStruct * pMessageRx)
 {
-    (void)com_Put(pMessageRx);  // there is nothing we can do if the FIFO overruns,
-    //APP_ERROR_CHECK(com_Put(pMessageRx));
+    (void)com_Put(pMessageRx);
 }
 
 /** @brief Event handler for the light control service
@@ -568,7 +644,7 @@ static void servicesInit(char const* pDrvRev, btle_lcsFeature_t* pFeature)
     lcsInit.feature.light_type = BLE_LCS_LT_BIKE_LIGHT;
     lcsInit.feature.bk_features.main_beam_supported = pFeature->mainBeamSupported;
     lcsInit.feature.bk_features.high_beam_supported = pFeature->highBeamSupported;
-    lcsInit.feature.stp_features.sensor_calibration_supported = 1;  /// to do: only allow for successful initialization of sensor
+    lcsInit.feature.stp_features.sensor_calibration_supported = 1;  /// TODO: only allow for successful initialization of sensor
 #endif // defined
     lcsInit.feature.cfg_features.mode_change_supported = 1;
     lcsInit.feature.cfg_features.mode_config_supported = 1;
@@ -649,73 +725,138 @@ static void discoveryInit()
     APP_ERROR_CHECK(errCode);
 }
 
-/** @brief Event handler for the hid service collector
+/** @brief Event handler to process report from the YiaomiYi Remote Control
+ * @note This remote sends an event with the physical state of the buttons
+ *       every time the state changes, so it can be processed like a normal
+ *       button (that is already debounced)
  *
- * @details Until now this is just a provisionally event handler to work with
- *          the Xiaomi Yi Remote.
- *
- * @param[in] pBleHidsC GATT collector database for the hid service
- * @param[in] pEvt      received event
+ * @param[in] connHandle  the connection handle this event relates to
+ * @param[in] buttonState the state of the buttons
  */
-static void hidsCEventHandler(ble_hids_c_t * pBleHidsC, ble_hids_c_evt_t * pEvt)
+static void hidsCXiaomiEventHandler(ble_hids_c_t * pBleHidsC, ble_hids_c_evt_t * pEvt)
 {
 #define VOLUME_UP   (1<<6)
 #define VOLUME_DOWN (1<<7)
-
 #define BUTTONPRESS_LONG   APP_TIMER_TICKS(500, APP_TIMER_PRESCALER)
 
-    uint32_t errCode;
-    static uint32_t lastPressVolUp, lastPressVolDown;
+    if (pEvt->evt_type != BLE_HIDS_C_EVT_REPORT_NOTIFICATION || pEvt->params.report.index != 2)
+        return;
 
-    switch (pEvt->evt_type)
+    if (state.handler == NULL)
+        return;
+
+    btle_event_t evt;
+    evt.connHandle = pBleHidsC->conn_handle;
+    evt.evt = BTLE_EVT_HID;
+
+    static uint8_t lastState;
+    uint8_t buttonChange, buttonState = pEvt->params.report.p_report[0];
+
+    buttonChange = lastState ^ buttonState;
+
+    if (buttonChange & VOLUME_UP)
     {
-    case BLE_HIDS_C_EVT_DISCOVERY_COMPLETE:
-        errCode = ble_hids_c_report_notif_enable(pBleHidsC, 2, true);
-        APP_ERROR_CHECK(errCode);
+        evt.subEvt.hid = buttonState & VOLUME_UP ? BTLE_EVT_HID_XIA_MAIN_PRESSED : BTLE_EVT_HID_XIA_MAIN_RELEASED;
+        state.handler(&evt);
+    }
+    if (buttonChange & VOLUME_DOWN)
+    {
+        evt.subEvt.hid = buttonState & VOLUME_DOWN ? BTLE_EVT_HID_XIA_SEC_PRESSED : BTLE_EVT_HID_XIA_SEC_RELEASED;
+        state.handler(&evt);
+    }
+
+    lastState = buttonState;
+
+
+    /*static uint32_t lastPressVolUp, lastPressVolDown;
+
+    // check if any button has changed its state to pressed
+    if (buttonState & VOLUME_UP)
+        (void)app_timer_cnt_get(&lastPressVolUp);
+    if (buttonState & VOLUME_DOWN)
+        (void)app_timer_cnt_get(&lastPressVolDown);
+    // if button are released again, check time they were pressed and send
+    // proper event to application
+    if (lastPressVolUp && !(buttonState & VOLUME_UP))  // volume up button has been released
+    {
+        uint32_t timestamp;
+        btle_event_t evt;
+
+        (void)app_timer_cnt_get(&timestamp);
+        (void)app_timer_cnt_diff_compute(timestamp, lastPressVolUp, &timestamp);
+
+        evt.connHandle = pBleHidsC->conn_handle;
+        evt.evt = BTLE_EVT_HID;
+        evt.subEvt.hid = timestamp > BUTTONPRESS_LONG ? BTLE_EVT_HID_XIA_MAIN_LONG : BTLE_EVT_HID_XIA_MAIN_SHORT;
+        state.handler(&evt);
+
+        lastPressVolUp = 0;
+    }
+    if (lastPressVolDown && !(buttonState & VOLUME_DOWN))  // volume up button has been released
+    {
+        uint32_t timestamp;
+        btle_event_t evt;
+
+        (void)app_timer_cnt_get(&timestamp);
+        (void)app_timer_cnt_diff_compute(timestamp, lastPressVolDown, &timestamp);
+
+        evt.connHandle = pBleHidsC->conn_handle;
+        evt.evt = BTLE_EVT_HID;
+        evt.subEvt.hid = timestamp > BUTTONPRESS_LONG ? BTLE_EVT_HID_XIA_SEC_LONG : BTLE_EVT_HID_XIA_SEC_SHORT;
+        state.handler(&evt);
+
+        lastPressVolDown = 0;
+    }*/
+}
+
+/** @brief Event handler to process report from the R51 Remote Control
+ * @note This remote sends an event with the usage type, so no button handling is nescessary
+ *
+ * @param[in] connHandle  the connection handle this event relates to
+ * @param[in] usage the state of the buttons
+ */
+static void hidsCR51EventHandler(ble_hids_c_t * pBleHidsC, ble_hids_c_evt_t * pEvt)
+{
+#define USAGE_CONSUMER_CONTROL  0x01    // sent by clock on the mode button
+#define USAGE_PLAY_PAUSE        0xCD    // sent by click on the play/pause button
+#define USAGE_VOLUME_INCREMENT  0xE9    // sent by single click (and when keep pressed) on the volume up button
+#define USAGE_VOLUME_DECREMENT  0xEA    // sent by single click (and when keep pressed) on the volume down button
+#define USAGE_SCAN_NEXT_TRACK   0xB5    // sent by double click on the volume up button
+#define USAGE_SCAN_PREV_TRACK   0xB6    // sent by double click on the volume down button
+
+    if (pEvt->evt_type != BLE_HIDS_C_EVT_REPORT_NOTIFICATION || pEvt->params.report.index != 2)
+        return;
+
+    btle_event_t evt;
+
+    evt.connHandle = pBleHidsC->conn_handle;
+    evt.evt = BTLE_EVT_HID;
+
+    switch (pEvt->params.report.p_report[0])
+    {
+    case USAGE_PLAY_PAUSE:
+        evt.subEvt.hid = BTLE_EVT_HID_R51_PLAYPAUSE;
         break;
-    case BLE_HIDS_C_EVT_REPORT_MAP_READ_RESP:
+    case USAGE_VOLUME_INCREMENT:
+        evt.subEvt.hid = BTLE_EVT_HID_R51_VOL_UP;
         break;
-    case BLE_HIDS_C_EVT_REPORT_NOTIFICATION:
-        if (pEvt->params.report.index == 2)
-        {
-            if (pEvt->params.report.p_report[0] & VOLUME_UP)
-                (void)app_timer_cnt_get(&lastPressVolUp);
-            if (pEvt->params.report.p_report[0] & VOLUME_DOWN)
-                (void)app_timer_cnt_get(&lastPressVolDown);
-            if (pEvt->params.report.p_report[0] == 0)
-            {
-                uint32_t timestamp;
-                btle_event_t evt;
-                evt.connHandle = pBleHidsC->conn_handle;
-                (void)app_timer_cnt_get(&timestamp);
-                if (lastPressVolUp != 0)
-                {
-                    (void)app_timer_cnt_diff_compute(timestamp, lastPressVolUp, &timestamp);
-                    lastPressVolUp = 0;
-                    evt.evt = BTLE_EVT_HID;
-                    if (timestamp > BUTTONPRESS_LONG)
-                        evt.subEvt.hid = BTLE_EVT_HID_VOL_UP_LONG;
-                    else
-                        evt.subEvt.hid = BTLE_EVT_HID_VOL_UP_SHORT;
-                    state.handler(&evt);
-                }
-                if (lastPressVolDown != 0)
-                {
-                    (void)app_timer_cnt_diff_compute(timestamp, lastPressVolDown, &timestamp);
-                    lastPressVolDown = 0;
-                    evt.evt = BTLE_EVT_HID;
-                    if (timestamp > BUTTONPRESS_LONG)
-                        evt.subEvt.hid = BTLE_EVT_HID_VOL_DOWN_LONG;
-                    else
-                        evt.subEvt.hid = BTLE_EVT_HID_VOL_DOWN_SHORT;
-                    state.handler(&evt);
-                }
-            }
-        }
+    case USAGE_VOLUME_DECREMENT:
+        evt.subEvt.hid = BTLE_EVT_HID_R51_VOL_DOWN;
+        break;
+    case USAGE_CONSUMER_CONTROL:
+        evt.subEvt.hid = BTLE_EVT_HID_R51_CC;
+        break;
+    case USAGE_SCAN_NEXT_TRACK:
+        evt.subEvt.hid = BTLE_EVT_HID_R51_NEXT_TRACK;
+        break;
+    case USAGE_SCAN_PREV_TRACK:
+        evt.subEvt.hid = BTLE_EVT_HID_R51_PREV_TRACK;
         break;
     default:
-        break;
+        return; // no event for this cases
     }
+
+    state.handler(&evt);
 }
 
 void lcsCEventHandler(ble_lcs_c_t * pBleLcsC, ble_lcs_c_evt_t * pEvt)
@@ -822,10 +963,7 @@ static void serviceCollectorInit()
 {
     uint32_t errCode;
 
-    ble_hids_c_init_t hidsCInit;
-    hidsCInit.evt_handler = hidsCEventHandler;
-    errCode = ble_hids_c_init(&hidsGattcData, &hidsCInit);
-    APP_ERROR_CHECK(errCode);
+    // no hids initiation here, this is done when connecting to a remote
 
     ble_lcs_c_init_t lcsCInit;
     lcsCInit.evt_handler = lcsCEventHandler;
@@ -840,44 +978,12 @@ static void scanningErrorHandler(uint32_t errCode)
     APP_ERROR_CHECK(errCode);
 }
 
-/** @brief Function to parse an advertising report and check if it is an HID device
- *
- * @param[in] pAdvData Advertising report to parse
- * @return    NRF_SUCCESS if a hid service uuid was found, otherwise NRF_ERROR_NOT_FOUND
- */
-static uint32_t isHidDevice(const ble_gap_evt_adv_report_t * pAdvData)
-{
-    uint_fast8_t index = 0;
-
-    while (index < pAdvData->dlen)
-    {
-        uint8_t length = pAdvData->data[index];
-        uint8_t type   = pAdvData->data[index+1];
-
-        if (type == BLE_GAP_AD_TYPE_16BIT_SERVICE_UUID_COMPLETE ||
-            type == BLE_GAP_AD_TYPE_16BIT_SERVICE_UUID_MORE_AVAILABLE)
-        {
-            index += 2;
-            for (uint_fast8_t i = 0; i < length/UUID16_SIZE; i++)
-            {
-                uint16_t uuid;
-                uuid = uint16_decode(&pAdvData->data[index + i * UUID16_SIZE]);
-                if (uuid == BLE_UUID_HUMAN_INTERFACE_DEVICE_SERVICE)
-                    return NRF_SUCCESS;
-            }
-            return NRF_ERROR_NOT_FOUND;
-        }
-        index += length + 1;
-    }
-    return NRF_ERROR_NOT_FOUND;
-}
-
 /** @brief Function to parse an advertising report and check if it is a Light Control device
  *
  * @param[in] pAdvData Advertising report to parse
- * @return    NRF_SUCCESS if a Light Control service uuid was found, otherwise NRF_ERROR_NOT_FOUND
+ * @return    CENTRAL_LIGHT if a Light Control service uuid was found, otherwise CENTRAL_NONE
  */
-static uint32_t isLcsDevice(const ble_gap_evt_adv_report_t * pAdvData)
+static centralDevice_t isLcsDevice(const ble_gap_evt_adv_report_t * pAdvData)
 {
     uint_fast8_t index = 0;
 
@@ -897,13 +1003,13 @@ static uint32_t isLcsDevice(const ble_gap_evt_adv_report_t * pAdvData)
                 lcsServiceUuid.uuid128[13] = (BLE_UUID_LCS_SERVICE >> 8) & 0xFF;
                 lcsServiceUuid.uuid128[12] = BLE_UUID_LCS_SERVICE & 0xFF;
                 if (memcmp(lcsServiceUuid.uuid128, &pAdvData->data[index + i * UUID128_SIZE], sizeof(lcsServiceUuid.uuid128)) == 0)
-                    return NRF_SUCCESS;
+                    return CENTRAL_LIGHT;
             }
-            return NRF_ERROR_NOT_FOUND;
+            return CENTRAL_NONE;
         }
         index += length + 1;
     }
-    return NRF_ERROR_NOT_FOUND;
+    return CENTRAL_NONE;
 }
 
 
@@ -939,10 +1045,28 @@ static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
         break;
     case BLE_SCAN_EVT_ADV_REPORT_RECEIVED:
     {
-        bool isHid = isHidDevice(pScanEvt->p_ble_adv_report) == NRF_SUCCESS;
-        bool isLcs = isLcsDevice(pScanEvt->p_ble_adv_report) == NRF_SUCCESS;
-        // check if the device is advertising as hid device
-        if (isHid || isLcs)
+        // check if device is compatible
+        centralDevice_t deviceType;
+
+        ble_hids_c_init_t hidsCInit;
+        ble_hids_c_hc_device_t hidDevice = ble_hids_c_hc_is_device(pScanEvt->p_ble_adv_report);
+
+        switch (hidDevice)
+        {
+        case BLE_HIDS_C_HC_DEVICE_XIAOMI:
+            deviceType = CENTRAL_XIAOMI;
+            hidsCInit.evt_handler = hidsCXiaomiEventHandler;
+            break;
+        case BLE_HIDS_C_HC_DEVICE_R51:
+            deviceType = CENTRAL_R51;
+            hidsCInit.evt_handler = hidsCR51EventHandler;
+            break;
+        default:
+            deviceType = isLcsDevice(pScanEvt->p_ble_adv_report);
+            break;
+        }
+
+        if (deviceType != CENTRAL_NONE)
         {
             static const ble_gap_scan_params_t scanParams =
             {
@@ -955,8 +1079,8 @@ static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
             };
             static const ble_gap_conn_params_t connParams =
             {
+                MSEC_TO_UNITS(10, UNIT_1_25_MS),
                 MSEC_TO_UNITS(50, UNIT_1_25_MS),
-                MSEC_TO_UNITS(100, UNIT_1_25_MS),
                 0,
                 MSEC_TO_UNITS(4000, UNIT_10_MS)
             };
@@ -966,6 +1090,14 @@ static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
             // and connect to device
             errCode = sd_ble_gap_connect(&pScanEvt->p_ble_adv_report->peer_addr, &scanParams, &connParams);
             APP_ERROR_CHECK(errCode);
+
+            state.centralDevice = deviceType;   /// TODO: reset to CENTRAL_NONE if connection attempt fails
+
+            if (hidDevice != BLE_HIDS_C_HC_DEVICE_UNKNOWN)
+            {
+                errCode = ble_hids_c_hc_init(&hidsGattcData, &hidsCInit, hidDevice);
+                APP_ERROR_CHECK(errCode);
+            }
         }
     }   break;
     case BLE_SCAN_EVT_WHITELIST_REQUEST:
@@ -986,7 +1118,11 @@ static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
             errCode = pm_peer_data_get(peerId, PM_PEER_DATA_ID_BONDING, &peerData);
             if (errCode != NRF_SUCCESS)
             {
-                APP_ERROR_CHECK(errCode);
+                // in some cases bonding data isn't stored in memory (havn't
+                // found the reason yet), this results in an
+                // NRF_ERROR_NOT_FOUND here. For now just ignore this error.
+                if (errCode != NRF_ERROR_NOT_FOUND)
+                    APP_ERROR_CHECK(errCode);
             }
             else if (peerData.data.p_bonding_data->own_role == BLE_GAP_ROLE_CENTRAL)
                 peerIds[peerIdsCnt++] = peerId;

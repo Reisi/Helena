@@ -51,28 +51,7 @@ static bool whitelist_has_entries(ble_gap_whitelist_t const * whitelist)
     return false;
 }
 
-/* Public functions ----------------------------------------------------------*/
-uint32_t ble_scanning_init(ble_scan_modes_config_t const    * p_config,
-                           ble_scanning_evt_handler_t const   evt_handler,
-                           ble_scanning_error_handler_t const error_handler)
-{
-    if (p_config == NULL)
-    {
-        return NRF_ERROR_NULL;
-    }
-    m_scan_mode_current = BLE_SCAN_MODE_IDLE;
-    m_scan_modes_config = *p_config;
-    m_evt_handler       = evt_handler;
-    m_error_handler     = error_handler;
-
-    // Prepare Whitelist. Address and IRK double pointers point to allocated arrays.
-    m_whitelist.pp_addrs = mp_whitelist_addr;
-    m_whitelist.pp_irks  = mp_whitelist_irk;
-
-    return NRF_SUCCESS;
-}
-
-uint32_t ble_scanning_start(ble_scan_mode_t scanning_mode)
+static uint32_t scanning_start(ble_scan_mode_t scanning_mode)
 {
     uint32_t              err_code;
     ble_gap_scan_params_t scan_params;
@@ -211,9 +190,37 @@ uint32_t ble_scanning_start(ble_scan_mode_t scanning_mode)
         m_evt_handler(&scan_evt);
     }
 
-    m_whitelist_temporarily_disabled = false;
+    //m_whitelist_temporarily_disabled = false;
 
     return NRF_SUCCESS;
+}
+
+/* Public functions ----------------------------------------------------------*/
+uint32_t ble_scanning_init(ble_scan_modes_config_t const    * p_config,
+                           ble_scanning_evt_handler_t const   evt_handler,
+                           ble_scanning_error_handler_t const error_handler)
+{
+    if (p_config == NULL)
+    {
+        return NRF_ERROR_NULL;
+    }
+    m_scan_mode_current = BLE_SCAN_MODE_IDLE;
+    m_scan_modes_config = *p_config;
+    m_evt_handler       = evt_handler;
+    m_error_handler     = error_handler;
+
+    // Prepare Whitelist. Address and IRK double pointers point to allocated arrays.
+    m_whitelist.pp_addrs = mp_whitelist_addr;
+    m_whitelist.pp_irks  = mp_whitelist_irk;
+
+    return NRF_SUCCESS;
+}
+
+uint32_t ble_scanning_start(ble_scan_mode_t scanning_mode)
+{
+    m_whitelist_temporarily_disabled = false;
+
+    return scanning_start(scanning_mode);
 }
 
 void ble_scanning_on_ble_evt(const ble_evt_t * const p_ble_evt)
@@ -232,7 +239,7 @@ void ble_scanning_on_ble_evt(const ble_evt_t * const p_ble_evt)
                 m_scan_mode_current = BLE_SCAN_MODE_SLOW;
                 if (m_scan_pause == false)
                 {
-                    err_code = ble_scanning_start(BLE_SCAN_MODE_SLOW);
+                    err_code = scanning_start(BLE_SCAN_MODE_SLOW);
                     if ((err_code != NRF_SUCCESS) && (m_error_handler != NULL))
                     {
                         m_error_handler(err_code);
@@ -261,7 +268,7 @@ void ble_scanning_on_ble_evt(const ble_evt_t * const p_ble_evt)
             m_scan_mode_current = BLE_SCAN_MODE_FAST;
             if (m_scan_pause == false)
             {
-                err_code = ble_scanning_start(BLE_SCAN_MODE_FAST);
+                err_code = scanning_start(BLE_SCAN_MODE_FAST);
                 if ((err_code != NRF_SUCCESS) && (m_error_handler != NULL))
                 {
                     m_error_handler(err_code);
@@ -317,7 +324,7 @@ uint32_t ble_scanning_pause(bool enable)
     }
     else
     {
-        return ble_scanning_start(m_scan_mode_current);
+        return scanning_start(m_scan_mode_current);
     }
 
     return NRF_SUCCESS;
@@ -358,7 +365,7 @@ uint32_t ble_scanning_start_without_whitelist(ble_scan_mode_t scanning_mode)
     {
         m_whitelist_temporarily_disabled = true;
 
-        err_code = ble_scanning_start(scanning_mode);
+        err_code = scanning_start(scanning_mode);
         if ((err_code != NRF_SUCCESS) && (m_error_handler != NULL))
         {
             m_error_handler(err_code);

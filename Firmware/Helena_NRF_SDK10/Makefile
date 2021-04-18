@@ -85,6 +85,7 @@ LDFLAGS += \
 SRC_FILES += \
 	./src/ble_cgw.c \
 	./src/ble_hids_c.c \
+	./src/ble_hids_c_hardcoded.c \
 	./src/ble_lcs.c \
 	./src/ble_lcs_c.c \
 	./src/ble_lcs_ctrlpt.c \
@@ -135,7 +136,7 @@ SRC_FILES += \
 	$(NRF_SDK_INSTALL_ROOT)/components/drivers_nrf/wdt/nrf_drv_wdt.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/drivers_nrf/hal/nrf_adc.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/libraries/crc16/crc16.c \
-	$(NRF_SDK_INSTALL_ROOT)/components/libraries/fds/fds.c \
+	./mod/fds/fds.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/libraries/fstorage/fstorage.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/libraries/timer/app_timer.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/libraries/util/app_util_platform.c \
@@ -176,7 +177,7 @@ INC_DIRS += \
     $(NRF_SDK_INSTALL_ROOT)/components/toolchain \
     $(NRF_SDK_INSTALL_ROOT)/components/libraries/crc16 \
     $(NRF_SDK_INSTALL_ROOT)/components/libraries/experimental_section_vars \
-    $(NRF_SDK_INSTALL_ROOT)/components/libraries/fds \
+    ./mod/fds \
     $(NRF_SDK_INSTALL_ROOT)/components/libraries/fstorage \
     $(NRF_SDK_INSTALL_ROOT)/components/libraries/scheduler \
     $(NRF_SDK_INSTALL_ROOT)/components/libraries/util \

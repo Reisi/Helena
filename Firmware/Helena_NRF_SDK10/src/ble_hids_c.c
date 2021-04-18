@@ -15,6 +15,7 @@
 #include "nrf_error.h"
 #include "ble_srv_common.h"
 #include "nordic_common.h"
+#include "app_error.h"
 
 /* Private defines -----------------------------------------------------------*/
 #define HID_INFO_FLAG_REMOTE_WAKE   (1<<0)
@@ -74,6 +75,11 @@ static uint32_t      m_tx_index        = 0;        /**< Current index in the tra
  */
  static void db_discovery_evt_handler(ble_db_discovery_evt_t * p_evt)
 {
+    if (mp_ble_hids_c == NULL)
+    {
+        return;
+    }
+
     // Check if HID Service was discovered.
     if (p_evt->evt_type == BLE_DB_DISCOVERY_COMPLETE &&
         p_evt->params.p_discovered_db->srv_uuid.uuid == BLE_UUID_HUMAN_INTERFACE_DEVICE_SERVICE &&
@@ -128,8 +134,9 @@ static uint32_t      m_tx_index        = 0;        /**< Current index in the tra
                             p_evt->params.p_discovered_db->charateristics[i].characteristic.handle_value;
                         mp_ble_hids_c->report_handles[j].cccd_handle =
                             p_evt->params.p_discovered_db->charateristics[i].cccd_handle;
-                        ///mp_ble_hids_c->report_handles[j].report_reference_handle =
-                        ///    p_evt->params.p_discovered_db->charateristics[i].report_reference_handle;
+                        // the report_reference_handle isn't supported in SDK10
+                        //mp_ble_hids_c->report_handles[j].report_reference_handle =
+                        //    p_evt->params.p_discovered_db->charateristics[i].report_reference_handle;
                         break;
                     }
                 }
@@ -156,23 +163,13 @@ static void on_disconnect(ble_hids_c_t * p_ble_hids_c, const ble_evt_t * p_ble_e
     if (p_ble_evt->evt.gap_evt.conn_handle == p_ble_hids_c->conn_handle)
     {
         p_ble_hids_c->conn_handle = BLE_CONN_HANDLE_INVALID;
-    }
-
-    // Check if this notification is a report notification.
-    for (uint_fast8_t i = 0; i < NUM_OF_REPORT_HANDLES; i++)
-    {
-        if (p_ble_evt->evt.gattc_evt.params.hvx.handle == p_ble_hids_c->report_handles[i].report_handle)
+        p_ble_hids_c->hid_info_handle = BLE_GATT_HANDLE_INVALID;
+        p_ble_hids_c->report_map_handle = BLE_GATT_HANDLE_INVALID;
+        for (uint_fast8_t i = 0; i < NUM_OF_REPORT_HANDLES; i++)
         {
-            ble_hids_c_evt_t evt;
-            evt.evt_type = BLE_HIDS_C_EVT_REPORT_NOTIFICATION;
-            evt.params.report.index = i;
-            evt.params.report.p_report = p_ble_evt->evt.gattc_evt.params.hvx.data;
-            evt.params.report.len = p_ble_evt->evt.gattc_evt.params.hvx.len;
-            if (p_ble_hids_c->evt_handler != NULL)
-            {
-                p_ble_hids_c->evt_handler(p_ble_hids_c, &evt);
-            }
-            break;
+            p_ble_hids_c->report_handles[i].report_handle = BLE_GATT_HANDLE_INVALID;
+            p_ble_hids_c->report_handles[i].cccd_handle = BLE_GATT_HANDLE_INVALID;
+            p_ble_hids_c->report_handles[i].report_reference_handle = BLE_GATT_HANDLE_INVALID;
         }
     }
 }
@@ -189,6 +186,11 @@ static void on_disconnect(ble_hids_c_t * p_ble_hids_c, const ble_evt_t * p_ble_e
 static void on_hvx(ble_hids_c_t * p_ble_hids_c, const ble_evt_t * p_ble_evt)
 {
     // Check if this notification is a report notification.
+    if (p_ble_evt->evt.gattc_evt.conn_handle != p_ble_hids_c->conn_handle)
+    {
+        return;
+    }
+
     for (uint_fast8_t i = 0; i < NUM_OF_REPORT_HANDLES; i++)
     {
         if (p_ble_evt->evt.gattc_evt.params.hvx.handle == p_ble_hids_c->report_handles[i].report_handle)
@@ -244,8 +246,21 @@ static void on_write_rsp(ble_hids_c_t * p_ble_hids_c, const ble_evt_t * p_ble_ev
     (void)p_ble_hids_c;
     (void)p_ble_evt;
 
+    if (p_ble_hids_c->conn_handle == p_ble_evt->evt.gattc_evt.conn_handle)
+    {
+        // check write status for relevant handles
+        for (uint_fast8_t i = 0; i < NUM_OF_REPORT_HANDLES; i++)
+        {
+            if (p_ble_evt->evt.gattc_evt.gatt_status != NRF_SUCCESS &&
+                p_ble_evt->evt.gattc_evt.error_handle == p_ble_hids_c->report_handles[i].cccd_handle)
+            {
+                APP_ERROR_CHECK(p_ble_evt->evt.gattc_evt.gatt_status);
+            }
+        }
+    }
+
     // Check if there is any message to be sent across to the peer and send it.
-    tx_buffer_process();
+    //tx_buffer_process();
 }
 
 /**@brief     Function for handling read response events.
@@ -262,6 +277,11 @@ static void on_read_rsp(ble_hids_c_t * p_ble_hids_c, const ble_evt_t * p_ble_evt
     ble_hids_c_evt_t evt;
 
     p_response = &p_ble_evt->evt.gattc_evt.params.read_rsp;
+
+    if (p_ble_hids_c->conn_handle != p_ble_evt->evt.gattc_evt.conn_handle)
+    {
+        return;
+    }
 
     // Check if this is a read response of the HID information characteristic
     if (p_response->handle == p_ble_hids_c->hid_info_handle)
@@ -329,7 +349,7 @@ static void on_read_rsp(ble_hids_c_t * p_ble_hids_c, const ble_evt_t * p_ble_evt
     }
 
     // Check if there is any buffered transmissions and send them.
-    tx_buffer_process();
+    //tx_buffer_process();
 }
 
 /**@brief Function for creating a message for writing to the CCCD.
@@ -399,7 +419,6 @@ void ble_hids_c_on_ble_evt(ble_hids_c_t * p_ble_hids_c, const ble_evt_t * p_ble_
 
         case BLE_GAP_EVT_DISCONNECTED:
             on_disconnect(p_ble_hids_c, p_ble_evt);
-            //p_ble_hids_c->conn_handle = BLE_CONN_HANDLE_INVALID;
             break;
 
         case BLE_GATTC_EVT_HVX:
@@ -417,6 +436,8 @@ void ble_hids_c_on_ble_evt(ble_hids_c_t * p_ble_hids_c, const ble_evt_t * p_ble_
         default:
             break;
     }
+
+    tx_buffer_process();
 }
 
 uint32_t ble_hids_c_hid_info_read(ble_hids_c_t * p_ble_hids_c)

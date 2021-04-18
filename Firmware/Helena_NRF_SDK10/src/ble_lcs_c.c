@@ -456,7 +456,21 @@ static void on_write_rsp(ble_lcs_c_t * p_ble_lcs_c, const ble_evt_t * p_ble_evt)
     (void)p_ble_lcs_c;
     (void)p_ble_evt;
 
-    APP_ERROR_CHECK(p_ble_evt->evt.gattc_evt.gatt_status);
+    ble_lcs_c_server_spec_t * p_server;
+
+    p_server = get_server_data_by_conn_handle(p_ble_evt->evt.gattc_evt.conn_handle, mp_ble_lcs_c->p_server);
+    if (p_server == NULL)
+    {
+        return; // device this event is related to has no light control service
+    }
+
+    // check write status for relevant handles
+    if (p_ble_evt->evt.gattc_evt.params.write_rsp.handle == p_server->lcm_cccd_handle ||
+        p_ble_evt->evt.gattc_evt.params.write_rsp.handle == p_server->lccp_handle ||
+        p_ble_evt->evt.gattc_evt.params.write_rsp.handle == p_server->lccp_cccd_handle)
+    {
+        APP_ERROR_CHECK(p_ble_evt->evt.gattc_evt.gatt_status);
+    }
 
     // Check if there is any message to be sent across to the peer and send it.
     tx_buffer_process();

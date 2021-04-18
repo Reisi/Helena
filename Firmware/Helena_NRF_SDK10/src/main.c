@@ -136,21 +136,16 @@ typedef struct
     modeState_t *pMode;                     // mode state
 } state_t;
 
+#ifdef HELENA
+
 /** @brief light mode setup flags
  */
 typedef struct
 {
-#ifdef HELENA
     bool lightFlood             : 1;        // light flood active
     bool lightSpot              : 1;        // light spot active
     bool lightPitchCompensation : 1;        // light pitch compensation
     bool lightCloned            : 1;        // light output cloned to both drivers, ignored if both flood and spot are enabled
-#elif defined BILLY
-    bool lightMainBeam          : 1;        // main beam flood active
-    bool lightExtendedMainBeam  : 1;        // extended main beam spot active, just a dummy, will be ignored
-    bool lightHighBeam          : 1;        // high beam active
-    bool lightDaylight          : 1;        // daylight active, just a dummy, will be ignored
-#endif // BILLY
     bool comTaillight           : 1;        // secondary taillight enabled through com module
     bool comBrakelight          : 1;        // brake detection enabled end enabled through com module
 } lightModeSetup_t;
@@ -160,17 +155,37 @@ typedef struct
 typedef struct
 {
     lightModeSetup_t setup;                 // setup of this mode
-#ifdef HELENA
     union
     {
         q8_t intensity;                     // light intensity in case of pitchCompensation is false
         uint8_t illuminanceInLux;           // light illuminance in case of pitchCompensation is true
     };
+} lightMode_t;
+
 #elif defined BILLY
+
+/** @brief light mode setup flags
+ */
+typedef struct
+{
+    bool lightMainBeam          : 1;        // main beam flood active
+    bool lightExtendedMainBeam  : 1;        // extended main beam spot active, just a dummy, will be ignored
+    bool lightHighBeam          : 1;        // high beam active
+    bool lightDaylight          : 1;        // daylight active, just a dummy, will be ignored
+    bool comTaillight           : 1;        // secondary taillight enabled through com module
+    bool comBrakelight          : 1;        // brake detection enabled end enabled through com module
+} lightModeSetup_t;
+
+/** @brief light mode structure
+ */
+typedef struct
+{
+    lightModeSetup_t setup;                 // setup of this mode
     q8_t intensityMainBeam;                 // main beam intensity
     q8_t intensityHighBeam;                 // high beam intensity
-#endif // BILLY
 } lightMode_t;
+
+#endif // BILLY
 
 /** @brief helena configuration structure
  */
@@ -218,7 +233,6 @@ typedef struct
 
 /* Private variables ---------------------------------------------------------*/
 APP_TIMER_DEF(mainTimerId);                                         // timer instance for main timer
-//static hmi_buttonState_t buttonVolUp, buttonVolDown;              // remote button states
 static modeState_t modeState __attribute__((section(".noinit")));   // mode states
 static state_t state = {.pMode = &modeState};                       // device states
 static lightConfig_t modeConfig = MODES_DEFAULT;                    // modes and grouping configuration
@@ -260,36 +274,39 @@ static void btleConnEvtHandler(btle_event_t * pEvt)
 
 /** @brief event handler for incoming hid related ble events
  */
-static void btleHidEvtHandler(btle_event_t * pEvt)
+/*static void btleHidEvtHandler(btle_event_t * pEvt)
 {
     switch (pEvt->subEvt.hid)
     {
-    case BTLE_EVT_HID_VOL_UP_SHORT:
+    case BTLE_EVT_HID_XIA_MAIN_SHORT:
+    case BTLE_EVT_HID_R51_VOL_UP:
         APP_ERROR_CHECK(hmi_ReportButton(HMI_BT_RMT_NEXT, HMI_BS_SHORT));
-        //buttonVolUp = HMI_BS_SHORT;
         break;
-    case BTLE_EVT_HID_VOL_UP_LONG:
+    case BTLE_EVT_HID_XIA_MAIN_LONG:
+    case BTLE_EVT_HID_R51_VOL_DOWN:
         APP_ERROR_CHECK(hmi_ReportButton(HMI_BT_RMT_NEXT, HMI_BS_LONG));
-        //buttonVolUp = HMI_BS_LONG;
         break;
-    case BTLE_EVT_HID_VOL_DOWN_SHORT:
+    case BTLE_EVT_HID_XIA_SEC_SHORT:
+    case BTLE_EVT_HID_XIA_SEC_LONG:
+    case BTLE_EVT_HID_R51_PLAYPAUSE:
         APP_ERROR_CHECK(hmi_ReportButton(HMI_BT_RMT_SELECT, HMI_BS_SHORT));
-        //buttonVolDown = HMI_BS_SHORT;
         break;
-    case BTLE_EVT_HID_VOL_DOWN_LONG:
-        APP_ERROR_CHECK(hmi_ReportButton(HMI_BT_RMT_SELECT, HMI_BS_LONG));
-        //buttonVolDown = HMI_BS_LONG;
-        break;
+    case BTLE_EVT_HID_R51_NEXT_TRACK:
+    case BTLE_EVT_HID_R51_PREV_TRACK:
+    case BTLE_EVT_HID_R51_CC:
     default:
         break;
     }
-}
+}*/
 
 /** @brief event handler for incoming ble events related to the Light Control Service
  */
 static void btleLcsEvtHandler(btle_event_t const* const pEvt)
 {
-    if (pEvt->connHandle != state.btle.isCentralConnected)
+    // was just a test to use the inclination of a bicycle mounted light to
+    // compensate inclination. Result was not satisfying, compensation to slow
+    // with the 1s update interval of the measurement data.
+    /*if (pEvt->connHandle != state.btle.isCentralConnected)
         return; // ignore events of peripheral connection
 
     switch (pEvt->subEvt.lcs)
@@ -304,7 +321,7 @@ static void btleLcsEvtHandler(btle_event_t const* const pEvt)
 
     default:
         break;
-    }
+    }*/
 }
 
 /** @brief function to update the actual button configuration to flash
@@ -709,7 +726,8 @@ static void btleEventHandler(btle_event_t * pEvt)
         btleConnEvtHandler(pEvt);
         break;
     case BTLE_EVT_HID:
-        btleHidEvtHandler(pEvt);
+        hmi_ReportHidEvent(pEvt->subEvt.hid);
+        //btleHidEvtHandler(pEvt);
         break;
     case BTLE_EVT_LCS:
         btleLcsEvtHandler(pEvt);
@@ -825,6 +843,7 @@ static void fdsEventHandler(ret_code_t errCode, fds_cmd_id_t cmd, fds_record_id_
 
     if (cmd == FDS_CMD_GC) // garbage collection finished, check if write operations are pending
     {
+        APP_ERROR_CHECK(errCode);
         if (state.btle.isGroupCountPending != BTLE_CONN_HANDLE_INVALID ||
             state.btle.isModeConfigWritePending != BTLE_CONN_HANDLE_INVALID ||
             state.btle.isPrefModeWritePending != BTLE_CONN_HANDLE_INVALID)
@@ -1066,6 +1085,8 @@ static void mainInit(void)
     {
         APP_ERROR_CHECK(setPowerState(POWER_IDLE));
     }
+
+    //fds_gc();
 }
 
 /** @brief function to get the next valid light mode
@@ -1122,71 +1143,6 @@ static uint8_t changeMode(int8_t mode, int8_t group)
     return currentGroup * modesPerGroup + modeInGroup;
 }
 
-/** @brief function for handling button events
- */
-//static void processButtons(hmi_buttonState_t* pInternal, hmi_buttonState_t* pVolumeUp, hmi_buttonState_t* pVolumeDown)
-static void processButtons(hmi_buttonState_t* pButtons)
-{
-    uint_fast8_t newMode = state.pMode->currentMode;
-
-    // ultra long press of internal button
-    if (pButtons[HMI_BT_INTERNAL] == HMI_BS_ULTRALONG)
-    {
-        if (state.pMode->currentMode == MODE_OFF)       // either search for remote
-        {
-            APP_ERROR_CHECK(btle_DeleteBonds());
-            APP_ERROR_CHECK(btle_SearchForRemote());
-        }
-        else                                            // or shut off
-            enterMode(MODE_OFF, BTLE_CONN_HANDLE_ALL);
-        return;
-    }
-
-    // button press of external volume down button
-    if (pButtons[HMI_BT_RMT_SELECT] != HMI_BS_NOPRESS && state.pMode->currentMode != MODE_OFF)
-    {                                                               // enter preferred mode
-        if (modeConfig.prefMode != MODE_INVALID &&                  // if preferred mode is set and
-            isLightMode(&modeConfig.mode[modeConfig.prefMode]) &&   // preferred mode has a valid light setup and
-            state.pMode->currentMode != modeConfig.prefMode)        // current mode is not the preferred mode
-            enterMode(modeConfig.prefMode, BTLE_CONN_HANDLE_ALL);
-        else
-            enterMode(MODE_OFF, BTLE_CONN_HANDLE_ALL);
-        return;
-    }
-
-    // change mode
-    if (pButtons[HMI_BT_INTERNAL] == HMI_BS_SHORT ||
-        pButtons[HMI_BT_RMT_NEXT] == HMI_BS_SHORT || pButtons[HMI_BT_RMT_PREV] == HMI_BS_SHORT)
-    {
-        if (state.pMode->currentMode == MODE_OFF)
-        {
-            if (modeConfig.prefMode != MODE_INVALID && isLightMode(&modeConfig.mode[modeConfig.prefMode]))
-                newMode = modeConfig.prefMode;
-            else
-                newMode = 0;
-        }
-        else if (pButtons[HMI_BT_RMT_PREV] == HMI_BS_SHORT)
-            newMode = changeMode(-1, 0);
-        else
-            newMode = changeMode(1, 0);
-    }
-    // change group
-    else if (state.pMode->currentMode != MODE_OFF)
-    {
-        if (pButtons[HMI_BT_RMT_PREV] == HMI_BS_LONG || pButtons[HMI_BT_RMT_DOWN] >= HMI_BS_SHORT)
-            newMode = changeMode(0, -1);
-        else if (pButtons[HMI_BT_INTERNAL] == HMI_BS_LONG ||
-            pButtons[HMI_BT_RMT_NEXT] == HMI_BS_LONG || pButtons[HMI_BT_RMT_UP] >= HMI_BS_SHORT)
-            newMode = changeMode(0, 1);
-    }
-
-    if (newMode == state.pMode->currentMode)
-        return;
-
-    newMode = getNextValidMode(newMode);
-    enterMode(newMode, BTLE_CONN_HANDLE_ALL);
-}
-
 /** @brief function to handle the status led
  */
 static void ledHandling(light_limiterActive_t led1, light_limiterActive_t led2, btleStatus_t *pBtleData)
@@ -1210,6 +1166,7 @@ static void ledHandling(light_limiterActive_t led1, light_limiterActive_t led2, 
 static void updateLightMsgData(const light_status_t * pStatus)
 {
 #ifdef HELENA
+
     cmh_light_t helmetBeam;
 
     memset(&helmetBeam, 0, sizeof(cmh_light_t));
@@ -1269,6 +1226,7 @@ static void updateLightMsgData(const light_status_t * pStatus)
     // ignore error codes
     (void)cmh_UpdateMainBeam(&mainBeam);
     (void)cmh_UpdateHighBeam(&highBeam);
+
 #endif // defined
 }
 
@@ -1485,6 +1443,135 @@ static void sensorCalibrationCheck()
     }
 }
 
+/** @brief function for handling button events
+ */
+/*static void processButtons(hmi_buttonState_t* pButtons)
+{
+    uint_fast8_t newMode = state.pMode->currentMode;
+
+    // ultra long press of internal button
+    if (pButtons[HMI_BT_INTERNAL] == HMI_BS_ULTRALONG)
+    {
+        if (state.pMode->currentMode == MODE_OFF)       // either search for remote
+        {
+            APP_ERROR_CHECK(btle_DeleteBonds());
+            APP_ERROR_CHECK(btle_SearchForRemote());
+        }
+        else                                            // or shut off
+            enterMode(MODE_OFF, BTLE_CONN_HANDLE_ALL);
+        return;
+    }
+
+    // button press of external select
+    if (pButtons[HMI_BT_RMT_SELECT] != HMI_BS_NOPRESS && state.pMode->currentMode != MODE_OFF)
+    {                                                               // enter preferred mode
+        if (modeConfig.prefMode != MODE_INVALID &&                  // if preferred mode is set and
+            isLightMode(&modeConfig.mode[modeConfig.prefMode]) &&   // preferred mode has a valid light setup and
+            state.pMode->currentMode != modeConfig.prefMode)        // current mode is not the preferred mode
+            enterMode(modeConfig.prefMode, BTLE_CONN_HANDLE_ALL);
+        else
+            enterMode(MODE_OFF, BTLE_CONN_HANDLE_ALL);
+        return;
+    }
+
+    // change mode
+    if (pButtons[HMI_BT_INTERNAL] == HMI_BS_SHORT ||
+        pButtons[HMI_BT_RMT_NEXT] == HMI_BS_SHORT || pButtons[HMI_BT_RMT_PREV] == HMI_BS_SHORT)
+    {
+        if (state.pMode->currentMode == MODE_OFF)
+        {
+            if (pButtons[HMI_BT_INTERNAL] == HMI_BS_SHORT || pButtons[HMI_BT_RMT_NEXT] == HMI_BS_SHORT)
+                newMode = 0;                                        // start with first mode
+            else
+                newMode = MAX_NUM_OF_MODES / modeConfig.groups - 1; // or, in case of previous button, with last mode in first group
+        }
+        else
+        {
+            if (pButtons[HMI_BT_RMT_PREV] == HMI_BS_SHORT)
+                newMode = changeMode(-1, 0);
+            else
+                newMode = changeMode(1, 0);
+        }
+    }
+    // change group
+    else if (state.pMode->currentMode != MODE_OFF)
+    {
+        if (pButtons[HMI_BT_RMT_PREV] == HMI_BS_LONG || pButtons[HMI_BT_RMT_DOWN] >= HMI_BS_SHORT)
+            newMode = changeMode(0, -1);
+        else if (pButtons[HMI_BT_INTERNAL] == HMI_BS_LONG ||
+            pButtons[HMI_BT_RMT_NEXT] == HMI_BS_LONG || pButtons[HMI_BT_RMT_UP] >= HMI_BS_SHORT)
+            newMode = changeMode(0, 1);
+    }
+
+    if (newMode == state.pMode->currentMode)
+        return;
+
+    newMode = getNextValidMode(newMode);
+    enterMode(newMode, BTLE_CONN_HANDLE_ALL);
+}*/
+
+static void hmiEventHandler(hmi_eventType_t event)
+{
+    uint_fast8_t newMode = state.pMode->currentMode;
+
+    switch (event)
+    {
+    case HMI_EVT_INTERNAL_SHORT:
+    case HMI_EVT_XIAOMI_PRI_SHORT:
+    case HMI_EVT_R51_VOLUP:
+        // start with first mode, or jump to next
+        if (newMode == MODE_OFF)
+            newMode = 0;
+        else
+            newMode = changeMode(1, 0);
+        break;
+
+    case HMI_EVT_INTERNAL_LONG:
+    case HMI_EVT_XIAOMI_PRI_LONG:
+    case HMI_EVT_R51_VOLDOWN:
+        // start with first mode in second group, or jump to next group
+        if (newMode == MODE_OFF)
+            newMode = 0;
+        newMode = changeMode(0, 1);
+        break;
+
+    case HMI_EVT_INTERNAL_HOLD:
+        // search remote
+        if (newMode == MODE_OFF)
+        {
+            APP_ERROR_CHECK(btle_DeleteBonds());
+            APP_ERROR_CHECK(btle_SearchForRemote());
+            return;
+        } // fall through if light is on!
+    case HMI_EVT_XIAOMI_SEC_SHORT:
+    case HMI_EVT_R51_PLAYPAUSE:
+        // preferred mode
+        if (modeConfig.prefMode != MODE_INVALID &&                  // if preferred mode is set and
+            isLightMode(&modeConfig.mode[modeConfig.prefMode]) &&   // preferred mode has a valid light setup and
+            state.pMode->currentMode != modeConfig.prefMode)        // current mode is not the preferred mode
+            newMode = modeConfig.prefMode;
+        else
+            newMode = MODE_OFF;
+        break;
+
+    case HMI_EVT_XIAOMI_PRI_HOLD:
+    case HMI_EVT_XIAOMI_SEC_LONG:
+    case HMI_EVT_XIAOMI_SEC_HOLD:
+    case HMI_EVT_R51_NEXTTRACK:
+    case HMI_EVT_R51_PREVTRACK:
+    case HMI_EVT_R51_MODE:
+    default:
+        return;
+    }
+
+    if (newMode == state.pMode->currentMode)
+        return; // nothing changed
+
+    if (newMode != MODE_OFF)
+        newMode = getNextValidMode(newMode);
+    enterMode(newMode, BTLE_CONN_HANDLE_ALL);
+}
+
 /**@brief Function for application main entry.
  */
 int main(void)
@@ -1494,10 +1581,13 @@ int main(void)
     btle_StackInit();
     debug_Init();
     APP_ERROR_CHECK(board_Init());
-    hmi_Init();
+    //hmi_Init();
     state.supplyCellCnt = pwr_Init();
     light_Init(state.supplyCellCnt, &ledConfiguration);
     ms_Init(movementEventHandler);
+
+    hmi_init_t hmiInit = {.eventHandler = hmiEventHandler};
+    APP_ERROR_CHECK(hmi_Init(&hmiInit));
 
     btle_lcsFeature_t features;
 #ifdef HELENA
@@ -1514,9 +1604,6 @@ int main(void)
 
     com_Init();
     cmh_Init(&lightMasterHandler);
-#if defined BTDEBUG
-    //debug_FieldTestingInit();
-#endif
     mainInit();
 
     while (1)
@@ -1531,10 +1618,12 @@ int main(void)
             cmh_ComMessageCheck(pMessageIn);                    // process message using the com message handler
         }
 
+        hmi_Execute();
+
         // button checks
-        hmi_buttonState_t buttons[HMI_BT_CNT];
-        APP_ERROR_CHECK(hmi_Debounce(buttons, HMI_BT_CNT));     // run debounce routine and get button states
-        processButtons(buttons);                                // process button events
+        //hmi_buttonState_t buttons[HMI_BT_CNT];
+        //APP_ERROR_CHECK(hmi_Debounce(buttons, HMI_BT_CNT));     // run debounce routine and get button states
+        //processButtons(buttons);                                // process button events
         //processButtons(&buttons[HMI_BT_INTERNAL], &buttonVolUp, &buttonVolDown);  // process button events
 
         // determine current light mode
