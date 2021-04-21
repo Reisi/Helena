@@ -11,10 +11,10 @@
 #define VERSION_H_INCLUDED
 
 #define VERSION_MAJOR   2
-#define VERSION_MINOR   1
+#define VERSION_MINOR   2
 #define VERSION_PATCH   0
 
-#define VERSION_LEVEL   "beta"
+#define VERSION_LEVEL   "sled"
 
 #define BUILD_YEAR  ((__DATE__[ 9] - '0') * 10 + (__DATE__[10] - '0'))
 

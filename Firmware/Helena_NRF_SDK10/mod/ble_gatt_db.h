@@ -6,7 +6,7 @@
 #include "ble.h"
 #include "ble_gattc.h"
 
-#define BLE_GATT_DB_MAX_CHARS                                 9          /**< The maximum number of characteristics present in a service record. */
+#define BLE_GATT_DB_MAX_CHARS                                 3          /**< The maximum number of characteristics present in a service record. */
 
 /**@brief Structure for holding the characteristic and the handle of its CCCD present on a server.
  */

@@ -17,10 +17,19 @@
 #include "power.h"
 #include "custom_board.h"
 #include "main.h"
+#include "app_util_platform.h"
 
 /* External variables --------------------------------------------------------*/
 
 /* Private typedef -----------------------------------------------------------*/
+/**< structure to hold debounce status for internal button(s) */
+typedef struct
+{
+    uint8_t cnt;        // number of times, new button state has already been different from last known
+    uint8_t lastState;  // last known stable state
+} buttonDebounce_t;
+
+/**< buttons for short, long click, hold evaluation */
 typedef enum
 {
     BUTEV_INTERNAL = 0,
@@ -29,6 +38,7 @@ typedef enum
     BUTEV_CNT
 } buttonEvaluated_t;
 
+/**< structure to hold data for evaluation buttons */
 typedef struct
 {
     uint8_t  state;             // last known state
@@ -38,65 +48,109 @@ typedef struct
 /* Private macros ------------------------------------------------------------*/
 
 /* Private defines -----------------------------------------------------------*/
-#define LEDRED              (pBoardConfig->ledRed)//25
-#define LEDBLUE             (pBoardConfig->ledBlue)//24
-#define BUTTON              (pBoardConfig->button)
+#define BUTTON                  (pBoardConfig->button)
 
-#define TIMEBASE            APP_TIMER_TICKS(10,0)
-#define BUTTONPRESS_LONG    APP_TIMER_TICKS(500, APP_TIMER_PRESCALER)
-#define BUTTONPRESS_HOLD    APP_TIMER_TICKS(2000, APP_TIMER_PRESCALER)
+#define TIMEBASE                APP_TIMER_TICKS(10,0)
+#define BUTTONPRESS_LONG        APP_TIMER_TICKS(500, APP_TIMER_PRESCALER)
+#define BUTTONPRESS_HOLD        APP_TIMER_TICKS(2000, APP_TIMER_PRESCALER)
 
-#define BUTTON_PRESSED      1
-#define BUTTON_RELEASED     0
+#define BUTTON_PRESSED          1
+#define BUTTON_RELEASED         0
+#define CNT_UNTIL_BUTTON_STABLE 4
+
+#define LOG(string) //SEGGER_RTT_WriteString(0, string)
 
 /* Private variables ---------------------------------------------------------*/
-APP_TIMER_DEF(hmi_Timer);
-static volatile uint8_t timebaseFlag;               // flag indicating that a timer interrupt occured
-static volatile bool isDebouncingActive;
-static buttonEvaluation_t buttonState[BUTEV_CNT];   // button structure for evaluating hold, short and long clicks
-static btle_hidEventType_t lastHidEvent = BTLE_EVT_HID_CNT;
+APP_TIMER_DEF(hmi_Timer);                           // timer for debouncing, evaluation and led management
+static volatile uint8_t timebaseCnt;                // counter increased in timer handler
 
-static hmi_eventHandler_t eventHandler;
+static buttonDebounce_t buttonDebounce;             // debounce data for internal button
+static buttonEvaluation_t buttonState[BUTEV_CNT];   // button structure for evaluating hold, short and long clicks
+static btle_hidEventType_t lastHidEvent = BTLE_EVT_HID_CNT; // last received hid event related to R51 remote
+
+static hmi_ledState_t ledState[HMI_LEDCNT];         // state of status leds
+
+static hmi_eventHandler_t eventHandler;             // event handler to report button related events
 
 /* Private functions ---------------------------------------------------------*/
-static void hmi_DebounceStart(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
+static bool isLedActive()
 {
-    (void)pin;
-    (void)action;
+    return ledState[HMI_LEDRED] != HMI_LEDOFF || ledState[HMI_LEDBLUE] != HMI_LEDOFF;
+}
 
-    nrf_drv_gpiote_in_event_disable(BUTTON);                    // disable event, from now on everything is done in the timer handler
-    APP_ERROR_CHECK(app_timer_start(hmi_Timer, TIMEBASE, NULL));
-    isDebouncingActive = true;
-    pwr_SetActiveFlag(pwr_ACTIVEHMI);
+static bool isDebouncingActive()
+{
+    return buttonDebounce.cnt != 0;
+}
+
+static void timerRequest(bool request)
+{
+    static uint8_t cnt; // request counter
+
+    if (!request && --cnt == 0)
+    {
+        APP_ERROR_CHECK(app_timer_stop(hmi_Timer));
+        LOG("[HMI]: Timer stopped.\r\n");
+        nrf_drv_gpiote_in_event_enable(BUTTON, true);
+    }
+    else if (request && cnt++ == 0)
+    {
+        APP_ERROR_CHECK(app_timer_start(hmi_Timer, TIMEBASE, NULL));
+        LOG("[HMI]: Timer started.\r\n");
+        nrf_drv_gpiote_in_event_disable(BUTTON);
+    }
 }
 
 static void hmi_TimerCallback(void *p_context)
 {
     (void)p_context;
 
-    timebaseFlag++;// = 1;
-    pwr_SetActiveFlag(pwr_ACTIVEHMI);
+    timebaseCnt++;
+    pwr_SetActiveFlag(pwr_ACTIVEHMI);   // set flag to ensure hmi_execute is called before entering standby
 }
 
-static void internalButtonDebounce(uint8_t* pOldState, uint8_t newState)
+static void hmi_DebounceStart(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
 {
-    static uint8_t intCnt;
+    (void)pin;
+    (void)action;
 
-    if (newState != *pOldState)
+    // there might be an pending event when activating, ignore it if state has not changed
+    uint8_t inputState = nrf_gpio_pin_read(BUTTON) ? BUTTON_RELEASED : BUTTON_PRESSED;
+    if (inputState == buttonDebounce.lastState)
+        return;
+
+    LOG("[HMI]: Debouncing started from interrupt.\r\n");
+
+    timerRequest(true);
+    buttonDebounce.cnt = 1;
+    pwr_SetActiveFlag(pwr_ACTIVEHMI);   // no standby to ensure execution of hmi_execute
+}
+
+static void internalButtonDebounce(uint8_t newState)
+{
+    if (newState != buttonDebounce.lastState)
     {
-        if (++intCnt >= 4)
+        if (buttonDebounce.cnt++ == 0)                      // changed from a stable state
         {
-            *pOldState = newState;
-            buttonState[BUTEV_INTERNAL].state = newState;
-            intCnt = 0;
+            LOG("[HMI]: Debouncing started from timer.\r\n");
+            timerRequest(true);                             // timer is necessary
+        }
+        else if (buttonDebounce.cnt >= CNT_UNTIL_BUTTON_STABLE)
+        {                                                   // button has reached stable state
+            buttonDebounce.lastState = newState;            // update new debounce state
+            buttonState[BUTEV_INTERNAL].state = newState;   // update new evaluation state
+            buttonDebounce.cnt = 0;                         // reset counter, to indicate that debouncing is finished
+            timerRequest(false);                            // timer can be released
+            LOG("[HMI]: Debouncing finished.\r\n");
         }
     }
-    else
-        intCnt = 0;
 }
 
 static void evaluateButtons()
 {
+    static bool timerRequested;
+    bool evaluating = false;
+
     for (uint_fast8_t i = BUTEV_INTERNAL; i < BUTEV_CNT; i++)
     {
         hmi_eventType_t evt = i * HMI_EVT_XIAOMI_PRI_SHORT;
@@ -125,9 +179,49 @@ static void evaluateButtons()
         }
         // button has just been pressed, save timestamp
         if (buttonState[i].state == BUTTON_PRESSED && buttonState[i].timestampPressed == 0)
+        {
             (void)app_timer_cnt_get(&buttonState[i].timestampPressed);
+        }
 
+        if (buttonState[i].state == BUTTON_PRESSED)
+        {
+            evaluating = true;
+        }
     }
+
+    if (evaluating != timerRequested)
+    {
+        timerRequested = evaluating;
+        if (evaluating)
+        {
+            LOG("[HMI]: Button evaluating enabled.\r\n");
+            timerRequest(evaluating);
+        }
+        else
+        {
+            timerRequest(evaluating);
+            LOG("[HMI]: Button evaluating disabled.\r\n");
+        }
+    }
+}
+
+static void ledHandling()
+{
+    uint8_t prescale = timebaseCnt;
+
+    if (ledState[HMI_LEDBLUE] == HMI_LEDON ||
+    (ledState[HMI_LEDBLUE] == HMI_LEDBLINKSLOW && (prescale & 0x60) == 0x60) || /// TODO: replace magic numbers
+    (ledState[HMI_LEDBLUE] == HMI_LEDBLINKFAST && (prescale & 0x20) == 0x20))
+        board_EnableLed(BOARD_LED_BLUE, true);
+    else
+        board_EnableLed(BOARD_LED_BLUE, false);
+
+    if (ledState[HMI_LEDRED] == HMI_LEDON ||
+    (ledState[HMI_LEDRED] == HMI_LEDBLINKSLOW && (prescale & 0x60) == 0x60) ||
+    (ledState[HMI_LEDRED] == HMI_LEDBLINKFAST && (prescale & 0x20) == 0x20))
+        board_EnableLed(HMI_LEDRED, true);
+    else
+        board_EnableLed(HMI_LEDRED, false);
 }
 
 /* Public functions ----------------------------------------------------------*/
@@ -140,8 +234,8 @@ uint32_t hmi_Init(hmi_init_t const* pInit)
 
     eventHandler = pInit->eventHandler;
 
-    nrf_gpio_cfg_default(LEDRED);
-    nrf_gpio_cfg_default(LEDBLUE);
+    board_EnableLed(BOARD_LED_BLUE, false);
+    board_EnableLed(BOARD_LED_RED, false);
 
     if (!nrf_drv_gpiote_is_init())
     {
@@ -149,7 +243,7 @@ uint32_t hmi_Init(hmi_init_t const* pInit)
         if (errCode != NRF_SUCCESS)
             return errCode;
     }
-    nrf_drv_gpiote_in_config_t buttonConfig = GPIOTE_CONFIG_IN_SENSE_HITOLO(false);
+    nrf_drv_gpiote_in_config_t buttonConfig = GPIOTE_CONFIG_IN_SENSE_TOGGLE(false);
     buttonConfig.pull = NRF_GPIO_PIN_PULLUP;
     errCode = nrf_drv_gpiote_in_init(BUTTON, &buttonConfig, &hmi_DebounceStart);
     if (errCode != NRF_SUCCESS)
@@ -171,39 +265,23 @@ void hmi_Execute()
         lastHidEvent = BTLE_EVT_HID_CNT;
     }
 
-    // the other stuff is timebased
-    if (!timebaseFlag)
-        return; // nothing to do
+    static uint8_t lastCnt;
 
-    timebaseFlag = 0;
+    if (timebaseCnt == lastCnt)
+        return;
+
+    lastCnt = timebaseCnt;
     pwr_ClearActiveFlag(pwr_ACTIVEHMI);
 
-    // debouncing for internal button
-    static uint8_t lastState;
-    uint8_t inputState = nrf_gpio_pin_read(BUTTON) ? BUTTON_RELEASED : BUTTON_PRESSED;
-    internalButtonDebounce(&lastState, inputState);
+    // led handling
+    ledHandling();
 
-    // no handler, evaluation senseless
-    if (eventHandler == NULL)
-        return;
+    // debouncing for internal button
+    uint8_t inputState = nrf_gpio_pin_read(BUTTON) ? BUTTON_RELEASED : BUTTON_PRESSED;
+    internalButtonDebounce(inputState);
 
     // evaluation button states
     evaluateButtons();
-
-    // check if timer is still necessary
-    bool evaluationOngoing = (bool)lastState;   // us last state from debounce routine for internal button,
-                                                // otherwise clicks after a hold event will be missed
-    for (uint_fast8_t i = BUTEV_INTERNAL; i < BUTEV_CNT; i++)
-    {
-        if (buttonState[i].state == BUTTON_PRESSED)
-            evaluationOngoing = true;
-    }
-    if (!evaluationOngoing)
-    {
-        APP_ERROR_CHECK(app_timer_stop(hmi_Timer));
-        nrf_drv_gpiote_in_event_enable(BUTTON, true);
-        isDebouncingActive = false;
-    }
 }
 
 uint32_t hmi_ReportHidEvent(btle_hidEventType_t hidEvent)
@@ -214,168 +292,49 @@ uint32_t hmi_ReportHidEvent(btle_hidEventType_t hidEvent)
     switch (hidEvent)
     {
     case BTLE_EVT_HID_XIA_MAIN_PRESSED:
-        if (!isDebouncingActive)
-            hmi_DebounceStart(0, 0);    // input values are ignored, so don't care
         buttonState[BUTEV_XIA_BIG].state = BUTTON_PRESSED;
         break;
     case BTLE_EVT_HID_XIA_MAIN_RELEASED:
         buttonState[BUTEV_XIA_BIG].state = BUTTON_RELEASED;
         break;
     case BTLE_EVT_HID_XIA_SEC_PRESSED:
-        if (!isDebouncingActive)
-            hmi_DebounceStart(0, 0);    // input values are ignored, so don't care
         buttonState[BUTEV_XIA_SEC].state = BUTTON_PRESSED;
         break;
     case BTLE_EVT_HID_XIA_SEC_RELEASED:
         buttonState[BUTEV_XIA_SEC].state = BUTTON_RELEASED;
         break;
     default:
-        lastHidEvent = hidEvent;
+        lastHidEvent = hidEvent;    // R51 events are directly reported in execute
+        return NRF_SUCCESS;
     }
+
+    evaluateButtons();
 
     return NRF_SUCCESS;
 }
-
-/*uint32_t hmi_Debounce(hmi_buttonState_t * buttonReport, uint16_t countOf)
-{
-    static uint8_t ct0 = 0xFF, ct1 = 0xFF, rpt, but_state, but_repeat, but_press, but_long;
-    uint8_t i;
-
-    if (countOf < HMI_BT_CNT)
-        return NRF_ERROR_NO_MEM;
-
-    //hmi_buttonState_t presstype = HMI_BS_NOPRESS;
-
-    if (timebaseFlag)
-    {
-        timebaseFlag = 0;
-        pwr_ClearActiveFlag(pwr_ACTIVEHMI);
-        i = nrf_gpio_pin_read(BUTTON);
-        i = but_state ^ ~i;
-        ct0 = ~(ct0 & i);
-        ct1 = ct0 ^(ct1 & i);
-        i &= ct0 & ct1;
-        but_state ^= (i & 1);
-        but_press |= but_state & i;
-        if ((but_state & 1) == 0)
-            rpt = REPEATSTART;
-        if (rpt)
-        {
-            if (--rpt == 0)
-            {
-                if (but_long)
-                {
-                    but_repeat |= but_state & 1;
-                }
-                else
-                {
-                    rpt = REPEATNEXT;
-                    but_long |= but_state & 1;
-                }
-            }
-        }
-
-        if ((ct0 & ct1) == 0xFF && (but_state & 1) == 0)
-        {
-            APP_ERROR_CHECK(app_timer_stop(hmi_Timer));
-            nrf_drv_gpiote_in_event_enable(BUTTON, true);
-        }
-    }
-
-    // check if button was long pressed
-    i = ~but_state & but_long;
-    if (i)
-    {
-        buttonStates[HMI_BT_INTERNAL] = HMI_BS_LONG;
-        but_long = 0;
-        but_press = 0;
-    }
-    // check if button was short pressed
-    i = ~but_state & but_press;
-    if (i)
-    {
-        if (but_repeat)
-            but_repeat = 0;
-        else
-            buttonStates[HMI_BT_INTERNAL] = HMI_BS_SHORT;
-        but_press = 0;
-    }
-    // check if button is pressed right now
-    if (but_state)
-        buttonStates[HMI_BT_INTERNAL] = HMI_BS_PRESS;
-
-    // check for ultra long press
-    i = but_state & but_repeat & but_long;
-    if (i)
-    {
-        buttonStates[HMI_BT_INTERNAL] = HMI_BS_ULTRALONG;
-        but_long = 0;
-    }
-
-    for (hmi_buttonType_t i = 0; i < HMI_BT_CNT; i++)
-    {
-        buttonReport[i] = buttonStates[i];
-        buttonStates[i] = HMI_BS_NOPRESS;
-    }
-
-    return NRF_SUCCESS;
-}
-
-uint32_t hmi_ReportButton(hmi_buttonType_t type, hmi_buttonState_t state)
-{
-    if (type == HMI_BT_INTERNAL || type >= HMI_BT_CNT)
-        return NRF_ERROR_INVALID_PARAM;
-
-    buttonStates[type] = state;
-
-    return NRF_SUCCESS;
-}*/
 
 void hmi_SetLed(hmi_ledType_t led, hmi_ledState_t state)
 {
-    static uint8_t ledState;
+    bool timerNeeded, isAlreadyActive = isLedActive();
 
-    switch (state)
-    {
-    case HMI_LEDOFF:
-        ledState &= ~(1<<led);
-        break;
-    case HMI_LEDON:
-        ledState |= (1<<led);
-        break;
-    case HMI_LEDTOGGLE:
-        ledState ^= (1<<led);
-        break;
-    }
+    ledState[led] = state;
 
-    switch (ledState & ((1<<HMI_LEDBLUE)|(1<<HMI_LEDRED)))
+    timerNeeded = isLedActive();
+
+    if (timerNeeded != isAlreadyActive)
     {
-    case 0:
-        nrf_gpio_cfg_default(LEDRED);
-        nrf_gpio_cfg_default(LEDBLUE);
-        break;
-    case (1<<HMI_LEDRED):
-        nrf_gpio_cfg_default(LEDBLUE);
-        nrf_gpio_cfg_output(LEDRED);
-        if (LEDRED == LEDBLUE)
-            nrf_gpio_pin_clear(LEDRED);
+        if (timerNeeded)
+        {
+            LOG("[HMI]: LED interface enabled.\r\n");
+            timerRequest(timerNeeded);
+        }
         else
-            nrf_gpio_pin_set(LEDRED);
-        break;
-    case (1<<HMI_LEDBLUE):
-        nrf_gpio_cfg_default(LEDRED);
-        nrf_gpio_cfg_output(LEDBLUE);
-        nrf_gpio_pin_set(LEDBLUE);
-        break;
-    case (1<<HMI_LEDRED)|(1<<HMI_LEDBLUE):
-        nrf_gpio_cfg_output(LEDBLUE);
-        nrf_gpio_pin_set(LEDRED);
-        nrf_gpio_cfg_output(LEDRED);
-        if (LEDRED == LEDBLUE)
-            nrf_gpio_pin_clear(LEDRED);
-        else
-            nrf_gpio_pin_set(LEDRED);
-        break;
+        {
+            board_EnableLed(BOARD_LED_BLUE, false); // disable manually, polling only works when timer is active
+            board_EnableLed(BOARD_LED_RED, false);
+            timerRequest(timerNeeded);
+            LOG("[HMI]: LED interface disabled.\r\n");
+        }
     }
 }
 

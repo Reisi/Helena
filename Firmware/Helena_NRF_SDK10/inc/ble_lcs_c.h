@@ -33,6 +33,14 @@ typedef enum
     BLE_LCS_C_EVT_CONTROL_POINT_INDIC,  /**< Event indicating that a indication of Light Control Control Point characteristic has been received from peer. */
 } ble_lcs_c_evt_type_t;
 
+/**@brief Light Control Service Client error event type. */
+typedef enum
+{
+    BLE_LCS_C_ERROR_EVT_LCM_NOTIFY, /**< Event indicating that the en-/disabling of the light control measurement notifications has returned an error. */
+    BLE_LCS_C_ERROR_EVT_LCCP_IND,   /**< Event indicating that the en-/disabling of the light control control point indications has returned an error. */
+    BLE_LCS_C_ERROR_EVT_LCCP_WRITE, /**< Event indicating that a write opperation of the light control control point has returned an error. */
+} ble_lcs_c_error_evt_type_t;
+
 /**@breif Light Control Service Control Point Commands
  */
 typedef enum
@@ -354,12 +362,16 @@ typedef struct
     } data;
 } ble_lcs_c_evt_t;
 
-/** @} */
-
-/**
- * @defgroup gap_c_types Types
- * @{
- */
+/**@brief Light Control Service Event structure */
+typedef struct
+{
+    ble_lcs_c_error_evt_type_t evt_type;     /**< type of event */
+    ble_lcs_c_server_spec_t  * p_server;     /**< pointer to server data this event is related to */
+    union
+    {
+        uint16_t gatt_status;               /**< gatt status error message */
+    } data;
+} ble_lcs_c_error_evt_t;
 
 /**@brief forward declaration of the Light Control Client Structure */
 typedef struct ble_lcs_c_s ble_lcs_c_t;
@@ -371,11 +383,19 @@ typedef struct ble_lcs_c_s ble_lcs_c_t;
  */
 typedef void (* ble_lcs_c_evt_handler_t) (ble_lcs_c_t * p_lcs_c, ble_lcs_c_evt_t * p_evt);
 
+/**@brief Error event handler type
+ *
+ * @details This is the type of the event handler that should be provided by the application
+ *          of this module in order to receive error events.
+ */
+typedef void (* ble_lcs_c_error_handler_t) (ble_lcs_c_t * p_lcs_c, ble_lcs_c_error_evt_t * p_evt);
+
 /**@brief Light Control Service Client Structure */
 struct ble_lcs_c_s
 {
     uint8_t                   uuid_type;        /**< the uuid type as delivered by the softdevice */
     ble_lcs_c_evt_handler_t   evt_handler;      /**< Event handler to be called for handling events related to the Light Control Service Client */
+    ble_lcs_c_error_handler_t error_handler;    /**< Erorr handler to be called for handling error related to the Light Control Service Client */
     ble_lcs_c_server_spec_t * p_server;         /**< server specific data */
 };
 
@@ -403,7 +423,8 @@ typedef struct
 /**@brief Light Control Service Client initialization structure. */
 typedef struct
 {
-    ble_lcs_c_evt_handler_t evt_handler;  /**< Event handler to be called by the Light Control Service Client module whenever there is an event related to the Light Control Service. */
+    ble_lcs_c_evt_handler_t     evt_handler;  /**< Event handler to be called by the Light Control Service Client module whenever there is an event related to the Light Control Service. */
+    ble_lcs_c_error_handler_t   error_handler;/**< Error handler to be called by the Light Control Service Client module whenever there is an error related to the Light Control Service. */
 } ble_lcs_c_init_t;
 
 extern ble_uuid128_t ble_lcs_c_base_uuid;

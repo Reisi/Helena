@@ -37,11 +37,10 @@ typedef enum
 
 typedef enum
 {
-    BTLE_EVT_CONN_CENTRAL_SEARCH_START,
-    // BTLE_EVT_CONN_CENTRAL_SEARCH_FOR_NEW,
-    // BTLE_EVT_CONN_CENTRAL_SEARCH_LOWLATENCY,
-    // BTLE_EVT_CONN_CENTRAL_SEARCH_LOWPOWER,
-    BTLE_EVT_CONN_CENTRAL_SEARCH_STOP,
+    BTLE_EVT_CONN_CENTRAL_SEARCH_OFF,
+    BTLE_EVT_CONN_CENTRAL_SEARCH_LOWPOWER,
+    BTLE_EVT_CONN_CENTRAL_SEARCH_LOWLATENCY,
+    BTLE_EVT_CONN_CENTRAL_SEARCH_FOR_NEW,
     BTLE_EVT_CONN_CENTRAL_CONNECTED,
     BTLE_EVT_CONN_CENTRAL_DISCONNECTED,
     BTLE_EVT_CONN_PERIPH_CONNECTED,
@@ -269,8 +268,8 @@ typedef struct
 /**< scan mode */
 typedef enum
 {
-    BTLE_SCAN_MODE_LOW_POWER = 0,               // low power scanning, scan window 11.25ms, scan interval 1280ms
-    BTLE_SCAN_MODE_LOW_LATENCY                  // low latency scanning, scan window 11.25ms, scan interval 44.5ms
+    BTLE_SCAN_MODE_LOW_POWER,                   // low power scanning, scan window 11.25ms, scan interval 1280ms
+    BTLE_SCAN_MODE_LOW_LATENCY,                 // low latency scanning, scan window 11.25ms, scan interval 44.5ms
 } btle_scanMode_t;
 
 /* Exported macros -----------------------------------------------------------*/
@@ -331,7 +330,7 @@ uint32_t btle_DeleteBonds(void);
  *
  * @return      NRF_SUCCESS or an error code
  */
-uint32_t btle_SearchForRemote(void);
+uint32_t btle_SearchRemoteDevice(void);
 
 /** @brief Function set the mode of a remote Light Control Device
  *

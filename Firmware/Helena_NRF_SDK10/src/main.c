@@ -91,10 +91,19 @@
 #endif // BILLY
 
 /* Private typedef -----------------------------------------------------------*/
+typedef enum
+{
+    SCANNING_OFF = 0,
+    SCANNING_LOW_POWER,
+    SCANNING_LOW_LATENCY,
+    SCANNING_FOR_NEW
+} btleScannerStatus_t;
+
 /** @brief bluetooth module related status flags
  */
 typedef struct
 {
+    btleScannerStatus_t scanner;            // the current status of the ble device scanning
     uint16_t isPeriphConnected;             // hold a valid connection handle if in a connection as peripheral
     uint16_t isCentralConnected;            // hold a valid connection handle if in a connection as central
     uint16_t isModeConfigWritePending;      // hold a valid connection handle if a mode configure write response is pending
@@ -256,6 +265,18 @@ static void btleConnEvtHandler(btle_event_t * pEvt)
 {
     switch (pEvt->subEvt.conn)
     {
+    case BTLE_EVT_CONN_CENTRAL_SEARCH_OFF:
+        state.btle.scanner = SCANNING_OFF;
+        break;
+    case BTLE_EVT_CONN_CENTRAL_SEARCH_LOWPOWER:
+        state.btle.scanner = SCANNING_LOW_POWER;
+        break;
+    case BTLE_EVT_CONN_CENTRAL_SEARCH_LOWLATENCY:
+        state.btle.scanner = SCANNING_LOW_LATENCY;
+        break;
+    case BTLE_EVT_CONN_CENTRAL_SEARCH_FOR_NEW:
+        state.btle.scanner = SCANNING_FOR_NEW;
+        break;
     case BTLE_EVT_CONN_CENTRAL_CONNECTED:
         state.btle.isCentralConnected = pEvt->connHandle;
         break;
@@ -271,33 +292,6 @@ static void btleConnEvtHandler(btle_event_t * pEvt)
         break;
     }
 }
-
-/** @brief event handler for incoming hid related ble events
- */
-/*static void btleHidEvtHandler(btle_event_t * pEvt)
-{
-    switch (pEvt->subEvt.hid)
-    {
-    case BTLE_EVT_HID_XIA_MAIN_SHORT:
-    case BTLE_EVT_HID_R51_VOL_UP:
-        APP_ERROR_CHECK(hmi_ReportButton(HMI_BT_RMT_NEXT, HMI_BS_SHORT));
-        break;
-    case BTLE_EVT_HID_XIA_MAIN_LONG:
-    case BTLE_EVT_HID_R51_VOL_DOWN:
-        APP_ERROR_CHECK(hmi_ReportButton(HMI_BT_RMT_NEXT, HMI_BS_LONG));
-        break;
-    case BTLE_EVT_HID_XIA_SEC_SHORT:
-    case BTLE_EVT_HID_XIA_SEC_LONG:
-    case BTLE_EVT_HID_R51_PLAYPAUSE:
-        APP_ERROR_CHECK(hmi_ReportButton(HMI_BT_RMT_SELECT, HMI_BS_SHORT));
-        break;
-    case BTLE_EVT_HID_R51_NEXT_TRACK:
-    case BTLE_EVT_HID_R51_PREV_TRACK:
-    case BTLE_EVT_HID_R51_CC:
-    default:
-        break;
-    }
-}*/
 
 /** @brief event handler for incoming ble events related to the Light Control Service
  */
@@ -1153,10 +1147,16 @@ static void ledHandling(light_limiterActive_t led1, light_limiterActive_t led2, 
         hmi_SetLed(HMI_LEDRED, HMI_LEDON);
     else
         hmi_SetLed(HMI_LEDRED, HMI_LEDOFF);
+
     // blue led indicating if a central connection (e.g. to a remote) is established
-    if (state.power >= POWER_IDLE &&
-        (pBtleData->isCentralConnected != BTLE_CONN_HANDLE_INVALID))
+    if (state.power < POWER_IDLE)
+        hmi_SetLed(HMI_LEDBLUE, HMI_LEDOFF);
+    else if (pBtleData->isCentralConnected != BTLE_CONN_HANDLE_INVALID)
         hmi_SetLed(HMI_LEDBLUE, HMI_LEDON);
+    else if (pBtleData->scanner == SCANNING_FOR_NEW)
+        hmi_SetLed(HMI_LEDBLUE, HMI_LEDBLINKFAST);
+    else if (pBtleData->scanner == SCANNING_LOW_LATENCY || pBtleData->scanner == SCANNING_LOW_POWER)
+        hmi_SetLed(HMI_LEDBLUE, HMI_LEDBLINKSLOW);
     else
         hmi_SetLed(HMI_LEDBLUE, HMI_LEDOFF);
 }
@@ -1443,73 +1443,6 @@ static void sensorCalibrationCheck()
     }
 }
 
-/** @brief function for handling button events
- */
-/*static void processButtons(hmi_buttonState_t* pButtons)
-{
-    uint_fast8_t newMode = state.pMode->currentMode;
-
-    // ultra long press of internal button
-    if (pButtons[HMI_BT_INTERNAL] == HMI_BS_ULTRALONG)
-    {
-        if (state.pMode->currentMode == MODE_OFF)       // either search for remote
-        {
-            APP_ERROR_CHECK(btle_DeleteBonds());
-            APP_ERROR_CHECK(btle_SearchForRemote());
-        }
-        else                                            // or shut off
-            enterMode(MODE_OFF, BTLE_CONN_HANDLE_ALL);
-        return;
-    }
-
-    // button press of external select
-    if (pButtons[HMI_BT_RMT_SELECT] != HMI_BS_NOPRESS && state.pMode->currentMode != MODE_OFF)
-    {                                                               // enter preferred mode
-        if (modeConfig.prefMode != MODE_INVALID &&                  // if preferred mode is set and
-            isLightMode(&modeConfig.mode[modeConfig.prefMode]) &&   // preferred mode has a valid light setup and
-            state.pMode->currentMode != modeConfig.prefMode)        // current mode is not the preferred mode
-            enterMode(modeConfig.prefMode, BTLE_CONN_HANDLE_ALL);
-        else
-            enterMode(MODE_OFF, BTLE_CONN_HANDLE_ALL);
-        return;
-    }
-
-    // change mode
-    if (pButtons[HMI_BT_INTERNAL] == HMI_BS_SHORT ||
-        pButtons[HMI_BT_RMT_NEXT] == HMI_BS_SHORT || pButtons[HMI_BT_RMT_PREV] == HMI_BS_SHORT)
-    {
-        if (state.pMode->currentMode == MODE_OFF)
-        {
-            if (pButtons[HMI_BT_INTERNAL] == HMI_BS_SHORT || pButtons[HMI_BT_RMT_NEXT] == HMI_BS_SHORT)
-                newMode = 0;                                        // start with first mode
-            else
-                newMode = MAX_NUM_OF_MODES / modeConfig.groups - 1; // or, in case of previous button, with last mode in first group
-        }
-        else
-        {
-            if (pButtons[HMI_BT_RMT_PREV] == HMI_BS_SHORT)
-                newMode = changeMode(-1, 0);
-            else
-                newMode = changeMode(1, 0);
-        }
-    }
-    // change group
-    else if (state.pMode->currentMode != MODE_OFF)
-    {
-        if (pButtons[HMI_BT_RMT_PREV] == HMI_BS_LONG || pButtons[HMI_BT_RMT_DOWN] >= HMI_BS_SHORT)
-            newMode = changeMode(0, -1);
-        else if (pButtons[HMI_BT_INTERNAL] == HMI_BS_LONG ||
-            pButtons[HMI_BT_RMT_NEXT] == HMI_BS_LONG || pButtons[HMI_BT_RMT_UP] >= HMI_BS_SHORT)
-            newMode = changeMode(0, 1);
-    }
-
-    if (newMode == state.pMode->currentMode)
-        return;
-
-    newMode = getNextValidMode(newMode);
-    enterMode(newMode, BTLE_CONN_HANDLE_ALL);
-}*/
-
 static void hmiEventHandler(hmi_eventType_t event)
 {
     uint_fast8_t newMode = state.pMode->currentMode;
@@ -1540,7 +1473,7 @@ static void hmiEventHandler(hmi_eventType_t event)
         if (newMode == MODE_OFF)
         {
             APP_ERROR_CHECK(btle_DeleteBonds());
-            APP_ERROR_CHECK(btle_SearchForRemote());
+            APP_ERROR_CHECK(btle_SearchRemoteDevice());
             return;
         } // fall through if light is on!
     case HMI_EVT_XIAOMI_SEC_SHORT:

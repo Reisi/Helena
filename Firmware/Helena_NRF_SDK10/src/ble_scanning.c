@@ -19,6 +19,7 @@
 
 /* Private macros ------------------------------------------------------------*/
 #define LOG app_trace_log
+//#define LOG(string) SEGGER_RTT_WriteString(0, string)
 
 /* Private defines -----------------------------------------------------------*/
 
@@ -142,7 +143,7 @@ static uint32_t scanning_start(ble_scan_mode_t scanning_mode)
                 scan_params.p_whitelist = &m_whitelist;
 
                 m_scan_evt = BLE_SCAN_EVT_FAST_WHITELIST;
-                LOG("[SCAN]: Starting fast scanning with withlist.\r\n");
+                LOG("[SCAN]: Starting fast scanning with whitelist.\r\n");
             }
             break;
 
@@ -166,7 +167,7 @@ static uint32_t scanning_start(ble_scan_mode_t scanning_mode)
                 scan_params.p_whitelist = &m_whitelist;
 
                 m_scan_evt = BLE_SCAN_EVT_SLOW_WHITELIST;
-                LOG("[SCAN]: Starting slow scanning with withlist.\r\n");
+                LOG("[SCAN]: Starting slow scanning with whitelist.\r\n");
             }
             break;
 

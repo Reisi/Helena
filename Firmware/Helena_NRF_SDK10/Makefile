@@ -103,6 +103,7 @@ SRC_FILES += \
 	./src/power.c \
 	./mod/nrf_drv_twi.c \
 	./mod/ble_db_discovery.c \
+	./mod/fds/fds.c \
 	./mod/peer_manager/gatt_cache_manager.c \
 	./mod/peer_manager/gattc_cache_manager.c \
 	./mod/peer_manager/gatts_cache_manager.c \
@@ -136,8 +137,8 @@ SRC_FILES += \
 	$(NRF_SDK_INSTALL_ROOT)/components/drivers_nrf/wdt/nrf_drv_wdt.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/drivers_nrf/hal/nrf_adc.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/libraries/crc16/crc16.c \
-	./mod/fds/fds.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/libraries/fstorage/fstorage.c \
+	$(NRF_SDK_INSTALL_ROOT)/components/libraries/low_power_pwm/low_power_pwm.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/libraries/timer/app_timer.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/libraries/util/app_util_platform.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/libraries/util/sdk_mapped_flags.c \
@@ -158,6 +159,7 @@ INC_DIRS += \
     ./ext/Invensense/eMPL \
     ./ext/segger/RTT \
     ./mod \
+    ./mod/fds \
     ./mod/peer_manager \
     $(NRF_SDK_INSTALL_ROOT)/components/ble/ble_advertising \
     $(NRF_SDK_INSTALL_ROOT)/components/ble/ble_services/ble_dis \
@@ -177,8 +179,8 @@ INC_DIRS += \
     $(NRF_SDK_INSTALL_ROOT)/components/toolchain \
     $(NRF_SDK_INSTALL_ROOT)/components/libraries/crc16 \
     $(NRF_SDK_INSTALL_ROOT)/components/libraries/experimental_section_vars \
-    ./mod/fds \
     $(NRF_SDK_INSTALL_ROOT)/components/libraries/fstorage \
+    $(NRF_SDK_INSTALL_ROOT)/components/libraries/low_power_pwm \
     $(NRF_SDK_INSTALL_ROOT)/components/libraries/scheduler \
     $(NRF_SDK_INSTALL_ROOT)/components/libraries/util \
     $(NRF_SDK_INSTALL_ROOT)/components/libraries/timer \

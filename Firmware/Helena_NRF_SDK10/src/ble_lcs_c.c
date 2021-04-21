@@ -100,7 +100,7 @@ static ble_lcs_c_server_spec_t * get_server_data_by_conn_handle(uint16_t conn_ha
         p_server = get_server_data_by_conn_handle(BLE_CONN_HANDLE_INVALID, mp_ble_lcs_c->p_server);
         if (p_server == NULL)
         {
-            return; /// TODO: relay NRF_ERROR_NO_MEM to error handler
+            return;
         }
 
         p_server->conn_handle = p_evt->conn_handle;
@@ -166,7 +166,7 @@ static void on_disconnect(ble_lcs_c_t * p_ble_lcs_c, const ble_evt_t * p_ble_evt
     p_server = get_server_data_by_conn_handle(p_ble_evt->evt.gap_evt.conn_handle, mp_ble_lcs_c->p_server);
     if (p_server == NULL)
     {
-        return; /// TODO: relay NRF_ERROR_NOT_FOUND to error handler
+        return; // device this event is related to has no light control service
     }
 
     p_server->conn_handle      = BLE_CONN_HANDLE_INVALID;
@@ -378,7 +378,7 @@ static void on_hvx(ble_lcs_c_t * p_ble_lcs_c, const ble_evt_t * p_ble_evt)
     p_server = get_server_data_by_conn_handle(p_ble_evt->evt.gattc_evt.conn_handle, mp_ble_lcs_c->p_server);
     if (p_server == NULL)
     {
-        return; /// TODO: relay NRF_ERROR_NOT_FOUND to error handler
+        return; // device this event is related to has no light control service
     }
 
     memset(&evt, 0, sizeof(evt));
@@ -453,7 +453,6 @@ static void tx_buffer_process(void)
  */
 static void on_write_rsp(ble_lcs_c_t * p_ble_lcs_c, const ble_evt_t * p_ble_evt)
 {
-    (void)p_ble_lcs_c;
     (void)p_ble_evt;
 
     ble_lcs_c_server_spec_t * p_server;
@@ -465,15 +464,33 @@ static void on_write_rsp(ble_lcs_c_t * p_ble_lcs_c, const ble_evt_t * p_ble_evt)
     }
 
     // check write status for relevant handles
-    if (p_ble_evt->evt.gattc_evt.params.write_rsp.handle == p_server->lcm_cccd_handle ||
-        p_ble_evt->evt.gattc_evt.params.write_rsp.handle == p_server->lccp_handle ||
-        p_ble_evt->evt.gattc_evt.params.write_rsp.handle == p_server->lccp_cccd_handle)
+    if (p_ble_evt->evt.gattc_evt.gatt_status != BLE_GATT_STATUS_SUCCESS &&
+        mp_ble_lcs_c->error_handler != NULL)
     {
-        APP_ERROR_CHECK(p_ble_evt->evt.gattc_evt.gatt_status);
-    }
+        ble_lcs_c_error_evt_t evt;
 
-    // Check if there is any message to be sent across to the peer and send it.
-    tx_buffer_process();
+        evt.p_server = p_server;
+        evt.data.gatt_status = p_ble_evt->evt.gattc_evt.gatt_status;
+
+        if (p_ble_evt->evt.gattc_evt.params.write_rsp.handle == p_server->lcm_cccd_handle)
+        {
+            evt.evt_type = BLE_LCS_C_ERROR_EVT_LCM_NOTIFY;
+        }
+        else if (p_ble_evt->evt.gattc_evt.params.write_rsp.handle == p_server->lccp_handle)
+        {
+            evt.evt_type = BLE_LCS_C_ERROR_EVT_LCCP_WRITE;
+        }
+        else if (p_ble_evt->evt.gattc_evt.params.write_rsp.handle == p_server->lccp_cccd_handle)
+        {
+            evt.evt_type = BLE_LCS_C_ERROR_EVT_LCCP_IND;
+        }
+        else // should not happen
+        {
+            return;
+        }
+
+        p_ble_lcs_c->error_handler(p_ble_lcs_c, &evt);
+    }
 }
 
 /**@brief     Function for handling read response events.
@@ -493,7 +510,7 @@ static void on_read_rsp(ble_lcs_c_t * p_ble_lcs_c, const ble_evt_t * p_ble_evt)
     p_server = get_server_data_by_conn_handle(p_ble_evt->evt.gattc_evt.conn_handle, mp_ble_lcs_c->p_server);
     if (p_server == NULL)
     {
-        return; /// TODO: relay NRF_ERROR_NOT_FOUND to error handler
+        return; // device this event is related to has no light control service
     }
 
     p_response = &p_ble_evt->evt.gattc_evt.params.read_rsp;
@@ -510,9 +527,6 @@ static void on_read_rsp(ble_lcs_c_t * p_ble_lcs_c, const ble_evt_t * p_ble_evt)
             p_ble_lcs_c->evt_handler(p_ble_lcs_c, &evt);
         }
     }
-
-    // Check if there is any buffered transmissions and send them.
-    tx_buffer_process();
 }
 
 /**@brief Function for creating a TX message for writing a CCCD.
@@ -619,6 +633,7 @@ uint32_t ble_lcs_c_init(ble_lcs_c_t * p_ble_lcs_c, uint8_t num_of_servers, ble_l
 
     p_ble_lcs_c->uuid_type        = lcs_uuid.type;
     p_ble_lcs_c->evt_handler      = p_ble_lcs_c_init->evt_handler;
+    p_ble_lcs_c->error_handler    = p_ble_lcs_c_init->error_handler;
 
     m_num_of_servers = num_of_servers;
     while (num_of_servers)
@@ -670,6 +685,8 @@ void ble_lcs_c_on_ble_evt(ble_lcs_c_t * p_ble_lcs_c, ble_evt_t const * p_ble_evt
         default:
             break;
     }
+
+    tx_buffer_process();
 }
 
 uint32_t ble_lcs_c_lcm_notif_enable(ble_lcs_c_t * p_ble_lcs_c, uint16_t conn_handle, bool enable)

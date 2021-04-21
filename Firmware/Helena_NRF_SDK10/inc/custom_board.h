@@ -13,17 +13,9 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include <stdint.h>
+#include <stdbool.h>
 
 /* Exported defines ----------------------------------------------------------*/
-#define LEDS_NUMBER     2
-
-#define BSP_LED_0       (pBoardConfig->ledBlue)
-#define BSP_LED_1       (pBoardConfig->ledRed)
-
-#define BUTTONS_NUMBER  1
-#define BSP_BUTTON_0    (pBoardConfig->button)
-#define BUTTON_PULL     NRF_GPIO_PIN_PULLUP
-
 // Low frequency clock source to be used by the SoftDevice
 #define NRF_CLOCK_LFCLKSRC      NRF_CLOCK_LFCLKSRC_RC_250_PPM_4000MS_CALIBRATION
 
@@ -43,13 +35,24 @@ typedef struct
     uint32_t    mpuInt;
     signed char gyroOrientation[9];
     char        hwRevStr[HW_REV_STR_LEN];
-} board_ConfigStruct;
+} board_config_t;
+
+typedef enum
+{
+    BOARD_LED_RED,
+    BOARD_LED_BLUE,
+    BOARD_LED_CNT
+} board_led_t;
+
+
 
 /* Exported variables --------------------------------------------------------*/
-extern const board_ConfigStruct * pBoardConfig;
+extern const board_config_t * pBoardConfig;
 
 /* Exported functions ------------------------------------------------------- */
 uint32_t board_Init(void);
+
+uint32_t board_EnableLed(board_led_t led, bool enable);
 
 #endif /* CUSTOM_BOARD_H_INCLUDED */
 

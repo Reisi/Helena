@@ -134,8 +134,9 @@ static void onCentralEvt(ble_evt_t * pBleEvt)
                 errCode = im_ble_addr_get(pBleEvt->evt.gap_evt.conn_handle, &bondingData.peer_id.id_addr_info);
                 APP_ERROR_CHECK(errCode);
                 errCode = pm_peer_new(&bondingData, &idDummy, &dummyToken);
+                if (errCode == NRF_ERROR_NO_MEM)
+                    errCode = fds_gc();     /// TODO: try to store again
                 APP_ERROR_CHECK(errCode);
-                /// TODO: check if garbage collection is necessary here
             }
         }
         else if (linkStatus.connected && !linkStatus.bonded && !linkStatus.encrypted)
@@ -154,7 +155,7 @@ static void onCentralEvt(ble_evt_t * pBleEvt)
         {
             memset(&discDatabase, 0, sizeof(discDatabase));
             errCode = ble_db_discovery_start(&discDatabase, state.connHandleCentral);
-            APP_ERROR_CHECK(errCode);
+            APP_ERROR_CHECK(errCode); /// TODO: sometimes NRF_ERROR_BUSY at startup, maybe reconnection and discovery was aborted previously?
         }
 
         // activate notifications here, and not in the database discovery event handler (not available with hardcoded devices)
@@ -957,6 +958,21 @@ void lcsCEventHandler(ble_lcs_c_t * pBleLcsC, ble_lcs_c_evt_t * pEvt)
     }
 }
 
+void lcsCErrorHandler(ble_lcs_c_t * pBleLcsC, ble_lcs_c_error_evt_t * pEvt)
+{
+    switch (pEvt->evt_type)
+    {
+    case BLE_LCS_C_ERROR_EVT_LCM_NOTIFY:
+    case BLE_LCS_C_ERROR_EVT_LCCP_IND:
+    case BLE_LCS_C_ERROR_EVT_LCCP_WRITE:
+        if (pEvt->data.gatt_status != BLE_GATT_STATUS_ATTERR_CPS_PROC_ALR_IN_PROG)
+            APP_ERROR_CHECK(pEvt->data.gatt_status);
+        break;
+    default:
+        break;
+    }
+}
+
 /** @brief Function to initialize the GATT Collector services
  */
 static void serviceCollectorInit()
@@ -967,6 +983,7 @@ static void serviceCollectorInit()
 
     ble_lcs_c_init_t lcsCInit;
     lcsCInit.evt_handler = lcsCEventHandler;
+    lcsCInit.error_handler = lcsCErrorHandler;
     errCode = ble_lcs_c_init(&lcsGattcData, COUNT_OF(lcsGattcData_server_data), &lcsCInit);
     APP_ERROR_CHECK(errCode);
 }
@@ -1022,20 +1039,35 @@ static centralDevice_t isLcsDevice(const ble_gap_evt_adv_report_t * pAdvData)
  */
 static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
 {
+    btle_event_t evt;
     uint32_t errCode;
+
+    evt.evt = BTLE_EVT_CONNECTION;
+    evt.connHandle = BLE_CONN_HANDLE_INVALID;   // no connection for scanning events
 
     switch (pScanEvt->ble_scan_event)
     {
     case BLE_SCAN_EVT_IDLE:
     case BLE_SCAN_EVT_PAUSE:
+        evt.subEvt.conn = BTLE_EVT_CONN_CENTRAL_SEARCH_OFF;
         state.scanMode = BLE_SCAN_MODE_IDLE;
         break;
     case BLE_SCAN_EVT_FAST:
+        evt.subEvt.conn = BTLE_EVT_CONN_CENTRAL_SEARCH_FOR_NEW;
+        state.scanMode = BLE_SCAN_MODE_FAST;
+        break;
     case BLE_SCAN_EVT_FAST_WHITELIST:
+        evt.subEvt.conn = BTLE_EVT_CONN_CENTRAL_SEARCH_LOWLATENCY;
         state.scanMode = BLE_SCAN_MODE_FAST;
         break;
     case BLE_SCAN_EVT_SLOW:
+        evt.subEvt.conn = BTLE_EVT_CONN_CENTRAL_SEARCH_FOR_NEW;
+        state.scanMode = BLE_SCAN_MODE_SLOW;
+        errCode = ble_scanning_start(BLE_SCAN_MODE_SLOW);
+        APP_ERROR_CHECK(errCode);
+        break;
     case BLE_SCAN_EVT_SLOW_WHITELIST:
+        evt.subEvt.conn = BTLE_EVT_CONN_CENTRAL_SEARCH_LOWPOWER;
         state.scanMode = BLE_SCAN_MODE_SLOW;
         if (state.scanConfig == BTLE_SCAN_MODE_LOW_LATENCY)
         {
@@ -1075,7 +1107,7 @@ static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
                 .p_whitelist = NULL,
                 .interval    = MSEC_TO_UNITS(22.5, UNIT_0_625_MS),
                 .window      = MSEC_TO_UNITS(11.25, UNIT_0_625_MS),
-                .timeout     = 180,
+                .timeout     = 30,
             };
             static const ble_gap_conn_params_t connParams =
             {
@@ -1099,7 +1131,7 @@ static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
                 APP_ERROR_CHECK(errCode);
             }
         }
-    }   break;
+    }   return;//break;
     case BLE_SCAN_EVT_WHITELIST_REQUEST:
     {
         ble_gap_irk_t * irks[1];
@@ -1132,10 +1164,14 @@ static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
         APP_ERROR_CHECK(errCode);
         errCode = ble_scanning_whitelist_reply(&whitelist);
         APP_ERROR_CHECK(errCode);
-    }   break;
+    }   return;//break;
     default:
-        break;
+        return;//break;
     }
+
+    // relay scanning event to application
+    if (state.handler != NULL)
+        state.handler(&evt);
 }
 
 /** @brief Function to initialize scanning module
@@ -1494,7 +1530,7 @@ uint32_t btle_DeleteBonds()
     return ble_scanning_start(BLE_SCAN_MODE_IDLE);
 }
 
-uint32_t btle_SearchForRemote()
+uint32_t btle_SearchRemoteDevice()
 {
     return ble_scanning_start_without_whitelist(BLE_SCAN_MODE_FAST);
 }
