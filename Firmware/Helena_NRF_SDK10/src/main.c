@@ -1232,7 +1232,7 @@ static void updateLightMsgData(const light_status_t * pStatus)
 
 /** @brief function to update the light informations for the ble module
  */
-static void updateLightBtleData(lightMode_t const * const pMode, light_status_t const* pStatus, q15_t pitch)
+static void updateLightBtleData(lightMode_t const * const pMode, light_status_t const* pStatus, q15_t pitch, uint8_t socInPercent, uint16_t tailPowerinmW)
 {
 #ifdef HELENA
     btle_lcsMeasurement_t helmetBeam;
@@ -1282,6 +1282,8 @@ static void updateLightBtleData(lightMode_t const * const pMode, light_status_t 
         pitch = (pitch * 360l) >> 15;       // convert into degree
         helmetBeam.pitch = pitch;
     }
+    helmetBeam.batterySoc = socInPercent;
+    helmetBeam.powerTaillight = tailPowerinmW;
 
    (void)btle_UpdateLcsMeasurements(&helmetBeam);
 
@@ -1330,6 +1332,8 @@ static void updateLightBtleData(lightMode_t const * const pMode, light_status_t 
         pitch = (pitch * 360l) >> 15;       // convert into degree
         bikeBeam.pitch = pitch;
     }
+    bikeBeam.batterySoc = socInPercent;
+    bikeBeam.powerTaillight = tailPowerinmW;
 
    (void)btle_UpdateLcsMeasurements(&bikeBeam);
 #endif // defined
@@ -1626,7 +1630,17 @@ int main(void)
             updateLightMsgData(pLightStatus);
 
             // update ble related message data
-            updateLightBtleData(pLightMode, pLightStatus, state.power >= POWER_IDLE ? msData.pitch : INT16_MIN);
+            cmh_battery_t battery;
+            cmh_taillight_t taillight;
+            uint8_t soc = UINT8_MAX;
+            uint16_t tailPower = 0;
+            if (cmh_GetBattery(&battery) == NRF_SUCCESS)
+                soc = battery.soc / 10;
+            if (cmh_GetTaillight(&taillight) == NRF_SUCCESS)
+                tailPower = taillight.ledCnt * 2 * taillight.current;
+            updateLightBtleData(pLightMode, pLightStatus,
+                                state.power >= POWER_IDLE ? msData.pitch : INT16_MIN,
+                                soc, tailPower);
 
             // reset idle timeout counter if moving
             if (msData.isMoving)

@@ -17,7 +17,7 @@
 #define BLE_UUID_LCS_LF_CHARACTERISTIC      0x0103  /**< The UUID of the light feature characteristic */
 
 #define BLE_LCS_LM_MIN_CHAR_LEN             3       /**< minimum length of the light measurement characteristic */
-#define BLE_LCS_LM_MAX_CHAR_LEN             14      /**< maximum length of the light measurement characteristic */
+#define BLE_LCS_LM_MAX_CHAR_LEN             19      /**< maximum length of the light measurement characteristic */
 
 /* Private typedef -----------------------------------------------------------*/
 
@@ -320,20 +320,6 @@ static uint8_t lm_encode(const ble_lcs_lm_t * p_lcs_lm, const ble_lcs_lf_t * p_f
     case BLE_LCS_LT_HELMET_LIGHT:
         // encode flags
         flags.raw = p_lcs_lm->flags;
-        /*if (p_features->hlmt_features.flood_supported == 0)
-        {
-            flags.raw.flood_status_present = 0;
-            flags.raw.flood_power_present = 0;
-        }
-        if (p_features->hlmt_features.spot_supported == 0)
-        {
-            flags.raw.spot_status_present = 0;
-            flags.raw.spot_power_present = 0;
-        }
-        if (p_features->hlmt_features.pitch_comp_supported == 0)
-        {
-            flags.raw.pitch_present = 0;
-        }*/
         len += uint16_encode(flags.encoded & BLE_LCS_LM_FLAGS_MASK, &p_encoded_buffer[len]);
 
         // encode setup
@@ -390,21 +376,22 @@ static uint8_t lm_encode(const ble_lcs_lm_t * p_lcs_lm, const ble_lcs_lf_t * p_f
             p_encoded_buffer[len++] = p_lcs_lm->pitch;
         }
 
+        // encode battery soc
+        if (flags.raw.hlmt.battery_soc_present)
+        {
+            p_encoded_buffer[len++] = p_lcs_lm->battery_soc;
+        }
+
+        // encode taillight power
+        if (flags.raw.hlmt.taillight_power_present)
+        {
+            len += uint16_encode(p_lcs_lm->taillight_power, &p_encoded_buffer[len]);
+        }
+
         break;
     case BLE_LCS_LT_BIKE_LIGHT:
         // encode flags
         flags.raw = p_lcs_lm->flags;
-        /*if (p_features->bk_features.main_beam_supported == 0 &&
-            p_features->bk_features.extended_main_beam_supported == 0)
-        {
-            flags.raw.main_beam_status_present = 0;
-            flags.raw.main_beam_power_present = 0;
-        }
-        if (p_features->bk_features.high_beam_supported == 0)
-        {
-            flags.raw.high_beam_status_present = 0;
-            flags.raw.high_beam_power_present = 0;
-        }*/
         len += uint16_encode(flags.encoded & BLE_LCS_LM_FLAGS_MASK, &p_encoded_buffer[len]);
 
         // encode setup
@@ -461,6 +448,19 @@ static uint8_t lm_encode(const ble_lcs_lm_t * p_lcs_lm, const ble_lcs_lf_t * p_f
         {
             p_encoded_buffer[len++] = p_lcs_lm->pitch;
         }
+
+        // encode battery soc
+        if (flags.raw.hlmt.battery_soc_present)
+        {
+            p_encoded_buffer[len++] = p_lcs_lm->battery_soc;
+        }
+
+        // encode taillight power
+        if (flags.raw.hlmt.taillight_power_present)
+        {
+            len += uint16_encode(p_lcs_lm->taillight_power, &p_encoded_buffer[len]);
+        }
+
         break;
     default:
         break;

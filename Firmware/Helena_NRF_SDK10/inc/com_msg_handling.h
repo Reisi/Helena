@@ -33,10 +33,46 @@ typedef struct
     uint8_t temperatureError : 1;
     uint8_t directdriveError : 1;
     cmh_lightMode_t mode;
+    uint8_t cedCnt;
     uint16_t current;               // current in mA
     uint16_t temperature;           // temperature in 0.1K
     uint16_t voltage;               // voltage in mV
 } cmh_light_t;
+
+typedef struct
+{
+    uint8_t overcurrentError : 1;
+    uint8_t voltageError : 1;
+    uint8_t temperatureError : 1;
+    uint8_t directdriveError : 1;
+    cmh_lightMode_t mode;
+    uint8_t ledCnt;
+    uint16_t current;               // current in mA
+    uint16_t temperature;           // temperature in 0.1K
+    uint16_t voltage;               // voltage in mV
+} cmh_taillight_t;
+
+typedef enum
+{
+    cmh_BCT_LIION = 0,
+    cmh_BCT_LIFEPO = 1
+} cmh_batteryCellTec_t;
+
+typedef struct
+{
+    uint8_t currentWarning : 1;
+    uint8_t voltageWarning : 1;
+    uint8_t temperatureWarning : 1;
+    uint8_t balanceActive : 1;
+    uint8_t cellCnt;
+    cmh_batteryCellTec_t cellTec;
+    cmh_lightMode_t mode;
+    int16_t current;                // current in mA
+    uint16_t voltage;               // voltage in mV
+    uint16_t temperature;           // temperature in 0.1K
+    uint16_t fullChargeCap;         // full charge capacity in mAh
+    uint16_t soc;                   // state of charge in 0.1%
+} cmh_battery_t;
 
 typedef struct
 {
@@ -113,6 +149,24 @@ uint32_t cmh_EnableTaillight(bool enable);
  * @return      NRF_SUCCESS
  */
 uint32_t cmh_UpdateBrakeIndicator(bool braking);
+
+/** @brief function to retrieve the last known taillight data
+ *
+ * @param[out] pTaillight the last known taillight data
+ * @return     NRF_SUCCESS
+ *             NRF_ERROR_NULL
+ *             NRF_ERROR_NOT_FOUND if data is unavailable
+ */
+uint32_t cmh_GetTaillight(cmh_taillight_t* pTaillight);
+
+/** @brief function to retrieve the last known battery data
+ *
+ * @param[out] pBattery the last known battery data
+ * @return     NRF_SUCCESS
+ *             NRF_ERROR_NULL
+ *             NRF_ERROR_NOT_FOUND if data is unavailable
+ */
+uint32_t cmh_GetBattery(cmh_battery_t* pBattery);
 
 #endif /* COM_MSG_HANDLING_H_INCLUDED */
 

@@ -883,31 +883,41 @@ void lcsCEventHandler(ble_lcs_c_t * pBleLcsC, ble_lcs_c_evt_t * pEvt)
             evt.lcsmEventParams.mode.setup.cloned            = pEvt->data.measurement.hlmt.mode.setup.cloned;
             evt.lcsmEventParams.mode.setup.taillight         = pEvt->data.measurement.hlmt.mode.setup.taillight;
             evt.lcsmEventParams.mode.setup.brakelight        = pEvt->data.measurement.hlmt.mode.setup.brakelight;
-            if (pEvt->data.measurement.flags.intensity_present)
+            if (pEvt->data.measurement.flags.hlmt.intensity_present)
             {
                 if (pEvt->data.measurement.hlmt.mode.setup.pitchCompensation)
                     evt.lcsmEventParams.mode.illuminanceInLux = pEvt->data.measurement.hlmt.mode.intensity;
                 else
                     evt.lcsmEventParams.mode.intensityInPercent = pEvt->data.measurement.hlmt.mode.intensity;
             }
-            if (pEvt->data.measurement.flags.flood_status_present)
+            if (pEvt->data.measurement.flags.hlmt.flood_status_present)
             {
                 evt.lcsmEventParams.statusFlood.overcurrent    = pEvt->data.measurement.hlmt.flood_status.overcurrent;
                 evt.lcsmEventParams.statusFlood.inputVoltage   = pEvt->data.measurement.hlmt.flood_status.voltage;
                 evt.lcsmEventParams.statusFlood.temperature    = pEvt->data.measurement.hlmt.flood_status.temperature;
                 evt.lcsmEventParams.statusFlood.dutyCycleLimit = pEvt->data.measurement.hlmt.flood_status.dutycycle;
             }
-            if (pEvt->data.measurement.flags.spot_status_present)
+            if (pEvt->data.measurement.flags.hlmt.spot_status_present)
             {
                 evt.lcsmEventParams.statusSpot.overcurrent    = pEvt->data.measurement.hlmt.spot_status.overcurrent;
                 evt.lcsmEventParams.statusSpot.inputVoltage   = pEvt->data.measurement.hlmt.spot_status.voltage;
                 evt.lcsmEventParams.statusSpot.temperature    = pEvt->data.measurement.hlmt.spot_status.temperature;
                 evt.lcsmEventParams.statusSpot.dutyCycleLimit = pEvt->data.measurement.hlmt.spot_status.dutycycle;
             }
-            if (pEvt->data.measurement.flags.flood_power_present)
+            if (pEvt->data.measurement.flags.hlmt.flood_power_present)
                 evt.lcsmEventParams.powerFlood = pEvt->data.measurement.hlmt.flood_power;
-            if (pEvt->data.measurement.flags.spot_power_present)
+            if (pEvt->data.measurement.flags.hlmt.spot_power_present)
                 evt.lcsmEventParams.powerSpot = pEvt->data.measurement.hlmt.spot_power;
+            if (pEvt->data.measurement.flags.hlmt.temperature_present)
+                evt.lcsmEventParams.temperature = pEvt->data.measurement.temperature;
+            if (pEvt->data.measurement.flags.hlmt.input_voltage_present)
+                evt.lcsmEventParams.inputVoltage = pEvt->data.measurement.input_voltage;
+            if (pEvt->data.measurement.flags.hlmt.pitch_present)
+                evt.lcsmEventParams.pitch = pEvt->data.measurement.pitch;
+            if (pEvt->data.measurement.flags.hlmt.battery_soc_present)
+                evt.lcsmEventParams.batterySoc = pEvt->data.measurement.battery_soc;
+            if (pEvt->data.measurement.flags.hlmt.taillight_power_present)
+                evt.lcsmEventParams.powerTaillight = pEvt->data.measurement.taillight_power;
 #elif defined BILLY
             evt.lcsmEventParams.mode.setup.mainBeam          = pEvt->data.measurement.bk.mode.setup.main_beam;
             evt.lcsmEventParams.mode.setup.extendedMainBeam  = pEvt->data.measurement.bk.mode.setup.extended_main_beam;
@@ -915,36 +925,40 @@ void lcsCEventHandler(ble_lcs_c_t * pBleLcsC, ble_lcs_c_evt_t * pEvt)
             evt.lcsmEventParams.mode.setup.daylight          = pEvt->data.measurement.bk.mode.setup.daylight;
             evt.lcsmEventParams.mode.setup.taillight         = pEvt->data.measurement.bk.mode.setup.taillight;
             evt.lcsmEventParams.mode.setup.brakelight        = pEvt->data.measurement.bk.mode.setup.brakelight;
-            if (pEvt->data.measurement.flags.intensity_present)
+            if (pEvt->data.measurement.flags.bk.intensity_present)
             {
                 evt.lcsmEventParams.mode.mainBeamIntensityInPercent = pEvt->data.measurement.bk.mode.main_beam_intensity;
                 evt.lcsmEventParams.mode.highBeamIntensityInPercent = pEvt->data.measurement.bk.mode.high_beam_intensity;
             }
-            if (pEvt->data.measurement.flags.main_beam_status_present)
+            if (pEvt->data.measurement.flags.bk.main_beam_status_present)
             {
                 evt.lcsmEventParams.statusMainBeam.overcurrent    = pEvt->data.measurement.bk.main_beam_status.overcurrent;
                 evt.lcsmEventParams.statusMainBeam.inputVoltage   = pEvt->data.measurement.bk.main_beam_status.voltage;
                 evt.lcsmEventParams.statusMainBeam.temperature    = pEvt->data.measurement.bk.main_beam_status.temperature;
                 evt.lcsmEventParams.statusMainBeam.dutyCycleLimit = pEvt->data.measurement.bk.main_beam_status.dutycycle;
             }
-            if (pEvt->data.measurement.flags.high_beam_status_present)
+            if (pEvt->data.measurement.flags.bk.high_beam_status_present)
             {
                 evt.lcsmEventParams.statusHighBeam.overcurrent    = pEvt->data.measurement.bk.high_beam_status.overcurrent;
                 evt.lcsmEventParams.statusHighBeam.inputVoltage   = pEvt->data.measurement.bk.high_beam_status.voltage;
                 evt.lcsmEventParams.statusHighBeam.temperature    = pEvt->data.measurement.bk.high_beam_status.temperature;
                 evt.lcsmEventParams.statusHighBeam.dutyCycleLimit = pEvt->data.measurement.bk.high_beam_status.dutycycle;
             }
-            if (pEvt->data.measurement.flags.main_beam_power_present)
+            if (pEvt->data.measurement.flags.bk.main_beam_power_present)
                 evt.lcsmEventParams.powerMainBeam = pEvt->data.measurement.bk.main_beam_power;
-            if (pEvt->data.measurement.flags.spot_power_present)
+            if (pEvt->data.measurement.flags.bk.high_beam_power_present)
                 evt.lcsmEventParams.powerHighBeam = pEvt->data.measurement.bk.high_beam_power;
-#endif // BILLY
-            if (pEvt->data.measurement.flags.temperature_present)
+            if (pEvt->data.measurement.flags.bk.temperature_present)
                 evt.lcsmEventParams.temperature = pEvt->data.measurement.temperature;
-            if (pEvt->data.measurement.flags.input_voltage_present)
+            if (pEvt->data.measurement.flags.bk.input_voltage_present)
                 evt.lcsmEventParams.inputVoltage = pEvt->data.measurement.input_voltage;
-            if (pEvt->data.measurement.flags.pitch_present)
+            if (pEvt->data.measurement.flags.bk.pitch_present)
                 evt.lcsmEventParams.pitch = pEvt->data.measurement.pitch;
+            if (pEvt->data.measurement.flags.bk.battery_soc_present)
+                evt.lcsmEventParams.batterySoc = pEvt->data.measurement.battery_soc;
+            if (pEvt->data.measurement.flags.bk.taillight_power_present)
+                evt.lcsmEventParams.powerTaillight = pEvt->data.measurement.taillight_power;
+#endif // BILLY
 
             state.handler(&evt);
         }
@@ -1361,6 +1375,16 @@ uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData)
         notifyData.flags.hlmt.pitch_present = 1;
         notifyData.pitch = pData->pitch;
     }
+    if (pData->batterySoc <= 100)
+    {
+        notifyData.flags.hlmt.battery_soc_present = 1;
+        notifyData.battery_soc = pData->batterySoc;
+    }
+    if (pData->powerTaillight > 0)
+    {
+        notifyData.flags.hlmt.taillight_power_present = 1;
+        notifyData.taillight_power = pData->powerTaillight;
+    }
 #elif defined BILLY
     notifyData.light_type = BLE_LCS_LT_BIKE_LIGHT;
     notifyData.bk.mode.setup.main_beam = pData->mode.setup.mainBeam ? 1 : 0;
@@ -1409,6 +1433,16 @@ uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData)
     {
         notifyData.flags.bk.pitch_present = 1;
         notifyData.pitch = pData->pitch;
+    }
+    if (pData->batterySoc <= 100)
+    {
+        notifyData.flags.hlmt.battery_soc_present = 1;
+        notifyData.battery_soc = pData->batterySoc;
+    }
+    if (pData->powerTaillight > 0)
+    {
+        notifyData.flags.hlmt.taillight_power_present = 1;
+        notifyData.taillight_power = pData->powerTaillight;
     }
 #endif // defined
 

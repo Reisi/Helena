@@ -47,7 +47,21 @@ typedef struct
     bool isPending;                         // indicator if message is pending
 } tailLightData_t;
 
+typedef struct
+{
+    cmh_taillight_t data;
+    uint32_t timestamp;
+} taillightRxData_t;
+
+typedef struct
+{
+    cmh_battery_t data;
+    uint32_t timestamp;
+} batteryRxData_t;
+
 /* Private macros ------------------------------------------------------------*/
+//#include "SEGGER_RTT.h"
+#define LOG(...)//   SEGGER_RTT_printf(0, __VA_ARGS__)
 
 /* Private defines -----------------------------------------------------------*/
 #define MASTERID                0x00
@@ -55,6 +69,11 @@ typedef struct
 #define MAINBEAMID              0x60
 #define HIGHBEAMID              0x62
 #define HELMETLIGHTID           0x64
+
+#define BATTERYPRIID            0x24
+#define BATTERYSECID            0x26
+#define TAILLIGHTPRIID          0x6A
+#define TAILLIGHTSECID          0x6C
 
 #define LIGHTERROR_OVERCURRENT  (1<<0)
 #define LIGHTERROR_VOLTAGE      (1<<1)
@@ -66,6 +85,9 @@ typedef struct
 
 #define LIGHT_TIMEBASE          (APP_TIMER_TICKS(2000, APP_TIMER_PRESCALER))
 #define BRAKEINDICATOR_TIMEBASE (APP_TIMER_TICKS(250, APP_TIMER_PRESCALER))
+
+#define TAILLIGHT_AGED          (APP_TIMER_TICKS(30000, APP_TIMER_PRESCALER))
+#define BATTERY_AGED            (APP_TIMER_TICKS(180000, APP_TIMER_PRESCALER))
 
 /* Private variables ---------------------------------------------------------*/
 #ifdef HELENA
@@ -79,6 +101,9 @@ static tailLightData_t tailLight;                   // data for taillight
 static cmh_LightMasterHandler_t pLightMasterHandler;// handler to be called for light master messages
 static uint8_t ignoreAuxMaster;                     // counter indicating if auxiliary master message should be ignored
 static uint32_t lastLightMasterMessage;             // timestamp of last received light master message
+
+static taillightRxData_t tailRX[2];
+static batteryRxData_t batteryRX[2];
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -271,6 +296,54 @@ void cmh_ComMessageCheck(const com_MessageStruct * pMessageIn)
             (*pLightMasterHandler)(&masterData);
         }
     }
+
+    // handle taillight messages
+    if ((pMessageIn->Identifier == TAILLIGHTPRIID || pMessageIn->Identifier == TAILLIGHTSECID) &&
+        pMessageIn->Control == 0x05)
+    {
+        uint_fast8_t i = pMessageIn->Identifier == TAILLIGHTPRIID ? 0 : 1;
+
+        tailRX[i].data.overcurrentError = pMessageIn->Data[0] & (1 << 0);
+        tailRX[i].data.voltageError = pMessageIn->Data[0] & (1 << 1);
+        tailRX[i].data.temperatureError = pMessageIn->Data[0] & (1 << 2);
+        tailRX[i].data.directdriveError = pMessageIn->Data[0] & (1 << 3);
+        tailRX[i].data.mode = pMessageIn->Data[1] & 0x0F;
+        tailRX[i].data.ledCnt = (pMessageIn->Data[1] >> 4) + 1;
+        tailRX[i].data.current = (pMessageIn->Data[2] * 102ul) / 256;
+        tailRX[i].data.temperature = 2330ul + pMessageIn->Data[3] * 5;
+        tailRX[i].data.voltage = pMessageIn->Data[4] * 50ul + 5500;
+        (void)app_timer_cnt_get(&tailRX[i].timestamp);
+
+        /// TODO: full test! for now just current and cnt is tested
+
+        LOG("[COM]: Taillight received, cnt %d, current %d\r\n", tailRX[i].data.ledCnt, tailRX[i].data.current);
+    }
+
+    // handle battery messages
+    if ((pMessageIn->Identifier == BATTERYPRIID || pMessageIn->Identifier == BATTERYSECID) &&
+        pMessageIn->Control == 0x07)
+    {
+        uint_fast8_t i = pMessageIn->Identifier == BATTERYPRIID ? 0 : 1;
+
+        batteryRX[i].data.currentWarning = pMessageIn->Data[0] & (1 << 0);
+        batteryRX[i].data.voltageWarning = pMessageIn->Data[0] & (1 << 1);
+        batteryRX[i].data.temperatureWarning = pMessageIn->Data[0] & (1 << 2);
+        batteryRX[i].data.balanceActive = pMessageIn->Data[0] & (1 << 3);
+        batteryRX[i].data.cellCnt = (pMessageIn->Data[0] & 0x30) >> 4;
+        batteryRX[i].data.cellTec = (pMessageIn->Data[0] & 0xC0) >> 6;
+        batteryRX[i].data.current = pMessageIn->Data[2] * 32ul;
+        batteryRX[i].data.current += (pMessageIn->Data[1] & 0x03) * 32ul * 256;
+        batteryRX[i].data.current -= 14200;
+        batteryRX[i].data.voltage = pMessageIn->Data[3] * 100ul;
+        batteryRX[i].data.temperature = 2330ul + pMessageIn->Data[4] * 5;
+        batteryRX[i].data.fullChargeCap = (pMessageIn->Data[5] * 73ul ) >> 1;
+        batteryRX[i].data.soc = (pMessageIn->Data[6] * 1000ul) / 256;
+        (void)app_timer_cnt_get(&batteryRX[i].timestamp);
+
+        /// TODO: full test! for now just SOC tested
+
+        LOG("[COM]: Battery received, soc %d\r\n", pMessageIn->Data[6]);
+    }
 }
 
 static uint32_t updateLightData(cmh_light_t* pLight, uint8_t id)
@@ -385,6 +458,50 @@ uint32_t cmh_EnableTaillight(bool enable)
     }
 
     return NRF_SUCCESS;
+}
+
+uint32_t cmh_GetTaillight(cmh_taillight_t* pTaillight)
+{
+    if (pTaillight == NULL)
+        return NRF_ERROR_NULL;
+
+    uint32_t timestamp;
+    (void)app_timer_cnt_get(&timestamp);
+    for (uint_fast8_t i = 0; i < sizeof(tailRX)/sizeof(tailRX[0]); i++)
+    {
+        uint32_t age;
+        (void)app_timer_cnt_diff_compute(timestamp, tailRX[i].timestamp, &age);
+        if (tailRX[i].timestamp == 0 || timestamp == 0 || age > TAILLIGHT_AGED)
+            continue;
+
+        *pTaillight = tailRX[i].data;
+
+        return NRF_SUCCESS;
+    }
+
+    return NRF_ERROR_NOT_FOUND;
+}
+
+uint32_t cmh_GetBattery(cmh_battery_t* pBattery)
+{
+    if (pBattery == NULL)
+        return NRF_ERROR_NULL;
+
+    uint32_t timestamp;
+    (void)app_timer_cnt_get(&timestamp);
+    for (uint_fast8_t i = 0; i < sizeof(batteryRX)/sizeof(batteryRX[0]); i++)
+    {
+        uint32_t age;
+        (void)app_timer_cnt_diff_compute(timestamp, batteryRX[i].timestamp, &age);
+        if (batteryRX[i].timestamp == 0 || timestamp == 0 || age > BATTERY_AGED)
+            continue;
+
+        *pBattery = batteryRX[i].data;
+
+        return NRF_SUCCESS;
+    }
+
+    return NRF_ERROR_NOT_FOUND;
 }
 
 /**END OF FILE*****************************************************************/

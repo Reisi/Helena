@@ -86,8 +86,51 @@ typedef enum
  */
 
  /**@brief Light Measurement Flags structure. This contains information which
- *        data fields are present in the light measurement notification package. */
+ *        data fields are present in the light measurement notification
+ *        package responding to a helmet light. */
 typedef struct
+{
+    uint16_t intensity_present          : 1;
+    uint16_t flood_status_present       : 1;
+    uint16_t spot_status_present        : 1;
+    uint16_t flood_power_present        : 1;
+    uint16_t spot_power_present         : 1;
+    uint16_t temperature_present        : 1;
+    uint16_t input_voltage_present      : 1;
+    uint16_t pitch_present              : 1;
+    uint16_t battery_soc_present        : 1;
+    uint16_t taillight_power_present    : 1;
+} ble_lcs_c_lm_hlmt_flags_t;
+
+/**@brief Light Measurement Flags structure. This contains information which
+ *        data fields are present in the light measurement notification
+ *        package responding to a bike light. */
+typedef struct
+{
+    uint16_t intensity_present          : 1;
+    uint16_t main_beam_status_present   : 1;
+    uint16_t high_beam_status_present   : 1;
+    uint16_t main_beam_power_present    : 1;
+    uint16_t high_beam_power_present    : 1;
+    uint16_t temperature_present        : 1;
+    uint16_t input_voltage_present      : 1;
+    uint16_t pitch_present              : 1;
+    uint16_t battery_soc_present        : 1;
+    uint16_t taillight_power_present    : 1;
+} ble_lcs_c_lm_bk_flags_t;
+
+/**@brief Light Measurement Flags structure. This contains information which
+ *        data fields are present in the light measurement notification
+ *        package. */
+typedef union
+{
+    ble_lcs_c_lm_hlmt_flags_t hlmt;
+    ble_lcs_c_lm_bk_flags_t   bk;
+} ble_lcs_c_lm_flags_t;
+
+ /**@brief Light Measurement Flags structure. This contains information which
+ *        data fields are present in the light measurement notification package. */
+/*typedef struct
 {
     uint16_t intensity_present              : 1;
     union
@@ -114,7 +157,8 @@ typedef struct
     uint16_t input_voltage_present          : 1;
     uint16_t pitch_present                  : 1;
     uint16_t battery_soc_present            : 1;
-} ble_lcs_c_lm_flags_t;
+    uint16_t taillight_power_present        : 1;
+} ble_lcs_c_lm_flags_t;*/
 
 /**@brief Light Control Service Helmet Setup Flags */
 typedef struct
@@ -197,6 +241,7 @@ typedef struct
     uint16_t                            input_voltage;    /**< Input Voltage in Volt with a resolution of 1/1000 */
     int8_t                              pitch;            /**< pitch angle in degree with a resolution of 1 */
     uint8_t                             battery_soc;      /**< battery state of charge in percent with resolution of 1 */
+    uint16_t                            taillight_power;  /**< taillight output power in Watt with a resolution of 1/1000 */
 } ble_lcs_c_lm_t;
 
 /**@brief Configuration feature structure. This contains the supported

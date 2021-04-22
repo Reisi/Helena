@@ -239,6 +239,7 @@ typedef struct
     uint16_t input_voltage_present      : 1;
     uint16_t pitch_present              : 1;
     uint16_t battery_soc_present        : 1;
+    uint16_t taillight_power_present    : 1;
 } ble_lcs_lm_hlmt_flags_t;
 
 /**@brief Light Measurement Flags structure. This contains information which
@@ -255,6 +256,7 @@ typedef struct
     uint16_t input_voltage_present      : 1;
     uint16_t pitch_present              : 1;
     uint16_t battery_soc_present        : 1;
+    uint16_t taillight_power_present    : 1;
 } ble_lcs_lm_bk_flags_t;
 
 /**@brief Light Measurement Flags structure. This contains information which
@@ -266,7 +268,7 @@ typedef union
     ble_lcs_lm_bk_flags_t   bk;
 } ble_lcs_lm_flags_t;
 
-#define BLE_LCS_LM_FLAGS_MASK   0x01FF
+#define BLE_LCS_LM_FLAGS_MASK   0x03FF
 
 /**@brief Light Measurement status flags structure. This contains the light
  *        status flags */
@@ -315,6 +317,7 @@ typedef struct
     uint16_t                          input_voltage;    /**< Input Voltage in Volt with a resolution of 1/1000 */
     int8_t                            pitch;            /**< pitch angle in degree with a resolution of 1 */
     uint8_t                           battery_soc;      /**< battery state of charge in percent with resolution of 1 */
+    uint16_t                          taillight_power;  /**< taillight output power in Watt with a resolution of 1/1000 */
 } ble_lcs_lm_t;
 
 /* Exported macros ---------------------------------------------------------- */

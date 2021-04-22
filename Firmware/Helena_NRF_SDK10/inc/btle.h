@@ -150,6 +150,8 @@ typedef struct
     int8_t temperature;                         // light temperature in °C, will be included if value is in range -40..85
     uint16_t inputVoltage;                      // input voltage in mV, will be included if value > 0
     int8_t pitch;                               // pitch angle in °, will be included if value is in range -90..+90
+    uint8_t batterySoc;                         // battery state of charge, will be included if value is in range 0..100
+    uint16_t powerTaillight;                    // taillight output power in mW, will be included if value > 0
 } btle_lcsMeasurement_t;
 
 typedef union

@@ -215,76 +215,106 @@ static void decode_measurement(uint8_t const * p_data, ble_lcs_c_lm_t * p_meas)
     {
     case BLE_LCS_C_LT_HELMET_LIGHT:
         p_meas->hlmt.mode.setup = setup.decoded_hlmt;
-        if (flags.decoded.intensity_present)
+        if (flags.decoded.hlmt.intensity_present)
         {
             p_meas->hlmt.mode.intensity = *p_data++;
         }
-        if (flags.decoded.flood_status_present)
+        if (flags.decoded.hlmt.flood_status_present)
         {
             status_flags.encoded = *p_data++;
             p_meas->hlmt.flood_status = status_flags.decoded;
         }
-        if (flags.decoded.spot_status_present)
+        if (flags.decoded.hlmt.spot_status_present)
         {
             status_flags.encoded = *p_data++;
             p_meas->hlmt.spot_status = status_flags.decoded;
         }
-        if (flags.decoded.flood_power_present)
+        if (flags.decoded.hlmt.flood_power_present)
         {
             p_meas->hlmt.flood_power = uint16_decode(p_data);
             p_data += 2;
         }
-        if (flags.decoded.spot_power_present)
+        if (flags.decoded.hlmt.spot_power_present)
         {
             p_meas->hlmt.spot_power = uint16_decode(p_data);
+            p_data += 2;
+        }
+        if (flags.decoded.hlmt.temperature_present)
+        {
+            p_meas->temperature = *p_data++;
+        }
+        if (flags.decoded.hlmt.input_voltage_present)
+        {
+            p_meas->input_voltage = uint16_decode(p_data);
+            p_data += 2;
+        }
+        if (flags.decoded.hlmt.pitch_present)
+        {
+            p_meas->pitch = *p_data;
+        }
+        if (flags.decoded.hlmt.battery_soc_present)
+        {
+            p_meas->battery_soc = *p_data;
+        }
+        if (flags.decoded.hlmt.taillight_power_present)
+        {
+            p_meas->taillight_power = uint16_decode(p_data);
             p_data += 2;
         }
         break;
     case BLE_LCS_C_LT_BIKE_LIGHT:
         p_meas->bk.mode.setup = setup.decoded_bk;
-        if (flags.decoded.intensity_present)
+        if (flags.decoded.bk.intensity_present)
         {
             p_meas->bk.mode.main_beam_intensity = *p_data++;
             p_meas->bk.mode.high_beam_intensity = *p_data++;
         }
-        if (flags.decoded.main_beam_status_present)
+        if (flags.decoded.bk.main_beam_status_present)
         {
             status_flags.encoded = *p_data++;
             p_meas->bk.main_beam_status = status_flags.decoded;
         }
-        if (flags.decoded.high_beam_status_present)
+        if (flags.decoded.bk.high_beam_status_present)
         {
             status_flags.encoded = *p_data++;
             p_meas->bk.high_beam_status = status_flags.decoded;
         }
-        if (flags.decoded.main_beam_power_present)
+        if (flags.decoded.bk.main_beam_power_present)
         {
             p_meas->bk.high_beam_power = uint16_decode(p_data);
             p_data += 2;
         }
-        if (flags.decoded.high_beam_power_present)
+        if (flags.decoded.bk.high_beam_power_present)
         {
             p_meas->bk.high_beam_power = uint16_decode(p_data);
+            p_data += 2;
+        }
+        if (flags.decoded.bk.temperature_present)
+        {
+            p_meas->temperature = *p_data++;
+        }
+        if (flags.decoded.bk.input_voltage_present)
+        {
+            p_meas->input_voltage = uint16_decode(p_data);
+            p_data += 2;
+        }
+        if (flags.decoded.bk.pitch_present)
+        {
+            p_meas->pitch = *p_data;
+        }
+        if (flags.decoded.bk.battery_soc_present)
+        {
+            p_meas->battery_soc = *p_data;
+        }
+        if (flags.decoded.bk.taillight_power_present)
+        {
+            p_meas->taillight_power = uint16_decode(p_data);
             p_data += 2;
         }
         break;
     case BLE_LCS_C_LT_TAIL_LIGHT:
     default:
         break;
-    }
-
-    if (flags.decoded.temperature_present)
-    {
-        p_meas->temperature = *p_data++;
-    }
-    if (flags.decoded.input_voltage_present)
-    {
-        p_meas->input_voltage = uint16_decode(p_data);
-        p_data += 2;
-    }
-    if (flags.decoded.pitch_present)
-    {
-        p_meas->pitch = *p_data;
     }
 }
 
