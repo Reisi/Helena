@@ -15,7 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - improved status led, blue blinking while scanning, red and blue active works
   now for HWREV22 and HWREV23, too.
 - added battery SOC and taillight power to measurement notification
-- added temporary mode
+- temporary mode
+- hold button for 10 sec. will initiate factory reset
 
 ### Changed
 

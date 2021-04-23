@@ -69,7 +69,8 @@
         {{ false, false, false, false,  false, false}, {0}       }  \
     },                                                              \
     .groups = 2,                                                    \
-    .prefMode = MODE_INVALID                                        \
+    .prefMode = MODE_INVALID,                                       \
+    .tempMode = MODE_INVALID                                        \
 }
 #elif defined BILLY
 #define MODES_DEFAULT                                               \
@@ -86,7 +87,8 @@
         {{ false, false, false, false, false, false}, 0,    0   }   \
     },                                                              \
     .groups = 2,                                                    \
-    .prefMode = 0                                                   \
+    .prefMode = 0,                                                  \
+    .tempMode = MODE_INVALID                                        \
 }
 #endif // BILLY
 
@@ -1550,6 +1552,10 @@ static void hmiEventHandler(hmi_eventType_t event)
        break;
 
     case HMI_EVT_INTERNAL_HOLD10SEC:
+        if (newMode == MODE_OFF)
+            (void)debug_FactoryReset(true);
+        break;
+
     case HMI_EVT_INTERNAL_HOLDRELEASED:
     case HMI_EVT_XIAOMI_PRI_HOLD2SEC:
     case HMI_EVT_XIAOMI_PRI_HOLD10SEC:

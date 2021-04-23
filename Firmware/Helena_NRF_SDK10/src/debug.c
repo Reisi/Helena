@@ -197,13 +197,39 @@ static void resetCommand(char const* pSubcommand)
     NVIC_SystemReset();
 }
 
+uint32_t debug_FactoryReset(bool reset)
+{
+    uint32_t errCode;
+
+    errCode = sd_flash_page_erase((FS_PAGE_END_ADDR - 1 * FS_PAGE_SIZE) / FS_PAGE_SIZE);
+    if (errCode == NRF_SUCCESS)
+        memory.eraseInProgress = true;
+    else
+        return errCode;
+
+    while (memory.eraseInProgress == true);
+
+    errCode = sd_flash_page_erase((FS_PAGE_END_ADDR - 2 * FS_PAGE_SIZE) / FS_PAGE_SIZE);
+    if (errCode == NRF_SUCCESS)
+        memory.eraseInProgress = true;
+    else
+        return errCode;
+
+    while (memory.eraseInProgress == true);
+
+    if (reset)
+        NVIC_SystemReset();
+
+    return NRF_SUCCESS;
+}
+
 static void memoryClear()
 {
     uint32_t errCode;
 
     memory.isPending = false;
 
-    errCode = sd_flash_page_erase((FS_PAGE_END_ADDR - 1 * FS_PAGE_SIZE) / FS_PAGE_SIZE);
+    /*errCode = sd_flash_page_erase((FS_PAGE_END_ADDR - 1 * FS_PAGE_SIZE) / FS_PAGE_SIZE);
     if (errCode == NRF_SUCCESS)
     {
         memory.eraseInProgress = true;
@@ -222,11 +248,16 @@ static void memoryClear()
     {
         APP_ERROR_HANDLER(errCode);
     }
-    while (memory.eraseInProgress == true);
+    while (memory.eraseInProgress == true);*/
+
+    errCode = debug_FactoryReset(false);
+    APP_ERROR_CHECK(errCode);
+
     do
     {
         errCode = btle_SendNusString((uint8_t*)"done, cycle power\r\n", 19);
     } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+
     APP_ERROR_CHECK(errCode);
 }
 

@@ -37,72 +37,39 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include <stdint.h>
-//#include <stdbool.h>
-//#include "compiler_abstraction.h"
 #if defined BTDEBUG
 #include "ble.h"
 #endif
 
 /* Exported types ------------------------------------------------------------*/
-/*typedef enum
-{
-    DBG_HELENA = 0, DBG_NRF, DBG_MPU, DBG_CNT
-} debugMessageEnum;*/
 
 /* Exported constants --------------------------------------------------------*/
 
 /* Exported macros -----------------------------------------------------------*/
-/*#if defined HELENA_DEBUG_SWD
-#define MPU_ERROR_HANDLER(ERR_CODE)                         \
-    do                                                      \
-    {                                                       \
-        debug_ErrorHandler(DBG_MPU, (ERR_CODE), __LINE__, (uint8_t*) __FILE__);  \
-    } while (0)
-#define HELENA_ERROR_HANDLER(ERR_CODE)                         \
-    do                                                      \
-    {                                                       \
-        debug_ErrorHandler(DBG_HELENA, (ERR_CODE), __LINE__, (uint8_t*) __FILE__);  \
-    } while (0)
-#else
-#define MPU_ERROR_HANDLER(ERR_CODE)                         \
-    do                                                      \
-    {                                                       \
-        debug_ErrorHandler(DBG_MPU, (ERR_CODE), 0, 0);  \
-    } while (0)
-#define HELENA_ERROR_HANDLER(ERR_CODE)                         \
-    do                                                      \
-    {                                                       \
-        debug_ErrorHandler(DBG_HELENA, (ERR_CODE), 0, 0);  \
-    } while (0)
-#endif
 
-#define MPU_ERROR_CHECK(ERR_CODE)                           \
-    do                                                      \
-    {                                                       \
-        const int LOCAL_ERR_CODE = (ERR_CODE);         \
-        if (LOCAL_ERR_CODE != 0)                  \
-        {                                                   \
-            MPU_ERROR_HANDLER(LOCAL_ERR_CODE);              \
-        }                                                   \
-    } while (0)
-#define HELENA_ERROR_CHECK(ERR_CODE)                           \
-    do                                                      \
-    {                                                       \
-        const int LOCAL_ERR_CODE = (ERR_CODE);         \
-        if (LOCAL_ERR_CODE != 0)                  \
-        {                                                   \
-            HELENA_ERROR_HANDLER(LOCAL_ERR_CODE);              \
-        }                                                   \
-    } while (0)
-*/
 /* Exported functions ------------------------------------------------------- */
+/** @brief function to initiate the debug module
+ */
 void debug_Init(void);
+
+/** @brief execute function of the debug module
+ *
+ * @note call this function on a regular basis in the main loop
+ */
 void debug_Execute(void);
-//void debug_ErrorHandler(debugMessageEnum debug, uint32_t err_code, uint32_t line, const uint8_t* pfile);
-//void debug_ErrorHandler(uint32_t err_code, uint32_t line, const uint8_t* pfile);
+
+/** @brief function to initiate the factory reset
+ *
+ * @details this function deletes the application memory pages using "brute
+ *          force".
+ *
+ * @param[in] reset true if a reset has to be initiated afterwards
+ * @return    NRF_SUCCESS
+ *            the relayed error code of sd_flash_page_erase
+ */
+uint32_t debug_FactoryReset(bool reset);
+
 #if defined BTDEBUG
-//void debug_FieldTestingInit(void);
-//void debug_OnBleEvt(ble_evt_t * pBleEvt);
 void debug_OnNusEvt(uint8_t *pData, uint16_t length);
 void debug_OnSysEvent(uint32_t sysEvt);
 #endif
