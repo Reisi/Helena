@@ -86,7 +86,9 @@ typedef enum
     BTLE_EVT_LCSCP_REQ_LIMITS,                  // request current limits
     BTLE_EVT_LCSCP_SET_LIMITS,                  // set current limits
     BTLE_EVT_LCSCP_REQ_PREF_MODE,               // request preferred mode
-    BTLE_EVT_LCSCP_SET_PREF_MODE                // set preferred mode
+    BTLE_EVT_LCSCP_SET_PREF_MODE,               // set preferred mode
+    BTLE_EVT_LCSCP_REQ_TEMP_MODE,               // request temporary mode
+    BTLE_EVT_LCSCP_SET_TEMP_MODE,               // set temporary mode
 } btle_LcsCtrlPtEventTypes_t;
 
 /**< available light status flags for btle module */
@@ -176,6 +178,7 @@ typedef union
 #endif //BILLY
     } currentLimits;                            // parameter for event type BTLE_EVT_LCSCP_SET_LIMITS
     uint8_t prefMode;                           // parameter for event type BTLE_EVT_LCSCP_SET_PREF_MODE
+    uint8_t tempMode;                           // parameter for event type BTLE_EVT_LCSCP_SET_TEMP_MODE
 } btle_lcsCtrlPtEvent_t;
 
 /**< btle event structure */
@@ -246,6 +249,7 @@ typedef struct
 #endif //BILLY
         } currentLimits;                        // response parameter for event type BTLE_EVT_LCSCP_REQ_LIMITS
         uint8_t prefMode;                       // response parameter for event type BTLE_EVT_LCSCP_REQ_PREF_MODE
+        uint8_t tempMode;                       // response parameter for event type BTLE_EVT_LCSCP_REQ_TEMP_MODE
     } responseParams;
 } btle_LcscpEventResponse_t;
 

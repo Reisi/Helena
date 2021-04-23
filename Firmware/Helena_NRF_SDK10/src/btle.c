@@ -556,6 +556,13 @@ static void lcsCpEventHandler(ble_lcs_ctrlpt_t * pLcsCtrlpt,
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_SET_PREF_MODE;
         evt.lcscpEventParams.prefMode = pEvt->p_params->pref_mode;
         break;
+    case BLE_LCS_CTRLPT_EVT_REQ_TEMP_MODE:
+        evt.subEvt.lcscp = BTLE_EVT_LCSCP_REQ_TEMP_MODE;
+        break;
+    case BLE_LCS_CTRLPT_EVT_SET_TEMP_MODE:
+        evt.subEvt.lcscp = BTLE_EVT_LCSCP_SET_TEMP_MODE;
+        evt.lcscpEventParams.prefMode = pEvt->p_params->temp_mode;
+        break;
     default:
         return;
     }
@@ -651,7 +658,7 @@ static void servicesInit(char const* pDrvRev, btle_lcsFeature_t* pFeature)
     lcsInit.feature.cfg_features.mode_config_supported = 1;
     lcsInit.feature.cfg_features.mode_grouping_supported = 1;
     lcsInit.feature.cfg_features.preferred_mode_supported = 1;
-    lcsInit.feature.cfg_features.temporal_mode_supported = 0;
+    lcsInit.feature.cfg_features.temporary_mode_supported = 1;
     lcsInit.feature.stp_features.led_config_check_supported = 1;
     lcsInit.feature.stp_features.current_limitation_supported = 1;
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lm_attr_md.cccd_write_perm);
@@ -1513,6 +1520,9 @@ uint32_t btle_SendEventResponse(const btle_LcscpEventResponse_t *pRsp, uint16_t 
         break;
     case BTLE_EVT_LCSCP_REQ_PREF_MODE:
         rsp.params.pref_mode = pRsp->responseParams.prefMode;
+        break;
+    case BTLE_EVT_LCSCP_REQ_TEMP_MODE:
+        rsp.params.pref_mode = pRsp->responseParams.tempMode;
         break;
     default:
         break;

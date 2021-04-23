@@ -52,6 +52,8 @@ typedef enum
     BLE_LCS_CTRLPT_EVT_SET_LIMITS,      /**< Operator to set the current limits  */
     BLE_LCS_CTRLPT_EVT_REQ_PREF_MODE,   /**< Operator to request the current preferred mode */
     BLE_LCS_CTRLPT_EVT_SET_PREF_MODE,   /**< Operator to set the preferred mode */
+    BLE_LCS_CTRLPT_EVT_REQ_TEMP_MODE,   /**< Operator to request the current temporary mode */
+    BLE_LCS_CTRLPT_EVT_SET_TEMP_MODE,   /**< Operator to set the temporary mode */
 } ble_lcs_ctrlpt_evt_type_t;
 
 /**@brief Light Control Control Point mode configuration structure */
@@ -91,6 +93,7 @@ typedef union
     uint8_t                     group_config;
     ble_lcs_ctrlpt_set_limits_t current_limits;
     uint8_t                     pref_mode;
+    uint8_t                     temp_mode;
 } ble_lcs_ctrlpt_write_val_t;
 
 /**@brief Light Control Control Point response parameter */
@@ -152,6 +155,8 @@ typedef enum
     BLE_LCS_CTRLPT_OP_CODE_SET_LIMITS       = 12,
     BLE_LCS_CTRLPT_OP_CODE_REQ_PREF_MODE    = 13,
     BLE_LCS_CTRLPT_OP_CODE_SET_PREF_MODE    = 14,
+    BLE_LCS_CTRLPT_OP_CODE_REQ_TEMP_MODE    = 15,
+    BLE_LCS_CTRLPT_OP_CODE_SET_TEMP_MODE    = 16,
     BLE_LCS_CTRLPT_OP_CODE_RESPONSE         = 32
 } ble_lcs_ctrlpt_op_code_t;
 
@@ -163,7 +168,7 @@ typedef struct
         ble_lcs_hlmt_mode_t * p_list_hlmt;
         ble_lcs_bk_mode_t   * p_list_bk;
     };
-    uint8_t                         num_of_entries;
+    uint8_t                   num_of_entries;
 } ble_lcs_ctrlpt_rsp_param_mode_config_t;
 
 /**@brief Light Control Control Point Response parameter for BLE_LCS_CTRLPT_OP_CODE_REQ_LED_CNFG and BLE_LCS_CTRLPT_OP_CODE_CHK_LED_CNFG */
@@ -214,6 +219,7 @@ typedef union
     ble_lcs_ctrlpt_rsp_param_sens_offset_t sens_offset;
     ble_lcs_ctrlpt_rsp_param_limits_t      current_limits;
     uint8_t                                pref_mode;
+    uint8_t                                temp_mode;
 } ble_lcs_ctrlpt_rsp_params_t;
 
 /**@brief Light Control Control Point Response parameter structure */

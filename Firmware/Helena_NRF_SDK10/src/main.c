@@ -111,6 +111,7 @@ typedef struct
     uint16_t isLedConfigCheckPending;       // hold a valid connection handle if a led check procedure was requested
     uint16_t isSensorCalibrationPending;    // hold a valid connection handle if sensor offset calibration was requested
     uint16_t isPrefModeWritePending;        // hold a valid connection handle if a preferred mode set response is pending
+    uint16_t isTempModeWritePending;        // hold a valid connection handle if a temporary mode set response is pending
 } btleStatus_t;
 
 /** @brief power state
@@ -130,6 +131,7 @@ typedef struct
     uint32_t magicnumber;                   // magic number and
     uint16_t crc;                           // crc value to check if data is valid
     uint8_t currentMode;                    // current mode, MODE_OFF (= MAX_NUM_OF_MODES) to disable
+    uint8_t lastMode;                       // last mode
 } modeState_t;
 
 /** @brief state status structure
@@ -203,6 +205,7 @@ typedef struct
     lightMode_t mode[MAX_NUM_OF_MODES];
     uint8_t groups;
     uint8_t prefMode;
+    uint8_t tempMode;
 } lightConfig_t;
 
 /** @brief helena mode types for versions 0.13 and lower
@@ -463,6 +466,8 @@ static bool convertBtleModeToMode(btle_LcsModeConfig_t const* pBtleMode, lightMo
  */
 static void enterMode(uint8_t mode, uint16_t connHandle)
 {
+
+    state.pMode->lastMode = state.pMode->currentMode;
     state.pMode->currentMode = mode;
     (void)btle_SetMode(mode, connHandle);
     (void)cmh_EnableTaillight(mode == MODE_OFF ? false : modeConfig.mode[mode].setup.comTaillight);
@@ -480,6 +485,19 @@ static bool isLightMode(lightMode_t const* const pMode)
         (pMode->intensityHighBeam && pMode->setup.lightHighBeam))
 #endif // BILLY
         )
+        return true;
+    else
+        return false;
+}
+
+static bool isWritePending()
+{
+    if (state.btle.isGroupCountPending != BTLE_CONN_HANDLE_INVALID ||
+        state.btle.isModeConfigWritePending != BTLE_CONN_HANDLE_INVALID ||
+        state.btle.isLedConfigCheckPending != BTLE_CONN_HANDLE_INVALID ||
+        state.btle.isSensorCalibrationPending != BTLE_CONN_HANDLE_INVALID ||
+        state.btle.isPrefModeWritePending != BTLE_CONN_HANDLE_INVALID ||
+        state.btle.isTempModeWritePending != BTLE_CONN_HANDLE_INVALID)
         return true;
     else
         return false;
@@ -544,11 +562,7 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
     }   break;
     case BTLE_EVT_LCSCP_CONFIG_MODE:        // mode configuration request
     {
-        if (state.btle.isGroupCountPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isModeConfigWritePending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isLedConfigCheckPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isSensorCalibrationPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isPrefModeWritePending != BTLE_CONN_HANDLE_INVALID)
+        if (isWritePending())
         {
             rsp.retCode = BTLE_RET_FAILED;
             break;
@@ -574,11 +588,7 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
             rsp.retCode = BTLE_RET_FAILED;
     }   break;
     case BTLE_EVT_LCSCP_CONFIG_GROUP:       // group configuration request
-        if (state.btle.isGroupCountPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isModeConfigWritePending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isLedConfigCheckPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isSensorCalibrationPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isPrefModeWritePending != BTLE_CONN_HANDLE_INVALID)
+        if (isWritePending())
         {
             rsp.retCode = BTLE_RET_FAILED;
             break;
@@ -610,11 +620,7 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
 #endif // BILLY
         break;
     case BTLE_EVT_LCSCP_CHECK_LED_CONFIG:
-        if (state.btle.isGroupCountPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isModeConfigWritePending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isLedConfigCheckPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isSensorCalibrationPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isPrefModeWritePending != BTLE_CONN_HANDLE_INVALID)
+        if (isWritePending())
         {
             rsp.retCode = BTLE_RET_FAILED;
             break;
@@ -634,11 +640,7 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
             rsp.retCode = BTLE_RET_INVALID;
         break;
     case BTLE_EVT_LCSCP_CALIB_SENS_OFFSET:
-        if (state.btle.isGroupCountPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isModeConfigWritePending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isLedConfigCheckPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isSensorCalibrationPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isPrefModeWritePending != BTLE_CONN_HANDLE_INVALID)
+        if (isWritePending())
         {
             rsp.retCode = BTLE_RET_FAILED;
             break;
@@ -678,11 +680,7 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
         rsp.responseParams.prefMode = modeConfig.prefMode;
         break;
     case BTLE_EVT_LCSCP_SET_PREF_MODE:
-        if (state.btle.isGroupCountPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isModeConfigWritePending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isLedConfigCheckPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isSensorCalibrationPending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isPrefModeWritePending != BTLE_CONN_HANDLE_INVALID)
+        if (isWritePending())
         {
             rsp.retCode = BTLE_RET_FAILED;
             break;
@@ -698,6 +696,32 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
             if (errCode == NRF_SUCCESS)
             {
                 state.btle.isPrefModeWritePending = pEvt->connHandle;
+                return;
+            }
+        }
+        rsp.retCode = BTLE_RET_FAILED;
+        break;
+    case BTLE_EVT_LCSCP_REQ_TEMP_MODE:
+        rsp.retCode = BTLE_RET_SUCCESS;
+        rsp.responseParams.tempMode = modeConfig.tempMode;
+        break;
+    case BTLE_EVT_LCSCP_SET_TEMP_MODE:
+        if (isWritePending())
+        {
+            rsp.retCode = BTLE_RET_FAILED;
+            break;
+        }
+        if (isLightMode(&modeConfig.mode[pEvt->lcscpEventParams.tempMode]) ||
+            pEvt->lcscpEventParams.tempMode >= MAX_NUM_OF_MODES)
+        {
+            if (pEvt->lcscpEventParams.tempMode >= MAX_NUM_OF_MODES)
+                modeConfig.tempMode = MODE_INVALID;
+            else
+                modeConfig.tempMode = pEvt->lcscpEventParams.tempMode;
+            errCode = updateModeConfig();
+            if (errCode == NRF_SUCCESS)
+            {
+                state.btle.isTempModeWritePending = pEvt->connHandle;
                 return;
             }
         }
@@ -721,7 +745,6 @@ static void btleEventHandler(btle_event_t * pEvt)
         break;
     case BTLE_EVT_HID:
         hmi_ReportHidEvent(pEvt->subEvt.hid);
-        //btleHidEvtHandler(pEvt);
         break;
     case BTLE_EVT_LCS:
         btleLcsEvtHandler(pEvt);
@@ -740,6 +763,8 @@ static void lightMasterHandler(cmh_lightMasterData_t const* pMasterData)
 {
     // messages from com will set the mode directly,
     // no relaying to other lights or taillight necessary
+
+    /// TODO: saving last mode or not?
 
     // com mode city/fog low
     if (pMasterData->mainBeam == cmh_LIGHTLOW &&
@@ -823,6 +848,15 @@ static void fdsEventHandler(ret_code_t errCode, fds_cmd_id_t cmd, fds_record_id_
                 state.btle.isPrefModeWritePending = BTLE_CONN_HANDLE_INVALID;
             }
 
+            if (state.btle.isTempModeWritePending != BTLE_CONN_HANDLE_INVALID)
+            {
+                btle_LcscpEventResponse_t rsp;
+                rsp.evt = BTLE_EVT_LCSCP_SET_TEMP_MODE;
+                rsp.retCode = errCode == NRF_SUCCESS ? BTLE_RET_SUCCESS : BTLE_RET_FAILED;
+                APP_ERROR_CHECK(btle_SendEventResponse(&rsp, state.btle.isTempModeWritePending));
+                state.btle.isTempModeWritePending = BTLE_CONN_HANDLE_INVALID;
+            }
+
             // run garbage collection if necessary
             if (errCode == NRF_ERROR_NO_MEM)
             {
@@ -840,7 +874,8 @@ static void fdsEventHandler(ret_code_t errCode, fds_cmd_id_t cmd, fds_record_id_
         APP_ERROR_CHECK(errCode);
         if (state.btle.isGroupCountPending != BTLE_CONN_HANDLE_INVALID ||
             state.btle.isModeConfigWritePending != BTLE_CONN_HANDLE_INVALID ||
-            state.btle.isPrefModeWritePending != BTLE_CONN_HANDLE_INVALID)
+            state.btle.isPrefModeWritePending != BTLE_CONN_HANDLE_INVALID ||
+            state.btle.isTempModeWritePending != BTLE_CONN_HANDLE_INVALID)
             APP_ERROR_CHECK(updateModeConfig());
     }
 }
@@ -885,6 +920,7 @@ static void convertV13ToMode(lightConfig_t* pNew, helenaConfigV13_t const* pOld)
 
     pNew->groups = pOld->modeGroups;
     pNew->prefMode = MODE_INVALID;
+    pNew->tempMode = MODE_INVALID;
 }
 #endif // HELENA
 
@@ -1046,6 +1082,7 @@ static void mainInit(void)
     state.btle.isLedConfigCheckPending = BTLE_CONN_HANDLE_INVALID;
     state.btle.isSensorCalibrationPending = BTLE_CONN_HANDLE_INVALID;
     state.btle.isPrefModeWritePending = BTLE_CONN_HANDLE_INVALID;
+    state.btle.isTempModeWritePending = BTLE_CONN_HANDLE_INVALID;
 
     // initialize timer
     errCode = app_timer_create(&mainTimerId, APP_TIMER_MODE_REPEATED, timerHandler);
@@ -1068,6 +1105,7 @@ static void mainInit(void)
         state.pMode->crc != crc16_compute((const uint8_t*)&state.pMode->magicnumber, sizeof(state.pMode->magicnumber), NULL))
     {
         state.pMode->currentMode = MODE_OFF;
+        state.pMode->lastMode = MODE_OFF;
         state.pMode->magicnumber = MAGICNUMBER;
         state.pMode->crc = crc16_compute((const uint8_t*)&state.pMode->magicnumber, sizeof(state.pMode->magicnumber), NULL);
     }
@@ -1449,6 +1487,7 @@ static void sensorCalibrationCheck()
 
 static void hmiEventHandler(hmi_eventType_t event)
 {
+    static bool switchbackPending;                  // indicating, if a jump back from temporary mode is pending
     uint_fast8_t newMode = state.pMode->currentMode;
 
     switch (event)
@@ -1456,23 +1495,25 @@ static void hmiEventHandler(hmi_eventType_t event)
     case HMI_EVT_INTERNAL_SHORT:
     case HMI_EVT_XIAOMI_PRI_SHORT:
     case HMI_EVT_R51_VOLUP:
+    case HMI_EVT_R51_NEXTTRACK: // double click event
         // start with first mode, or jump to next
         if (newMode == MODE_OFF)
             newMode = 0;
         else
-            newMode = changeMode(1, 0);
+            newMode = changeMode(event == HMI_EVT_R51_NEXTTRACK ? 2 : 1, 0);
         break;
 
     case HMI_EVT_INTERNAL_LONG:
     case HMI_EVT_XIAOMI_PRI_LONG:
     case HMI_EVT_R51_VOLDOWN:
+    case HMI_EVT_R51_PREVTRACK: // double click event
         // start with first mode in second group, or jump to next group
         if (newMode == MODE_OFF)
             newMode = 0;
-        newMode = changeMode(0, 1);
+        newMode = changeMode(0, event == HMI_EVT_R51_PREVTRACK ? 2 : 1);
         break;
 
-    case HMI_EVT_INTERNAL_HOLD:
+    case HMI_EVT_INTERNAL_HOLD2SEC:
         // search remote
         if (newMode == MODE_OFF)
         {
@@ -1491,18 +1532,39 @@ static void hmiEventHandler(hmi_eventType_t event)
             newMode = MODE_OFF;
         break;
 
-    case HMI_EVT_XIAOMI_PRI_HOLD:
-    case HMI_EVT_XIAOMI_SEC_LONG:
-    case HMI_EVT_XIAOMI_SEC_HOLD:
-    case HMI_EVT_R51_NEXTTRACK:
-    case HMI_EVT_R51_PREVTRACK:
+    case HMI_EVT_XIAOMI_SEC_HOLD2SEC:
+    case HMI_EVT_XIAOMI_SEC_HOLDRELEASED:
     case HMI_EVT_R51_MODE:
+        // temporary mode
+        if (modeConfig.tempMode != MODE_INVALID &&                  // temporary mode is activated
+            isLightMode(&modeConfig.mode[modeConfig.tempMode]))     // and is valid
+        {
+            if (state.pMode->currentMode != modeConfig.tempMode)
+            {
+                newMode = modeConfig.tempMode;
+                switchbackPending = true;
+            }
+            else if (switchbackPending)
+                newMode = state.pMode->lastMode;
+        }
+       break;
+
+    case HMI_EVT_INTERNAL_HOLD10SEC:
+    case HMI_EVT_INTERNAL_HOLDRELEASED:
+    case HMI_EVT_XIAOMI_PRI_HOLD2SEC:
+    case HMI_EVT_XIAOMI_PRI_HOLD10SEC:
+    case HMI_EVT_XIAOMI_PRI_HOLDRELEASED:
+    case HMI_EVT_XIAOMI_SEC_LONG:
+    case HMI_EVT_XIAOMI_SEC_HOLD10SEC:
     default:
         return;
     }
 
     if (newMode == state.pMode->currentMode)
         return; // nothing changed
+
+    if (state.pMode->currentMode == modeConfig.tempMode)
+        switchbackPending = false; // leaving temporary mode, clear switchback
 
     if (newMode != MODE_OFF)
         newMode = getNextValidMode(newMode);

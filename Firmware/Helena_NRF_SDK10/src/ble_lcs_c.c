@@ -369,6 +369,12 @@ static bool decode_control_point(uint8_t const * p_data, uint16_t size, ble_lcs_
         p_cp->params.curr_limit.flood = *p_data++;
         p_cp->params.curr_limit.spot = *p_data;
         return true;
+    case BLE_LCS_C_CP_CMD_REQ_PREF_MODE:
+        p_cp->params.pref_mode = *p_data;
+        return true;
+    case BLE_LCS_C_CP_CMD_REQ_TEMP_MODE:
+        p_cp->params.temp_mode = *p_data;
+        return true;
     default:
         return true;
     }
@@ -629,6 +635,14 @@ static uint32_t encode_control_point(const ble_lcs_c_cp_write_t* p_command, uint
         *p_data++ = p_command->params.curr_limit.flood;
         *p_data++ = p_command->params.curr_limit.spot;
         *p_len += 2;
+        return NRF_SUCCESS;
+    case BLE_LCS_C_CP_CMD_SET_PREF_MODE:
+        *p_data++ = p_command->params.pref_mode;
+        *p_len += 1;
+        return NRF_SUCCESS;
+    case BLE_LCS_C_CP_CMD_SET_TEMP_MODE:
+        *p_data++ = p_command->params.temp_mode;
+        *p_len += 1;
         return NRF_SUCCESS;
     default:
         return NRF_ERROR_INVALID_PARAM;

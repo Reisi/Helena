@@ -38,11 +38,20 @@ typedef enum
     BUTEV_CNT
 } buttonEvaluated_t;
 
+/**< the already reported state for a button */
+typedef enum
+{
+    BUTREP_HOLDNONE = 0,
+    BUTREP_HOLD2SEC,
+    BUTREP_HOLD10SEC
+} buttonHoldReported_t;
+
 /**< structure to hold data for evaluation buttons */
 typedef struct
 {
-    uint8_t  state;             // last known state
-    uint32_t timestampPressed;  // timestamp of last pressed event
+    uint8_t              state;             // last known state
+    buttonHoldReported_t reported;          // the already reported hold state
+    uint32_t             timestampPressed;  // timestamp of last pressed event
 } buttonEvaluation_t;
 
 /* Private macros ------------------------------------------------------------*/
@@ -52,7 +61,9 @@ typedef struct
 
 #define TIMEBASE                APP_TIMER_TICKS(10,0)
 #define BUTTONPRESS_LONG        APP_TIMER_TICKS(500, APP_TIMER_PRESCALER)
-#define BUTTONPRESS_HOLD        APP_TIMER_TICKS(2000, APP_TIMER_PRESCALER)
+#define BUTTONPRESS_HOLD2SEC    APP_TIMER_TICKS(2000, APP_TIMER_PRESCALER)
+#define BUTTONPRESS_HOLD10SEC   APP_TIMER_TICKS(10000, APP_TIMER_PRESCALER)
+#define BUTTONPRESS_HOLDABORT   APP_TIMER_TICKS(30000, APP_TIMER_PRESCALER)
 
 #define BUTTON_PRESSED          1
 #define BUTTON_RELEASED         0
@@ -161,9 +172,21 @@ static void evaluateButtons()
         // button is still pressed, check for ultralong
         if (buttonState[i].state == BUTTON_PRESSED && buttonState[i].timestampPressed != 0)
         {
-            if (timePressed >= BUTTONPRESS_HOLD)
+            if (buttonState[i].reported == BUTREP_HOLDNONE && timePressed >= BUTTONPRESS_HOLD2SEC)
             {
-                eventHandler(evt + HMI_EVT_INTERNAL_HOLD);
+                LOG("[HMI]: button hold for 2sec.\r\n");
+                eventHandler(evt + HMI_EVT_INTERNAL_HOLD2SEC);
+                buttonState[i].reported = BUTREP_HOLD2SEC;
+            }
+            if (buttonState[i].reported == BUTREP_HOLD2SEC && timePressed >= BUTTONPRESS_HOLD10SEC)
+            {
+                LOG("[HMI]: button hold for 10sec.\r\n");
+                eventHandler(evt + HMI_EVT_INTERNAL_HOLD10SEC);
+                buttonState[i].reported = BUTREP_HOLD10SEC;
+            }
+            if (buttonState[i].reported == BUTREP_HOLD10SEC && timePressed >= BUTTONPRESS_HOLDABORT)
+            {
+                LOG("[HMI]: button hold for 30sec, abort evaluation\r\n");
                 buttonState[i].state = BUTTON_RELEASED;
                 buttonState[i].timestampPressed = 0;
             }
@@ -172,15 +195,27 @@ static void evaluateButtons()
         if (buttonState[i].state == BUTTON_RELEASED && buttonState[i].timestampPressed != 0)
         {
             if (timePressed < BUTTONPRESS_LONG)
+            {
+                LOG("[HMI]: button clicked (short).\r\n");
                 eventHandler(evt + HMI_EVT_INTERNAL_SHORT);
-            else if (timePressed < BUTTONPRESS_HOLD)
+            }
+            else if (timePressed < BUTTONPRESS_HOLD2SEC)
+            {
+                LOG("[HMI]: button clicked (long).\r\n");
                 eventHandler(evt + HMI_EVT_INTERNAL_LONG);
+            }
+            else //if (timePressed >= BUTTONPRESS_HOLD2SEC)
+            {
+                LOG("[HMI]: button released.\r\n");
+                eventHandler(evt + HMI_EVT_INTERNAL_HOLDRELEASED);
+            }
             buttonState[i].timestampPressed = 0;
         }
         // button has just been pressed, save timestamp
         if (buttonState[i].state == BUTTON_PRESSED && buttonState[i].timestampPressed == 0)
         {
             (void)app_timer_cnt_get(&buttonState[i].timestampPressed);
+            buttonState[i].reported = BUTREP_HOLDNONE;
         }
 
         if (buttonState[i].state == BUTTON_PRESSED)

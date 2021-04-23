@@ -57,6 +57,10 @@ typedef enum
     BLE_LCS_C_CP_CMD_CALIB_SENS_OFF = 10,   /**< command to initiate a sensor offset calibration */
     BLE_LCS_C_CP_CMD_REQ_LIMITS     = 11,   /**< command to request the current led driver limitations */
     BLE_LCS_C_CP_CMD_SET_LIMITS     = 12,   /**< command to set a new current limit */
+    BLE_LCS_C_CP_CMD_REQ_PREF_MODE  = 13,   /**< command to request the current preferred mode */
+    BLE_LCS_C_CP_CMD_SET_PREF_MODE  = 14,   /**< command to set the current preferred mode */
+    BLE_LCS_C_CP_CMD_REQ_TEMP_MODE  = 15,   /**< command to request the current temporary mode */
+    BLE_LCS_C_CP_CMD_SET_TEMP_MODE  = 16,   /**< command to set the current temporary mode */
     BLE_LCS_C_CP_CMD_RESPONSE       = 32    /**< response code */
 } ble_lcs_c_cpc_t;
 
@@ -252,7 +256,7 @@ typedef struct
     uint8_t mode_config_supported    : 1;
     uint8_t mode_grouping_supported  : 1;
     uint8_t preferred_mode_supported : 1;
-    uint8_t temporal_mode_supported  : 1;
+    uint8_t temporary_mode_supported  : 1;
 } ble_lcs_c_lf_cfg_t;
 
 /**@brief Setup feature structure. This contains the supported setup features
@@ -380,6 +384,8 @@ typedef struct
         ble_lcs_c_cp_ledcfg_t led_cfg;      /**< led configuration. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_LED_CNFG and @ref BLE_LCS_C_CP_CMD_CHK_LED_CNFG */
         ble_lcs_c_cp_off_t sens_off;        /**< sensor offset. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_SENS_OFF and @ref BLE_LCS_C_CP_CMD_CALIB_SENS_OFF */
         ble_lcs_c_cp_currlmt_t curr_limit;  /**< current limits. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_LIMITS */
+        uint8_t pref_mode;                  /**< current preferred mode. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_PREF_MODE */
+        uint8_t temp_mode;                  /**< current temporary mode. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_TEMP_MODE */
     } params;
 } ble_lcs_c_cp_rsp_t;
 
@@ -462,6 +468,8 @@ typedef struct
         uint8_t                 start_mode;  /**< start mode for mode list. This field will be used for the command @ref BLE_LCS_C_CP_CMD_REQ_MODE_CNFG. */
         ble_lcs_c_cp_mcfg_cmd_t mode_cfg;    /**< new list of modes. This field will be used for the command @ref BLE_LCS_C_CP_CMD_CNFG_MODE. */
         ble_lcs_c_cp_currlmt_t  curr_limit;  /**< new current limits. This field will be used for the command @ref BLE_LCS_C_CP_CMD_SET_LIMITS. */
+        uint8_t                 pref_mode;   /**< new preferred mode. This field will be used for the command @ref BLE_LCS_C_CP_CMD_SET_PREF_MODE. */
+        uint8_t                 temp_mode;   /**< new temporary mode. This field will be used for the command @ref BLE_LCS_C_CP_CMD_SET_TEMP_MODE. */
     } params;
 } ble_lcs_c_cp_write_t;
 

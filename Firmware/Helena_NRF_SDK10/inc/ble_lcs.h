@@ -83,7 +83,7 @@ typedef struct
     uint8_t mode_config_supported    : 1;
     uint8_t mode_grouping_supported  : 1;
     uint8_t preferred_mode_supported : 1;
-    uint8_t temporal_mode_supported  : 1;
+    uint8_t temporary_mode_supported  : 1;
 } ble_lcs_lf_cfg_t;
 
 /**@brief Setup feature structure. This contains the supported setup features
