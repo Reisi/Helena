@@ -27,8 +27,11 @@
 #include "nrf_delay.h"
 #include "nrf_gpio.h"
 #include "fastmath.h"
+//#include "SEGGER_RTT.h"
 
 /* Private defines -----------------------------------------------------------*/
+#define LOG(...)                    //SEGGER_RTT_printf(0, __VA_ARGS__)
+
 #define APP_TIMER_OP_QUEUE_SIZE     2           // Size of timer operation queues.
 
 #define MAGICNUMBER                 0x83731714  // magic number to verify data in no init section
@@ -37,6 +40,9 @@
 #define MAX_NUM_OF_MODES_V13        8           // maximum number for versions prior to v0.14
 #define MODE_OFF                    MAX_NUM_OF_MODES
 #define MODE_INVALID                UINT8_MAX
+#ifdef HELENA
+#define MODE_SOS                    (MODE_INVALID - 1)
+#endif // HELENA
 
 #define FDSINSTANCE                 0xCAFE      // number identifying fds data for main module
 #ifdef HELENA
@@ -86,7 +92,7 @@
         {{ false, false, false, false, false, false}, 0,    0   },  \
         {{ false, false, false, false, false, false}, 0,    0   }   \
     },                                                              \
-    .groups = 2,                                                    \
+    .groups = 4,                                                    \
     .prefMode = 0,                                                  \
     .tempMode = MODE_INVALID                                        \
 }
@@ -468,11 +474,11 @@ static bool convertBtleModeToMode(btle_LcsModeConfig_t const* pBtleMode, lightMo
  */
 static void enterMode(uint8_t mode, uint16_t connHandle)
 {
-
+    LOG("[MAIN]: mode %d\r\n", mode);
     state.pMode->lastMode = state.pMode->currentMode;
     state.pMode->currentMode = mode;
     (void)btle_SetMode(mode, connHandle);
-    (void)cmh_EnableTaillight(mode == MODE_OFF ? false : modeConfig.mode[mode].setup.comTaillight);
+    (void)cmh_EnableTaillight(mode >= MODE_OFF ? false : modeConfig.mode[mode].setup.comTaillight);
 }
 
 /** @brief function to check if a mode is a light mode (spot and/or flood are/is enabled)
@@ -1018,6 +1024,7 @@ static uint32_t setPowerState(powerState_t newState)
     {
     case POWER_SHUTDOWN:
         // shut down everything, there will be no return from this state, power cycle needed
+        LOG("[MAIN]: power shutdown\r\n");
         if (state.power >= POWER_IDLE)
         {
             APP_ERROR_CHECK(light_Enable(false));
@@ -1032,6 +1039,7 @@ static uint32_t setPowerState(powerState_t newState)
         break;
     case POWER_STANDBY:
         // shut down light and motion sensor
+        LOG("[MAIN]: power standby\r\n");
         APP_ERROR_CHECK(light_Enable(false));
         APP_ERROR_CHECK(ms_Enable(false));
         hmi_SetLed(HMI_LEDBLUE, HMI_LEDOFF);
@@ -1042,6 +1050,7 @@ static uint32_t setPowerState(powerState_t newState)
         break;
     case POWER_IDLE:
         // if helena was on, nothing need to be changed, otherwise timer needs to be started
+        LOG("[MAIN]: power idle\r\n");
         if (state.power != POWER_ON)
         {
             APP_ERROR_CHECK(light_Enable(true));
@@ -1054,6 +1063,7 @@ static uint32_t setPowerState(powerState_t newState)
         break;
     case POWER_ON:
         // if helena was in idle mode, nothing has to be changed, otherwise everything needs to be started
+        LOG("[MAIN]: power on\r\n");
         if (state.power != POWER_IDLE)
         {
             APP_ERROR_CHECK(light_Enable(true));
@@ -1491,6 +1501,7 @@ static void hmiEventHandler(hmi_eventType_t event)
 {
     static bool switchbackPending;                  // indicating, if a jump back from temporary mode is pending
     uint_fast8_t newMode = state.pMode->currentMode;
+    static bool wasOff;                             // indicating if the light was in Off mode when starting to hold the internal button
 
     switch (event)
     {
@@ -1499,7 +1510,7 @@ static void hmiEventHandler(hmi_eventType_t event)
     case HMI_EVT_R51_VOLUP:
     case HMI_EVT_R51_NEXTTRACK: // double click event
         // start with first mode, or jump to next
-        if (newMode == MODE_OFF)
+        if (state.pMode->currentMode >= MODE_OFF)   // also true for SOS mode
             newMode = 0;
         else
             newMode = changeMode(event == HMI_EVT_R51_NEXTTRACK ? 2 : 1, 0);
@@ -1510,19 +1521,23 @@ static void hmiEventHandler(hmi_eventType_t event)
     case HMI_EVT_R51_VOLDOWN:
     case HMI_EVT_R51_PREVTRACK: // double click event
         // start with first mode in second group, or jump to next group
-        if (newMode == MODE_OFF)
+        if (state.pMode->currentMode >= MODE_OFF)   // also true for SOS mode
             newMode = 0;
         newMode = changeMode(0, event == HMI_EVT_R51_PREVTRACK ? 2 : 1);
         break;
 
     case HMI_EVT_INTERNAL_HOLD2SEC:
         // search remote
-        if (newMode == MODE_OFF)
+        if (state.pMode->currentMode == MODE_OFF)
         {
             APP_ERROR_CHECK(btle_DeleteBonds());
             APP_ERROR_CHECK(btle_SearchRemoteDevice());
+            wasOff = true;
             return;
-        } // fall through if light is on!
+        }
+        else
+            wasOff = false;
+        // fall through if light is on!
     case HMI_EVT_XIAOMI_SEC_SHORT:
     case HMI_EVT_R51_PLAYPAUSE:
         // preferred mode
@@ -1552,8 +1567,12 @@ static void hmiEventHandler(hmi_eventType_t event)
        break;
 
     case HMI_EVT_INTERNAL_HOLD10SEC:
-        if (newMode == MODE_OFF)
+        if (wasOff)
             (void)debug_FactoryReset(true);
+#ifdef HELENA
+        else
+            newMode = MODE_SOS;
+#endif //HELENA
         break;
 
     case HMI_EVT_INTERNAL_HOLDRELEASED:
@@ -1572,6 +1591,14 @@ static void hmiEventHandler(hmi_eventType_t event)
     if (state.pMode->currentMode == modeConfig.tempMode)
         switchbackPending = false; // leaving temporary mode, clear switchback
 
+#ifdef HELENA
+    if (newMode == MODE_SOS)
+    {
+        enterMode(newMode, BTLE_CONN_HANDLE_INVALID);
+        return;
+    }
+#endif // HELENA
+
     if (newMode != MODE_OFF)
         newMode = getNextValidMode(newMode);
     enterMode(newMode, BTLE_CONN_HANDLE_ALL);
@@ -1586,7 +1613,6 @@ int main(void)
     btle_StackInit();
     debug_Init();
     APP_ERROR_CHECK(board_Init());
-    //hmi_Init();
     state.supplyCellCnt = pwr_Init();
     light_Init(state.supplyCellCnt, &ledConfiguration);
     ms_Init(movementEventHandler);
@@ -1625,12 +1651,6 @@ int main(void)
 
         hmi_Execute();
 
-        // button checks
-        //hmi_buttonState_t buttons[HMI_BT_CNT];
-        //APP_ERROR_CHECK(hmi_Debounce(buttons, HMI_BT_CNT));     // run debounce routine and get button states
-        //processButtons(buttons);                                // process button events
-        //processButtons(&buttons[HMI_BT_INTERNAL], &buttonVolUp, &buttonVolDown);  // process button events
-
         // determine current light mode
         if (state.pMode->currentMode != MODE_OFF)
             pLightMode = &modeConfig.mode[state.pMode->currentMode];
@@ -1663,14 +1683,25 @@ int main(void)
             light_mode_t lightMode = {{0}};
             if (pLightMode != NULL)
             {
-                lightMode.setup.flood = pLightMode->setup.lightFlood;
-                lightMode.setup.spot = pLightMode->setup.lightSpot;
-                lightMode.setup.pitchCompensation = pLightMode->setup.lightPitchCompensation;
-                lightMode.setup.cloned = pLightMode->setup.lightCloned;
-                if (lightMode.setup.pitchCompensation)
-                    lightMode.illuminanceInLux = pLightMode->intensity;
+                if (state.pMode->currentMode == MODE_SOS)
+                {
+                    lightMode.setup.sos = true;
+                    lightMode.setup.spot = true;
+                    if (ledConfiguration.spotCount == 0 || ledConfiguration.spotCount == LIGHT_LEDCONFIG_UNKNOWN)
+                        lightMode.setup.cloned = true;
+                    lightMode.intensity = 0x64;
+                }
                 else
-                    lightMode.intensity = pLightMode->intensity;
+                {
+                    lightMode.setup.flood = pLightMode->setup.lightFlood;
+                    lightMode.setup.spot = pLightMode->setup.lightSpot;
+                    lightMode.setup.pitchCompensation = pLightMode->setup.lightPitchCompensation;
+                    lightMode.setup.cloned = pLightMode->setup.lightCloned;
+                    if (lightMode.setup.pitchCompensation)
+                        lightMode.illuminanceInLux = pLightMode->intensity;
+                    else
+                        lightMode.intensity = pLightMode->intensity;
+                }
             }
 
             uint16_t pitch = (uint16_t)msData.pitch - (uint16_t)msData.inclination;

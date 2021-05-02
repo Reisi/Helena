@@ -40,6 +40,7 @@ typedef struct
     bool spot              : 1; // spot active
     bool pitchCompensation : 1; // pitch compensation
     bool cloned            : 1; // output cloned to both drivers, ignored if both flood and spot are enabled
+    bool sos               : 1; // sos mode, if selected other settings will be ignored and both drivers blinking SOS with 25%
 } light_modeSetup_t;
 
 typedef struct

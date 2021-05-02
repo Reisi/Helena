@@ -8,6 +8,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "Helena_base.h"
+#include "helena_base_driver.h"
 #include "light_helena.h"
 #include "app_timer.h"
 #include "power.h"
@@ -17,20 +18,22 @@
 #include <stdlib.h>
 
 /* Private defines -----------------------------------------------------------*/
-#define FLOOD                   0
-#define SPOT                    1
+//#define FLOOD                   0
+//#define SPOT                    1
 
-#define TIMEBASE_ON             (APP_TIMER_TICKS(10,0))
-#define TIMEBASE_IDLE           (APP_TIMER_TICKS(1000,0))
+#define TIMEBASE_ON             (APP_TIMER_TICKS(10,0))     // timebase in on mode
+#define TIMEBASE_IDLE           (APP_TIMER_TICKS(1000,0))   // timebase in idle mode
 
-#define VOLTAGEMIN              ((3025ul << 10) / 1000)
-#define VOLTAGEMAX              ((4250ul << 10) / 1000)
+#define VOLTAGEMIN              ((3025ul << 10) / 1000)     // q10_4_t representation of minimal cell voltage
+#define VOLTAGEMAX              ((4250ul << 10) / 1000)     // q10_4_t representation of maximal cell voltage
 
 #define NUM_OF_CELL_CONFIGS     3                           // supporting 1, 2 or 3 cells in series
+#define NOM_CELL_VOLTAGE        ((3700ul << 10) / 1000)     // q10_4_t representation of nominal cell voltage
+#define NOM_LED_VOLTAGE         ((3000ul << 10) / 1000)     // q10_4_t representation of nominal led voltage
 
-#define OUTPUTMAX1CELL          0//UINT8_MAX                // max. output (= 3A with correct calibrated driver)
+#define OUTPUTMAX1CELL          UINT8_MAX                   // max. output (= 3A with correct calibrated driver)
 #define OUTPUTMAX2CELL          UINT8_MAX                   // max. output (= 3A with correct calibrated driver
-#define OUTPUTMAX3CELL          0//((UINT8_MAX * 24) / 30)  // for 3cell out has to be limited to 2.4A
+#define OUTPUTMAX3CELL          ((UINT8_MAX * 24) / 30)     // for 3cell out has to be limited to 2.4A
 #define OUTPUT_DEFAULT_LIMT     ((UINT8_MAX * 85) / 100)    // default configurable current limit is set to 85%
 
 #define TEMPERATUREMAX          ((75 + 273) << 4)           // 75 °C in q12_4_t K
@@ -68,14 +71,14 @@ typedef struct
 
 typedef struct
 {
-    q8_t flood;       // flood current limit
-    q8_t spot;        // spot current limit
-} currentLimit_t;
+    q8_t flood;
+    q8_t spot;
+} target_t;
 
 typedef struct
 {
     light_driverConfig_t drvConfig;
-    currentLimit_t currentLimits;
+    target_t currentLimit;
 } storageData_t;
 
 /* Private macros ------------------------------------------------------------*/
@@ -108,8 +111,6 @@ do                                      \
 
 #define SIZE_IN_WORDS(x)        ((sizeof(x) + 3) / 4)
 #define sign(x)                 (x < 0 ? -1 : 1)
-//#define OUTPUT_TO_PERCENT(x)    ((x * 100) / 256)
-//#define PERCENT_TO_OUTPUT(x)    ((x * 256) / 100)
 
 /* Private variables ---------------------------------------------------------*/
 static const compensationLUT_t spotLUT =
@@ -233,9 +234,8 @@ static const crossingLUT_t crossingLUT =
 static state_t lightState;              // current light state
 static light_status_t lightStatus;      // current light status informations
 static uint8_t cellCnt;                 // number of in series connected li-ion cells of supply battery
-static uint8_t targets[2];              // current target values
-static uint8_t currentLimits[2];        // current current limits
-static volatile bool updateFlag;        // flags indication if status has to be updated
+static target_t target, currentLimit;   // current target and limit values
+static volatile uint16_t prescale;
 APP_TIMER_DEF(updateTimerId);           // timer for timebase
 static storageData_t storage;           // information stored into flash
 static volatile bool flashInitialized;  // indicating if the flash data storage module is initialized
@@ -246,8 +246,70 @@ static volatile bool flashInitialized;  // indicating if the flash data storage 
 static void updateTimerHandler(void *pContext)
 {
     (void)pContext;
-    updateFlag = true;
+    prescale++;
     pwr_SetActiveFlag(pwr_ACTIVELIGHT);
+}
+
+/** @brief function to filter temperature
+ *
+ * @details   This is a simple 1st order low pass filter with a time constant
+ *            of 2.56 sec (at 100 SPS).
+ *
+ * @param[in] unfiltered    unfiltered temperature
+ * @return    the filtered temperature *
+ */
+static q12_4_t temperatureFilter(q12_4_t unfiltered)
+{
+    /// TODO: adapt time constant to 1sec update interval
+    static q20_12_t filtered;
+
+    if (filtered == 0 || lightState != STATEON)  // don't filter at startup, or if light is off
+        filtered = (q20_12_t)unfiltered << 8;
+    else
+    {
+        filtered -= filtered >> 8;
+        filtered += unfiltered;
+    }
+
+    return filtered >> 8;
+}
+
+/** @brief function to filter voltage
+ *
+ * @details   This is a 1st order low pass filter with an adaptive time
+ *            constant (at 100SPS) of 160 (V_diff < 31.25mV), 80 (V_diff <
+ *            62.5mV), 40  (V_diff < 125mV) or 20ms  (V_diff >= 125mV).
+ *
+ * @param[in] unfiltered    unfiltered temperature
+ * @return    the filtered temperature *
+ */
+static q6_10_t voltageFilter(q6_10_t unfiltered)
+{
+    static q18_14_t filtered;
+
+    // filter input voltage, a dynamic filter is used with high time constant
+    // for small changes and low time constant for big changes. This way the
+    // limiter does not produce flickering output if the supply voltage drops
+    // due to draining battery, but still reacts fast enough on big voltage
+    // drops in adaptive mode.
+    /// to do: filter and limiter works fine in with 2 cells, but with 1 and 3 cells?
+    if (filtered == 0 || lightState != STATEON) // don't filter at startup, or if light is off
+        filtered = (q18_14_t)unfiltered << 4;
+    else
+    {
+        int_fast16_t diff = (filtered >> 4) - (int_fast16_t)unfiltered;
+        for (uint_fast8_t i = 0; i < 4 ; i++)
+        {
+            if (abs(diff) < (32 << i) || i == 3)
+            {
+                filtered -= (filtered >> (4 - i));
+                filtered += (unfiltered + sign(diff) * ((int16_t)16 << i)) << i;
+                break;
+            }
+        }
+    }
+
+    return filtered >> 4;
 }
 
 /** @brief function to read data of i2c Step down converter
@@ -257,30 +319,19 @@ static void updateTimerHandler(void *pContext)
  */
 static uint32_t readConverterData(light_status_t* pStatus)
 {
-    uint8_t Buffer[6];
-    uint32_t errCode;
-    uint16_t i;
-    static q20_12_t temperature;
+    hbd_retVal_t errCode;
+    hbd_samplingData_t data;
 
-    errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_STATUSSDL_H, 6, Buffer);
-    if(errCode == NRF_SUCCESS)
+    errCode = hbd_ReadSamplingData(&data);
+    if (errCode == HBD_SUCCESS)
     {
-        pStatus->flood.dutycycle = Buffer[0]>>4 ? true : false;
-        pStatus->spot.dutycycle = Buffer[2]>>4 ? true : false;
-        i = ((Buffer[0] & 0x0F)<<8) | Buffer[1];
-        pStatus->currentFlood = REGISTERVALUE_TO_AMPEREQ10(i);
-        i = ((Buffer[2] & 0x0F)<<8) | Buffer[3];
-        pStatus->currentSpot = REGISTERVALUE_TO_AMPEREQ10(i);
-        i = (Buffer[4]<<8) | Buffer[5];
-        if (temperature == 0)
-            temperature = (REGISTERVALUE_TO_KELVINQ4(i) << 8);
-        else
-        {
-            temperature -= temperature >> 8;
-            temperature += REGISTERVALUE_TO_KELVINQ4(i);
-        }
-        pStatus->temperature = (temperature + 128) >> 8;
+        pStatus->flood.dutycycle = data.currentLeft.maxDC || data.currentLeft.minDC;
+        pStatus->spot.dutycycle = data.currentRight.maxDC || data.currentRight.minDC;
+        pStatus->currentFlood = data.currentLeft.current;
+        pStatus->currentSpot = data.currentRight.current;
+        pStatus->temperature = temperatureFilter(data.temperature);
     }
+
     return errCode;
 }
 
@@ -434,9 +485,19 @@ static void calculateTarget(const light_mode_t *pMode, q15_t pitch, uint8_t *pFl
     pitchFlood = limitPitch(pitchFlood);
     pitchSpot = limitPitch(pitchSpot);
 
+    // start by setting targets to zero
     *pFlood = 0;
     *pSpot = 0;
-    if (pMode->setup.pitchCompensation)
+
+    // if pitch compensation is off, intensity is target value
+    if (!pMode->setup.pitchCompensation)
+    {
+        if (pMode->setup.flood || (pMode->setup.spot && pMode->setup.cloned))
+            *pFlood = pMode->intensity;
+        if (pMode->setup.spot || (pMode->setup.flood && pMode->setup.cloned))
+            *pSpot = pMode->intensity;
+    }
+    else //if (pMode->setup.pitchCompensation)
     {
         illuminanceInLux = pMode->illuminanceInLux > INT8_MAX ? INT8_MAX : pMode->illuminanceInLux;
         illuminanceInLux <<= 8;
@@ -471,12 +532,25 @@ static void calculateTarget(const light_mode_t *pMode, q15_t pitch, uint8_t *pFl
             }
         }
     }
-    else
+
+    // if sos mode is selected, the output is reset to zero using the prescaler counter to generate sos blinking
+    if (pMode->setup.sos)
     {
-        if (pMode->setup.flood || (pMode->setup.spot && pMode->setup.cloned))
-            *pFlood = pMode->intensity;
-        if (pMode->setup.spot || (pMode->setup.flood && pMode->setup.cloned))
-            *pSpot = pMode->intensity;
+        uint_fast16_t prescl = prescale;
+
+        //   __    __    __    ________    ________    ________    __    __    __      |<----- cut? ---->
+        //__|  |__|  |__|  |__|        |__|        |__|        |__|  |__|  |__|  |_______________________
+        // 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+
+        prescl >>= 5;       // prescaler is increased each 10msec, this generates a ticklenght of 0.64sec
+        prescl &= 0x001F;   // limit to 0..31
+
+        //   clear >= 24      enable even,     enable 8,      enable 12 and   enable 16
+        if (prescl >= 24 || !(prescl & 1 || prescl == 8 || prescl == 12 || prescl == 16))
+        {
+            *pFlood = 0;
+            *pSpot = 0;
+        }
     }
 }
 
@@ -520,9 +594,9 @@ static void limiter(light_status_t * pStatus, uint8_t *pFlood, uint8_t *pSpot)
     pStatus->flood.current = false;         // clear all flags first
     pStatus->flood.voltage = false;
     pStatus->flood.temperature = false;
-    if (*pFlood > currentLimits[FLOOD])
+    if (*pFlood > currentLimit.flood)
     {
-        *pFlood = currentLimits[FLOOD];
+        *pFlood = currentLimit.flood;
         pStatus->flood.current = true;
     }
     if (*pFlood > voltageLimit)
@@ -543,9 +617,9 @@ static void limiter(light_status_t * pStatus, uint8_t *pFlood, uint8_t *pSpot)
     pStatus->spot.current = false;
     pStatus->spot.voltage = false;
     pStatus->spot.temperature = false;
-    if (*pSpot > currentLimits[SPOT])
+    if (*pSpot > currentLimit.spot)
     {
-        *pSpot = currentLimits[SPOT];
+        *pSpot = currentLimit.spot;
         pStatus->spot.current = true;
     }
     if (*pSpot > voltageLimit)
@@ -594,22 +668,7 @@ static void fdsEventHandler(ret_code_t errCode, fds_cmd_id_t cmd, fds_record_id_
         flashInitialized = true;
 }
 
-/*static void validateLedConfig(light_driverConfig_t* pLedConfig)
-{
-    // if both driver led counts are not known, use default setup
-    if (pLedConfig->floodCount == LIGHT_LEDCONFIG_UNKNOWN && pLedConfig->spotCount == LIGHT_LEDCONFIG_UNKNOWN)
-    {
-        pLedConfig->floodCount = 2;
-        pLedConfig->spotCount = 1;
-    }
-    // if only one driver is used, assume that there are two leds connected
-    else if (pLedConfig->floodCount == LIGHT_LEDCONFIG_UNKNOWN && pLedConfig->spotCount == 0)
-        pLedConfig->floodCount = 2;
-    else if (pLedConfig->floodCount == 0 && pLedConfig->spotCount == LIGHT_LEDCONFIG_UNKNOWN)
-        pLedConfig->spotCount = 2;
-}*/
-
-static void validateCurrentLimit(currentLimit_t* pLimits)
+static void validateCurrentLimit(target_t* pLimits)
 {
     q8_t designLimit;
 
@@ -619,11 +678,11 @@ static void validateCurrentLimit(currentLimit_t* pLimits)
 
     if (pLimits->flood > designLimit)
         pLimits->flood = designLimit;
-    currentLimits[FLOOD] = pLimits->flood;
+    currentLimit.flood = pLimits->flood;
 
     if (pLimits->spot > designLimit)
         pLimits->spot = designLimit;
-    currentLimits[SPOT] = pLimits->spot;
+    currentLimit.spot = pLimits->spot;
 }
 
 static void readStorage()
@@ -638,8 +697,8 @@ static void readStorage()
     // set default values
     storage.drvConfig.floodCount = LIGHT_LEDCONFIG_UNKNOWN;
     storage.drvConfig.spotCount = LIGHT_LEDCONFIG_UNKNOWN;
-    storage.currentLimits.flood = OUTPUT_DEFAULT_LIMT;
-    storage.currentLimits.spot = OUTPUT_DEFAULT_LIMT;
+    storage.currentLimit.flood = OUTPUT_DEFAULT_LIMT;
+    storage.currentLimit.spot = OUTPUT_DEFAULT_LIMT;
 
     errCode = fds_find(key.type, key.instance, &descriptor, &token);
     if (errCode == NRF_SUCCESS)
@@ -653,7 +712,7 @@ static void readStorage()
             storage.drvConfig.spotCount = pData->drvConfig.spotCount;
             // limits has been added supplementary, check size to be sure to not read flimflam from old data
             if (record.header.tl.length_words == SIZE_IN_WORDS(storage))
-                storage.currentLimits = pData->currentLimits;
+                storage.currentLimit = pData->currentLimit;
             APP_ERROR_CHECK(fds_close(&descriptor));
         }
         else
@@ -667,7 +726,7 @@ static void readStorage()
 
     // set default values if led count isn't known
     //validateLedConfig(&storage.drvConfig);
-    validateCurrentLimit(&storage.currentLimits);
+    validateCurrentLimit(&storage.currentLimit);
 }
 
 static void writeStorage()
@@ -691,53 +750,6 @@ static void writeStorage()
     }
     else
         APP_ERROR_HANDLER(errCode);
-}
-
-static light_driverRevision_t driverRevCheck()
-{
-    uint32_t errCode;
-    uint8_t buffer[2];
-
-    // read first register as reference. The content of this register should be
-    // 0x16 after a reset. In the case that the driver is already running (e.g.
-    // due to a watchdog reset) the content of this register might differ, but
-    // in this project this register is never set to 0x00, so it is unlikely
-    // that this check will fail in such a case.
-    errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 1, &buffer[0]);
-    if(errCode != NRF_SUCCESS)
-    {
-        APP_ERROR_HANDLER(errCode);
-        return LIGHT_DRIVERREVUNKNOWN;
-    }
-
-    // now read HELENABASE_RA_DUTYCYCLELEFT register. A driver with v1.0 will
-    // wrap over to reg HELENABASE_RA_CONFIG and the register content should be
-    // the same than in the first buffer.
-    errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_DUTYCYCLELEFT, 1, &buffer[1]);
-    if(errCode != NRF_SUCCESS)
-    {
-        APP_ERROR_HANDLER(errCode);
-        return LIGHT_DRIVERREVUNKNOWN;
-    }
-
-    if (buffer[0] == buffer[1])     // register content is equal, this must be v1.0
-        return LIGHT_DRIVERREV10;
-
-    // now read HELENABASE_RA_TEMPOFFSET_H register. A driver with v1.1 will
-    // wrap over to reg HELENABASE_RA_CONFIG and the register content should be
-    // the same than in the first buffer.
-    errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_TEMPOFFSET_H, 1, &buffer[1]);
-    if(errCode != NRF_SUCCESS)
-    {
-        APP_ERROR_HANDLER(errCode);
-        return LIGHT_DRIVERREVUNKNOWN;
-    }
-
-    if (buffer[0] == buffer[1])     // register content is equal, this must be v1.1
-        return LIGHT_DRIVERREV11;
-
-    // when this point is reached, the driver firmware has to be at least v1.2
-    return LIGHT_DRIVERREV12;
 }
 
 /* Public functions ----------------------------------------------------------*/
@@ -768,7 +780,10 @@ uint32_t light_Init(uint8_t supplyCellCnt, light_driverConfig_t* pLedConfig)
     readStorage();
 
     // check driver revision;
-    storage.drvConfig.rev = driverRevCheck();
+    hbd_firmwareRev_t fwRev;
+    VERIFY_NRF_ERROR_CODE(hbd_GetFirmwareRev(&fwRev));
+    storage.drvConfig.rev = (light_driverRevision_t)fwRev;
+    //storage.drvConfig.rev = driverRevCheck();
 
     *pLedConfig = storage.drvConfig;
 
@@ -777,26 +792,25 @@ uint32_t light_Init(uint8_t supplyCellCnt, light_driverConfig_t* pLedConfig)
 
 uint32_t light_Enable(bool enable)
 {
-    uint8_t i2cBuffer[3];
+    hbd_config_t cfg;
 
     if (enable != (lightState == STATEOFF))
         return NRF_ERROR_INVALID_STATE;
 
     if (enable)
     {
-        i2cBuffer[0] = (HELENABASE_SLEEP_DISABLE<<HELENABASE_CRA_SLEEP_OFFSET) | (HELENABASE_ADCRATE_1S<<HELENABASE_CRA_ADCRATE_OFFSET);
-        VERIFY_NRF_ERROR_CODE(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 1, i2cBuffer));
+        cfg.sleepMode = HBD_SLEEP_MODE_OFF;
+        cfg.sampleRate = HBD_SAMPLERATE_1SPS;
+        VERIFY_NRF_ERROR_CODE(hbd_SetConfig(&cfg));
         VERIFY_NRF_ERROR_CODE(app_timer_start(updateTimerId, TIMEBASE_IDLE, NULL));
         lightState = STATEIDLE;
     }
     else
     {
-        i2cBuffer[0] = (HELENABASE_SLEEP_ENABLE<<HELENABASE_CRA_SLEEP_OFFSET) | (HELENABASE_ADCRATE_1S<<HELENABASE_CRA_ADCRATE_OFFSET);
-        i2cBuffer[1] = 0;
-        i2cBuffer[2] = 0;
-        targets[FLOOD] = 0;
-        targets[SPOT] = 0;
-        VERIFY_NRF_ERROR_CODE(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 3, i2cBuffer));
+        cfg.sleepMode = HBD_SLEEP_MODE_ON;
+        cfg.sampleRate = HBD_SAMPLERATE_1SPS;
+        VERIFY_NRF_ERROR_CODE(hbd_SetConfig(&cfg));
+        VERIFY_NRF_ERROR_CODE(hbd_SetTargetCurrent(0, 0));
         VERIFY_NRF_ERROR_CODE(app_timer_stop(updateTimerId));
         lightState = STATEOFF;
     }
@@ -813,24 +827,24 @@ uint32_t light_UpdateTargets(const light_mode_t* pMode, q15_t pitch, const light
         return NRF_ERROR_INVALID_STATE;
 
     // check if timer has to be changed
-    if ((pMode->setup.flood || pMode->setup.spot) && lightState == STATEIDLE)
+    if ((pMode->setup.flood || pMode->setup.spot || pMode->setup.sos) && lightState == STATEIDLE)
     {
         VERIFY_NRF_ERROR_CODE(app_timer_stop(updateTimerId));
         VERIFY_NRF_ERROR_CODE(app_timer_start(updateTimerId, TIMEBASE_ON, NULL));
         lightState = STATEON;
     }
-    else if ((!pMode->setup.flood && !pMode->setup.spot) && lightState == STATEON)
+    else if ((!pMode->setup.flood && !pMode->setup.spot && !pMode->setup.sos) && lightState == STATEON)
     {
         VERIFY_NRF_ERROR_CODE(app_timer_stop(updateTimerId));
         VERIFY_NRF_ERROR_CODE(app_timer_start(updateTimerId, TIMEBASE_IDLE, NULL));
         lightState = STATEIDLE;
-        targets[FLOOD] = 0;
-        targets[SPOT] = 0;
-        VERIFY_NRF_ERROR_CODE(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_TARGETSDL, 2, targets));
+        target.flood = 0;
+        target.spot = 0;
+        VERIFY_NRF_ERROR_CODE(hbd_SetTargetCurrent(target.flood, target.spot));
     }
 
-    if (pMode->setup.flood || pMode->setup.spot)
-        calculateTarget(pMode, pitch, &targets[FLOOD], &targets[SPOT]);
+    if (pMode->setup.flood || pMode->setup.spot || pMode->setup.sos)
+        calculateTarget(pMode, pitch, &target.flood, &target.spot);
 
     // clear error flags if leds are off
     if (!pMode->setup.flood)
@@ -854,12 +868,13 @@ uint32_t light_UpdateTargets(const light_mode_t* pMode, q15_t pitch, const light
 
 void light_Execute()
 {
-    static q18_14_t voltageFiltered;
+    static uint16_t lastPrescale;
+    uint16_t currentPrescale = prescale;
 
-    if (!updateFlag)
+    if (lastPrescale == currentPrescale)
         return;
 
-    updateFlag = false;
+    lastPrescale = currentPrescale;
     pwr_ClearActiveFlag(pwr_ACTIVELIGHT);
 
     // check if input voltage value is up to date
@@ -877,39 +892,19 @@ void light_Execute()
 
     while (pwr_GetInputVoltage(&voltage) != NRF_SUCCESS);   // conversion should be finished, if not wait
 
-    // filter input voltage, a dynamic filter is used with high time constant
-    // for small changes and low time constant for big changes. This way the
-    // limiter does not produce flickering output if the supply voltage drops
-    // due to draining battery, but still reacts fast enough on big voltage
-    // drops in adaptive mode.
-    /// to do: filter and limiter works fine in with 2 cells, but with 1 and 3 cells?
-    int_fast16_t diff = (voltageFiltered >> 4) - (int_fast16_t)voltage.inputVoltage;
-    for (uint_fast8_t i = 0; i < 4 ; i++)
-    {
-        if (abs(diff) < (32 << i) || i == 3)
-        {
-            voltageFiltered -= (voltageFiltered >> (4 - i));
-            voltageFiltered += (voltage.inputVoltage + sign(diff) * ((int16_t)16 << i)) << i;
-            break;
-        }
-    }
-    lightStatus.inputVoltage = voltageFiltered >> 4;
+    lightStatus.inputVoltage = voltageFilter(voltage.inputVoltage);
 
-    if (targets[FLOOD] == 0 && targets[SPOT] == 0)          // if light is off, nothing more to do
-        return;
-
-    uint8_t limitedTargets[2];
-
-    limitedTargets[FLOOD] = targets[FLOOD];                 // run targets through limiter
-    limitedTargets[SPOT] = targets[SPOT];
-    limiter(&lightStatus, &limitedTargets[FLOOD], &limitedTargets[SPOT]);
+    target_t limitedTarget;
+    limitedTarget.flood = target.flood;                 // run targets through limiter
+    limitedTarget.spot = target.spot;
+    limiter(&lightStatus, &limitedTarget.flood, &limitedTarget.spot);
                                                             // and finally send to driver
-    APP_ERROR_CHECK(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_TARGETSDL, 2, limitedTargets));
+    APP_ERROR_CHECK(hbd_SetTargetCurrent(limitedTarget.flood, limitedTarget.spot));
 }
 
 uint32_t light_CheckLedConfig(light_driverConfig_t* pLedConfig)
 {
-    uint8_t buffer[3];
+    hbd_config_t cfg;
     state_t oldState;
     uint32_t errCode;
 
@@ -922,10 +917,10 @@ uint32_t light_CheckLedConfig(light_driverConfig_t* pLedConfig)
     storage.drvConfig.spotCount = LIGHT_LEDCONFIG_UNKNOWN;
 
     // turn on led driver with 2*2/3 output current
-    buffer[0] = (HELENABASE_SLEEP_DISABLE<<HELENABASE_CRA_SLEEP_OFFSET) | (HELENABASE_ADCRATE_1S<<HELENABASE_CRA_ADCRATE_OFFSET);
-    buffer[1] = 171;
-    buffer[2] = 171;
-    VERIFY_NRF_ERROR_CODE(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 3, buffer));
+    cfg.sleepMode = HBD_SLEEP_MODE_OFF;
+    cfg.sampleRate = HBD_SAMPLERATE_1SPS;
+    VERIFY_NRF_ERROR_CODE(hbd_SetConfig(&cfg));
+    VERIFY_NRF_ERROR_CODE(hbd_SetTargetCurrent(171, 171));
 
     // now wait for ~100ms
     nrf_delay_ms(100);
@@ -942,21 +937,36 @@ uint32_t light_CheckLedConfig(light_driverConfig_t* pLedConfig)
             storage.drvConfig.spotCount = 0;
 
         // read duty cycle registers
-        if (storage.drvConfig.rev == LIGHT_DRIVERREV11)
+        if (storage.drvConfig.rev == LIGHT_DRIVERREV11 || storage.drvConfig.rev == LIGHT_DRIVERREV12)
         {
-            errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_DUTYCYCLELEFT, 2, buffer);
+            target_t dutyCycle;
+            errCode = hbd_ReadDutyCycles(&dutyCycle.flood, &dutyCycle.spot);
             if(errCode == NRF_SUCCESS)
             {
+                // In theory the output voltage in continuous current mode is V_out = V_in * DC.
+                // Due to losses the real output voltage is lower, therefore by ignoring the
+                // efficiency the calculated output voltage should be high enough to not deliver
+                // a to low count, but not high enough to deliver a to high count.
+
+                uint32_t ledVoltage;
+
                 if (storage.drvConfig.floodCount)
-                    storage.drvConfig.floodCount = buffer[0] < (HELENABASE_DC_MAX * 0.25) ? 0 : buffer[0] < (HELENABASE_DC_MAX * 0.75) ? 1 : 2;
-                if (storage.drvConfig.spotCount)///^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^- just bugfix
-                    storage.drvConfig.spotCount = buffer[1] < (HELENABASE_DC_MAX * 0.25) ? 0 : buffer[1] < (HELENABASE_DC_MAX * 0.75) ? 1 : 2;
+                {
+                    ledVoltage = cellCnt * NOM_CELL_VOLTAGE;
+                    ledVoltage *= dutyCycle.flood;
+                    ledVoltage /= HBD_DC_MAX;
+                    storage.drvConfig.floodCount = ledVoltage / NOM_LED_VOLTAGE;
+                }
+                if (storage.drvConfig.spotCount)
+                {
+                    ledVoltage = cellCnt * NOM_CELL_VOLTAGE;
+                    ledVoltage *= dutyCycle.spot;
+                    ledVoltage /= HBD_DC_MAX;
+                    storage.drvConfig.spotCount = ledVoltage / NOM_LED_VOLTAGE;
+                }
             }
         }
     }
-
-    // set default values if led count isn't known
-    // validateLedConfig(&storage.drvConfig);
 
     pLedConfig->floodCount = storage.drvConfig.floodCount;
     pLedConfig->spotCount = storage.drvConfig.spotCount;
@@ -966,12 +976,11 @@ uint32_t light_CheckLedConfig(light_driverConfig_t* pLedConfig)
 
     // turn of driver
     if (oldState == STATEOFF)
-        buffer[0] = (HELENABASE_SLEEP_ENABLE<<HELENABASE_CRA_SLEEP_OFFSET) | (HELENABASE_ADCRATE_1S<<HELENABASE_CRA_ADCRATE_OFFSET);
+        cfg.sleepMode = HBD_SLEEP_MODE_ON;
     else
-        buffer[0] = (HELENABASE_SLEEP_DISABLE<<HELENABASE_CRA_SLEEP_OFFSET) | (HELENABASE_ADCRATE_1S<<HELENABASE_CRA_ADCRATE_OFFSET);
-    buffer[1] = 0;
-    buffer[2] = 0;
-    VERIFY_NRF_ERROR_CODE(i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 3, buffer));
+        cfg.sleepMode = HBD_SLEEP_MODE_OFF;
+    VERIFY_NRF_ERROR_CODE(hbd_SetConfig(&cfg));
+    VERIFY_NRF_ERROR_CODE(hbd_SetTargetCurrent(0, 0));
 
     return errCode;
 }
@@ -981,18 +990,18 @@ uint32_t light_GetLimits(q8_t* pFloodLimit, q8_t* pSpotLimit)
     if (pFloodLimit == NULL || pSpotLimit == NULL)
         return NRF_ERROR_NULL;
 
-    *pFloodLimit = storage.currentLimits.flood;
-    *pSpotLimit = storage.currentLimits.spot;
+    *pFloodLimit = storage.currentLimit.flood;
+    *pSpotLimit = storage.currentLimit.spot;
 
     return NRF_SUCCESS;
 }
 
 uint32_t light_SetLimits(q8_t floodLimit, q8_t spotLimit)
 {
-    storage.currentLimits.flood = floodLimit;
-    storage.currentLimits.spot = spotLimit;
+    storage.currentLimit.flood = floodLimit;
+    storage.currentLimit.spot = spotLimit;
 
-    validateCurrentLimit(&storage.currentLimits);
+    validateCurrentLimit(&storage.currentLimit);
 
     writeStorage();
 

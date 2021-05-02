@@ -26,22 +26,22 @@ Register 0x02:
                             0..255: 0..100%
 
 Register 0x03..0x04:
-    Bit 15..13: not used
-    Bit 12:     maximum duty-cycle limit left side
-    Bit 11:     minimum duty-cycle limit left side
-    Bit 10..0:  output current left side
+    Bit 15..14: not used
+    Bit 13:     maximum duty-cycle limit left side
+    Bit 12:     minimum duty-cycle limit left side
+    Bit 11..0:  output current left side
                             0..4080: 0..100%
 
 Register 0x05..0x06:
-    Bit 15..13: not used
-    Bit 12:     maximum duty-cycle limit right side
-    Bit 11:     minimum duty-cycle limit right side
-    Bit 10..0:  output current right side
+    Bit 15..14: not used
+    Bit 13:     maximum duty-cycle limit right side
+    Bit 12:     minimum duty-cycle limit right side
+    Bit 11..0:  output current right side
                             0..4080: 0..100%
 
 Register 0x07..0x08:
-    Bit 15..13: not used
-    Bit 12..0:  temperature
+    Bit 15..12: not used
+    Bit 11..0:  temperature
                             0..4095: 0..1023.75K
 
 Register 0x09:

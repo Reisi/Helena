@@ -13,6 +13,8 @@
 #define I2C_H_INCLUDED
 
 /* Includes ------------------------------------------------------------------*/
+#include "stdint.h"
+#include "stdbool.h"
 
 /* Exported types ------------------------------------------------------------*/
 
@@ -26,7 +28,7 @@
 uint32_t i2c_Init(void);
 void i2c_EnableAutoRecover(bool enable);
 uint32_t i2c_read(uint8_t device_address, uint8_t register_address, uint8_t length, uint8_t *data);
-uint32_t i2c_write(uint8_t device_address, uint8_t register_address, uint8_t length, uint8_t *data);
+uint32_t i2c_write(uint8_t device_address, uint8_t register_address, uint8_t length, uint8_t const *data);
 
 #endif /* I2C_H_INCLUDED */
 

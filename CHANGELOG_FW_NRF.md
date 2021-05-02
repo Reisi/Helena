@@ -16,7 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
   now for HWREV22 and HWREV23, too.
 - added battery SOC and taillight power to measurement notification
 - temporary mode
-- hold button for 10 sec. will initiate factory reset
+- hold button for 10 sec. (from off state) will initiate factory reset
+- SOS mode for Helena, to enter press button for 10 sec. from an active mode
+- support for 1- and 3-cell li-ion batteries.
 
 ### Changed
 
@@ -24,9 +26,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ### Fixed
 - BLE_GATT_STATUS_ATTERR_CPS_PROC_ALR_IN_PROG leading to reset
+- automatic led count detection might deliver wrong led count
 
 ### Known Issues
-- automatic led count detection might deliver wrong led count
 - daisy chain: if quickly changing mode twice, the second change may not be 
   refused by the remote lamp.
 

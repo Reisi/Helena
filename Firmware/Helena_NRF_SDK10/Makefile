@@ -96,6 +96,7 @@ SRC_FILES += \
 	./src/custom_board.h \
 	./src/debug.c \
 	./src/fastmath.c \
+	./src/helena_base_driver.c \
 	./src/hmi.c \
 	./src/i2c.c \
 	./src/main.c \

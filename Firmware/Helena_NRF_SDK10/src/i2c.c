@@ -143,7 +143,7 @@ uint32_t i2c_read(uint8_t device_address, uint8_t register_address, uint8_t leng
     return errCode;
 }
 
-uint32_t i2c_write(uint8_t device_address, uint8_t register_address, uint8_t length, uint8_t *data)
+uint32_t i2c_write(uint8_t device_address, uint8_t register_address, uint8_t length, uint8_t const *data)
 {
     uint8_t buffer[I2CBUFFERSIZE];//, retry_cnt = 1;
     uint32_t errCode;
