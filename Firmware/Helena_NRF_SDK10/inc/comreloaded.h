@@ -17,7 +17,7 @@
 #define com_TXDisable()    (nrf_drv_timer_compare_int_disable(&timerInst, NRF_TIMER_CC_CHANNEL0))
 #define com_Off()          (nrf_timer_cc_read(timerInst.p_reg, NRF_TIMER_CC_CHANNEL2))
 
-#define COM_BUFFER  64      //size of fifo output buffer (must be 2^n)
+#define COM_BUFFER  32      //size of fifo output buffer (must be 2^n)
 
 ///////////////////// type definitions ////////////////////////////////////////
 typedef enum

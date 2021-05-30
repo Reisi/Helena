@@ -634,7 +634,7 @@ void app_error_handler(uint32_t error_code, uint32_t line_num, const uint8_t * p
 {
     volatile bool loop = true;
 #ifdef DEBUG
-    //loop = false; // no looping when debug flag is set
+    loop = false; // no looping when debug flag is set
 
     const char* pFile;
     pFile = strrchr((char*)p_file_name, '/');

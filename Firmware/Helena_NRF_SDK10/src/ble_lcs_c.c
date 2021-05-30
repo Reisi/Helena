@@ -10,7 +10,7 @@
 #define BLE_UUID_LCS_LF_CHARACTERISTIC      0x0103  /**< The UUID of the light feature characteristic */
 #define BLE_UUID_LCS_LCP_CHARACTERISTIC     0x0104  /**< The UUID of the light Control Point characteristic */
 
-#define TX_BUFFER_MASK       0x03                   /**< TX Buffer mask, must be a mask of contiguous zeroes, followed by contiguous sequence of ones: 000...111. */
+#define TX_BUFFER_MASK       0x01                   /**< TX Buffer mask, must be a mask of contiguous zeroes, followed by contiguous sequence of ones: 000...111. */
 #define TX_BUFFER_SIZE       (TX_BUFFER_MASK + 1)   /**< Size of the send buffer, which is 1 higher than the mask. */
 
 #define WRITE_MESSAGE_LENGTH  5 // 20                  /**< The maximum size of a control point cmd message, limited for due to lack of memory */

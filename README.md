@@ -1,6 +1,6 @@
 # Helena
 
-![Helena](Documentation/Img/title_small.jpg)
+![Helena](Documentation/Img/title_small.jpg) ![app](Documentation/Img/title_app.png)
 
 Helena is an alternative driver for the Yinding Headlight Cycling Lamp.
 

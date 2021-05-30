@@ -20,7 +20,7 @@
 /* Private defines -----------------------------------------------------------*/
 #define HID_INFO_FLAG_REMOTE_WAKE   (1<<0)
 #define HID_INFO_FLAG_NORM_CONN     (1<<1)
-#define TX_BUFFER_MASK       0x03                  /**< TX Buffer mask, must be a mask of contiguous zeroes, followed by contiguous sequence of ones: 000...111. */
+#define TX_BUFFER_MASK       0x01                  /**< TX Buffer mask, must be a mask of contiguous zeroes, followed by contiguous sequence of ones: 000...111. */
 #define TX_BUFFER_SIZE       (TX_BUFFER_MASK + 1)  /**< Size of the send buffer, which is 1 higher than the mask. */
 #define WRITE_MESSAGE_LENGTH BLE_CCCD_VALUE_LEN    /**< Length of the write message for CCCD. */
 

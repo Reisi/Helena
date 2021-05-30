@@ -349,7 +349,6 @@ static uint32_t updateModeConfig()
     chunk.p_data = &modeConfig;
     chunk.length_words = SIZE_IN_WORDS(modeConfig);
     errCode = fds_update(&descriptor, key, 1, &chunk);
-    APP_ERROR_CHECK(errCode);
     if (errCode == NRF_ERROR_NO_MEM)    // run garbage collection if no memory available, write operations will be tried again in fds event handler
     {
         errCode = fds_gc();
@@ -415,14 +414,14 @@ static void convertModetoBtleMode(lightMode_t const* pMode, btle_LcsModeConfig_t
         if (pMode->setup.lightPitchCompensation)
             pBtleMode->illuminanceInLux = pMode->illuminanceInLux;
         else
-            pBtleMode->intensityInPercent = (pMode->intensity * 100) / 256;
+            pBtleMode->intensityInPercent = (pMode->intensity * 100 + 128) / 256;
 #elif defined BILLY
         pBtleMode->setup.mainBeam = pMode->setup.lightMainBeam;
         pBtleMode->setup.extendedMainBeam = false;
         pBtleMode->setup.highBeam = pMode->setup.lightHighBeam;
         pBtleMode->setup.daylight = false;
-        pBtleMode->mainBeamIntensityInPercent = (pMode->intensityMainBeam * 100) / 256;
-        pBtleMode->highBeamIntensityInPercent = (pMode->intensityHighBeam * 100) / 256;
+        pBtleMode->mainBeamIntensityInPercent = (pMode->intensityMainBeam * 100 + 128) / 256;
+        pBtleMode->highBeamIntensityInPercent = (pMode->intensityHighBeam * 100 + 128) / 256;
 #endif // BILLY
         pBtleMode->setup.taillight = pMode->setup.comTaillight;
         pBtleMode->setup.brakelight = pMode->setup.comBrakelight;
@@ -446,14 +445,14 @@ static bool convertBtleModeToMode(btle_LcsModeConfig_t const* pBtleMode, lightMo
         if (pMode->setup.lightPitchCompensation)
             pMode->illuminanceInLux = pBtleMode->illuminanceInLux;
         else
-            pMode->intensity = (pBtleMode->intensityInPercent * 256) / 100;
+            pMode->intensity = (pBtleMode->intensityInPercent * 256 + 50) / 100;
 #elif defined BILLY
         pMode->setup.lightMainBeam = pBtleMode->setup.mainBeam;
         pMode->setup.lightExtendedMainBeam = false; //pBtle->setup.extendedMainBeam;
         pMode->setup.lightHighBeam = pBtleMode->setup.highBeam;
         pMode->setup.lightDaylight = false; //pBtle->setup.daylight;
-        pMode->intensityMainBeam = (pBtleMode->mainBeamIntensityInPercent * 256) / 100;
-        pMode->intensityHighBeam = (pBtleMode->highBeamIntensityInPercent * 256) / 100;
+        pMode->intensityMainBeam = (pBtleMode->mainBeamIntensityInPercent * 256 + 50) / 100;
+        pMode->intensityHighBeam = (pBtleMode->highBeamIntensityInPercent * 256 + 50) / 100;
 #endif // BILLY
         pMode->setup.comTaillight = pBtleMode->setup.taillight;
         pMode->setup.comBrakelight = pBtleMode->setup.brakelight;
@@ -640,15 +639,23 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
             return;
         }
         else
-            rsp.retCode = BTLE_RET_INVALID;
+            rsp.retCode = BTLE_RET_FAILED;
     case BTLE_EVT_LCSCP_REQ_SENS_OFFSET:
-        if (ms_GetSensorOffset((ms_accelerationData_t*)&rsp.responseParams.sensOffset) == NRF_SUCCESS)
+        errCode = ms_GetSensorOffset((ms_accelerationData_t*)&rsp.responseParams.sensOffset);
+        if (errCode == NRF_SUCCESS)
             rsp.retCode = BTLE_RET_SUCCESS;
+        else if (errCode == NRF_ERROR_NOT_FOUND)
+        {
+            rsp.responseParams.sensOffset.x = 0;
+            rsp.responseParams.sensOffset.y = 0;
+            rsp.responseParams.sensOffset.z = 0;
+            rsp.retCode = BTLE_RET_SUCCESS;
+        }
         else
-            rsp.retCode = BTLE_RET_INVALID;
+            rsp.retCode = BTLE_RET_FAILED;
         break;
     case BTLE_EVT_LCSCP_CALIB_SENS_OFFSET:
-        if (isWritePending())
+        if (isWritePending() || state.power < POWER_IDLE)
         {
             rsp.retCode = BTLE_RET_FAILED;
             break;
@@ -662,11 +669,11 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
         {
             rsp.retCode = BTLE_RET_SUCCESS;
 #ifdef HELENA
-            rsp.responseParams.currentLimits.floodInPercent = (limits[0] * 100) >> 8;
-            rsp.responseParams.currentLimits.spotInPercent = (limits[1] * 100) >> 8;
+            rsp.responseParams.currentLimits.floodInPercent = (limits[0] * 100 + 128) / 256;
+            rsp.responseParams.currentLimits.spotInPercent = (limits[1] * 100 + 128) / 256;
 #elif defined BILLY
-            rsp.responseParams.currentLimits.mainBeamInPercent = (limits[0] * 100) >> 8;
-            rsp.responseParams.currentLimits.highBeamInPercent = (limits[1] * 100) >> 8;
+            rsp.responseParams.currentLimits.mainBeamInPercent = (limits[0] * 100 + 128) / 256;
+            rsp.responseParams.currentLimits.highBeamInPercent = (limits[1] * 100 + 128) / 256;
 #endif // BILLY
         }
         else
@@ -674,11 +681,11 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
     }   break;
     case BTLE_EVT_LCSCP_SET_LIMITS:
 #ifdef HELENA
-        if (light_SetLimits((q8_t)((pEvt->lcscpEventParams.currentLimits.floodInPercent * 256) / 100),
-                            (q8_t)((pEvt->lcscpEventParams.currentLimits.spotInPercent * 256) / 100)) == NRF_SUCCESS)
+        if (light_SetLimits((q8_t)((pEvt->lcscpEventParams.currentLimits.floodInPercent * 256 + 50) / 100),
+                            (q8_t)((pEvt->lcscpEventParams.currentLimits.spotInPercent * 256 + 50) / 100)) == NRF_SUCCESS)
 #elif defined BILLY
-        if (light_SetLimits((q8_t)((pEvt->lcscpEventParams.currentLimits.mainBeamInPercent * 256) / 100),
-                            (q8_t)((pEvt->lcscpEventParams.currentLimits.highBeamInPercent * 256) / 100)) == NRF_SUCCESS)
+        if (light_SetLimits((q8_t)((pEvt->lcscpEventParams.currentLimits.mainBeamInPercent * 256 + 50) / 100),
+                            (q8_t)((pEvt->lcscpEventParams.currentLimits.highBeamInPercent * 256 + 50) / 100)) == NRF_SUCCESS)
 #endif // BILLY
             rsp.retCode = BTLE_RET_SUCCESS;
         else
@@ -919,7 +926,7 @@ static void convertV13ToMode(lightConfig_t* pNew, helenaConfigV13_t const* pOld)
             if (pModeNew->setup.lightPitchCompensation)
                 pModeNew->illuminanceInLux = pModeOld->intensity;
             else
-                pModeNew->intensity = (pModeOld->intensity * 256) / 100;
+                pModeNew->intensity = (pModeOld->intensity * 256 + 50) / 100;
         }
 
         pModeOld++;
@@ -1622,13 +1629,16 @@ int main(void)
 
     btle_lcsFeature_t features;
 #ifdef HELENA
-    features.pitchSupported = 1;
+    features.pitchSupported = 1;    /// TODO: check acc init
+    features.cloneSupported = 1;    /// TODO: maybe just if leds on both drivers available?
     features.floodSupported = ledConfiguration.floodCount ? 1 : 0;  // supported if unknown
     features.spotSupported = ledConfiguration.spotCount ? 1 : 0;    // supported if unknown
 #elif defined BILLY
     features.mainBeamSupported = ledConfiguration.mainBeamCount ? 1 : 0;  // supported if unknown
     features.highBeamSupported = ledConfiguration.highBeamCount ? 1 : 0;    // supported if unknown
 #endif // defined
+    features.taillightSupported = 1;
+    features.brakelightSupported = 1;   /// TODO: check acc init
     char const* pDrvRev = ledConfiguration.rev == LIGHT_DRIVERREVUNKNOWN ? NULL :
                           pDriverRevision[ledConfiguration.rev];
     btle_Init(false, pDrvRev, &features, btleEventHandler);

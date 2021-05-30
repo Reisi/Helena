@@ -260,15 +260,19 @@ typedef void (*btle_eventHandler_t)(btle_event_t * pEvt);
 typedef struct
 {
 #ifdef HELENA
-    uint8_t floodSupported    : 1;
-    uint8_t spotSupported     : 1;
-    uint8_t pitchSupported    : 1;
+    uint8_t floodSupported       : 1;
+    uint8_t spotSupported        : 1;
+    uint8_t pitchSupported       : 1;
+    uint8_t cloneSupported       : 1;
     /// TODO: expand!
 #elif defined BILLY
-    uint8_t mainBeamSupported : 1;
-    uint8_t highBeamSupported : 1;
-
+    uint8_t mainBeamSupported    : 1;
+    uint8_t extMainBeamSupported : 1;
+    uint8_t highBeamSupported    : 1;
+    uint8_t daylightSupported    : 1;
 #endif //BILLY
+    uint8_t taillightSupported   : 1;
+    uint8_t brakelightSupported  : 1;
 } btle_lcsFeature_t;
 
 /**< scan mode */

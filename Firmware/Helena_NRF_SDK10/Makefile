@@ -43,7 +43,7 @@ SHAREDFLAGS += \
 	-DSOFTDEVICE_PRESENT \
 	-DBLE_STACK_SUPPORT_REQD \
 	-DMPU6050 \
-	-D__STACK_SIZE=0x600 \
+	-D__STACK_SIZE=0x758 \
 	-D__HEAP_SIZE=0 \
 	-DARM_MATH_CM0 \
 	-O3 \
@@ -224,6 +224,8 @@ INC_DIRS += \
 OBJ := $(patsubst %,%.o,$(basename $(SRC_FILE_NAMES)))
 OBJ_FILES := $(addprefix $(BUILD_DIR)/,$(OBJ))
 
+DEP = $(OBJ:%.o=%.d)
+
 INCLUDES := $(patsubst %,-I%,$(INC_DIRS))
 
 vpath %.c $(SRC_DIRS)
@@ -241,9 +243,11 @@ $(BUILD_DIR)/$(HELENA_PROJECT_NAME).elf: $(OBJ_FILES) | $(BUILD_DIR)
 	@echo Linking ELF file: $(notdir $@)
 	@'$(CC)' $(LDFLAGS) $(OBJ_FILES) $(LIB_FILES) -lm -o $@
 
+-include $(DEP)
+
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
 	@echo Compiling file: $(notdir $<)
-	@'$(CC)' $(CFLAGS) $(INCLUDES) -c -o $@ $<
+	@'$(CC)' $(CFLAGS)  $(INCLUDES) -MMD -c -o $@ $<
 
 $(BUILD_DIR)/%.o: %.S | $(BUILD_DIR)
 	@echo Compiling file: $(notdir $<)

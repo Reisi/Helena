@@ -10,7 +10,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ### Fixed
 ### Known Issues
 
-## [2.2.0] - Unreleased
+## [2.2.1] - 2021-05-30
+### Added
+
+### Changed
+
+### Removed
+
+### Fixed
+- wrong placed error check on data storage
+- billina not transmitting correct high beam intensity
+- features incomplete
+- rounding error at intensity converting
+- wrong error code if sensor offset not done yet
+
+### Known Issues
+- daisy chain: if quickly changing mode twice, the second change may not be 
+  refused by the remote lamp.
+
+## [2.2.0] - 2021-05-02
 ### Added
 - improved status led, blue blinking while scanning, red and blue active works
   now for HWREV22 and HWREV23, too.

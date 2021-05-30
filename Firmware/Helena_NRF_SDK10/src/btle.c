@@ -647,12 +647,19 @@ static void servicesInit(char const* pDrvRev, btle_lcsFeature_t* pFeature)
     lcsInit.feature.hlmt_features.flood_supported = pFeature->floodSupported;
     lcsInit.feature.hlmt_features.spot_supported = pFeature->spotSupported;
     lcsInit.feature.hlmt_features.pitch_comp_supported = pFeature->pitchSupported;
+    lcsInit.feature.hlmt_features.driver_cloning_supported = pFeature->cloneSupported;
+    lcsInit.feature.hlmt_features.external_taillight_supported = pFeature->taillightSupported;
+    lcsInit.feature.hlmt_features.external_brakelight_supported = pFeature->brakelightSupported;
     lcsInit.feature.stp_features.sensor_calibration_supported = pFeature->pitchSupported;
 #elif defined BILLY
     lcsInit.feature.light_type = BLE_LCS_LT_BIKE_LIGHT;
     lcsInit.feature.bk_features.main_beam_supported = pFeature->mainBeamSupported;
+    lcsInit.feature.bk_features.extended_main_beam_supported = pFeature->extMainBeamSupported;
     lcsInit.feature.bk_features.high_beam_supported = pFeature->highBeamSupported;
-    lcsInit.feature.stp_features.sensor_calibration_supported = 1;  /// TODO: only allow for successful initialization of sensor
+    lcsInit.feature.bk_features.daylight_supported = pFeature->daylightSupported;
+    lcsInit.feature.bk_features.external_taillight_supported = pFeature->taillightSupported;
+    lcsInit.feature.bk_features.external_brakelight_supported = pFeature->brakelightSupported;
+    lcsInit.feature.stp_features.sensor_calibration_supported = pFeature->brakelightSupported;
 #endif // defined
     lcsInit.feature.cfg_features.mode_change_supported = 1;
     lcsInit.feature.cfg_features.mode_config_supported = 1;
@@ -1233,7 +1240,7 @@ void btle_StackInit()
     // Enable BLE stack.
     ble_enable_params_t bleEnableParams;
     memset(&bleEnableParams, 0, sizeof(ble_enable_params_t));
-    bleEnableParams.gatts_enable_params.attr_tab_size   = 0x400; //BLE_GATTS_ATTR_TAB_SIZE_DEFAULT;
+    bleEnableParams.gatts_enable_params.attr_tab_size   = 0x390; //BLE_GATTS_ATTR_TAB_SIZE_DEFAULT;
     bleEnableParams.gatts_enable_params.service_changed = true;
     errCode = sd_ble_enable(&bleEnableParams);
     APP_ERROR_CHECK(errCode);
@@ -1404,7 +1411,7 @@ uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData)
     {
         notifyData.flags.bk.intensity_present = 1;
         notifyData.bk.mode.main_beam_intensity = pData->mode.mainBeamIntensityInPercent;
-        notifyData.bk.mode.main_beam_intensity = pData->mode.highBeamIntensityInPercent;
+        notifyData.bk.mode.high_beam_intensity = pData->mode.highBeamIntensityInPercent;
     }
     if (pData->mode.setup.mainBeam || pData->mode.setup.extendedMainBeam)
     {
