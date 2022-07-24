@@ -52,7 +52,12 @@ typedef enum
     HMI_EVT_R51_VOLDOWN,
     HMI_EVT_R51_NEXTTRACK,
     HMI_EVT_R51_PREVTRACK,
-    HMI_EVT_R51_MODE
+    HMI_EVT_R51_MODE,
+    HMI_EVT_AUV_PLAYPAUSE,
+    HMI_EVT_AUV_VOLUP,
+    HMI_EVT_AUV_VOLDOWN,
+    HMI_EVT_AUV_NEXTTRACK,
+    HMI_EVT_AUV_PREVTRACK
 } hmi_eventType_t;
 
 /**@brief     Event handler type.

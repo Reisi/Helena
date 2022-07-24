@@ -169,6 +169,12 @@ static void ble_stack_init(bool init_softdevice)
 
     err_code = softdevice_sys_evt_handler_set(sys_evt_dispatch);
     APP_ERROR_CHECK(err_code);
+
+    // enable workaround for old rev
+    ble_opt_t cpuBlockingEnable;
+    cpuBlockingEnable.common_opt.radio_cpu_mutex.enable = 1;
+    err_code = sd_ble_opt_set(BLE_COMMON_OPT_RADIO_CPU_MUTEX, &cpuBlockingEnable);
+    APP_ERROR_CHECK(err_code);
 }
 
 

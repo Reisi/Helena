@@ -47,7 +47,8 @@ typedef enum
     CENTRAL_NONE = 0,               // no device connected
     CENTRAL_LIGHT,                  // light device
     CENTRAL_XIAOMI,                 // Xiaomi Yi Remote
-    CENTRAL_R51                     // R51 remote
+    CENTRAL_R51,                    // R51 remote
+    CENTRAL_AUVISO                  // Auviso remote
 } centralDevice_t;
 
 typedef struct
@@ -55,7 +56,8 @@ typedef struct
     btle_eventHandler_t handler;    // event handler given at initialization
     btle_scanMode_t scanConfig;     // current scan configuration
     ble_scan_mode_t scanMode;       // current scan mode
-    centralDevice_t centralDevice;  // current device type in central connetion
+    centralDevice_t centralDevice;  // current device type in central connection
+    bool allowPeripheralBonding;    // indicating if the bonding for peripheral is allowed
     uint16_t connHandleCentral;     // connection handle related to central connection
     uint16_t connHandlePeriph;      // connection handle related to peripheral connection
 } state_t;
@@ -80,7 +82,23 @@ typedef struct
 
 #define LCS_NOTIFY_PERIOD               APP_TIMER_TICKS(1000, APP_TIMER_PRESCALER)
 
+#define LOG(...)                        //SEGGER_RTT_printf(0, __VA_ARGS__)
+
 /* Private variables ---------------------------------------------------------*/
+static const ble_gap_sec_params_t secParamBond =
+{
+    .bond              = true,
+    .mitm              = false,
+    .io_caps           = BLE_GAP_IO_CAPS_NONE,
+    .oob               = false,
+    .min_key_size      = 7,
+    .max_key_size      = 16,
+    .kdist_periph.enc  = 1,
+    .kdist_periph.id   = 1,
+    .kdist_central.enc = 1,
+    .kdist_central.id  = 1,
+};
+
 static ble_cgw_t cgwGattsData;                  // gatt server handles for the com gateway service
 BLE_LCS_DEF(lcsGattsData, NUM_OF_CONNECTIONS);  // gatt server handles for the light control service
 
@@ -139,7 +157,7 @@ static void onCentralEvt(ble_evt_t * pBleEvt)
                 APP_ERROR_CHECK(errCode);
             }
         }
-        else if (linkStatus.connected && !linkStatus.bonded && !linkStatus.encrypted)
+        else if (linkStatus.connected && !linkStatus.encrypted)
         {
             if (linkStatus.bonded)
                 errCode = pm_link_secure(state.connHandleCentral, false);// for non R51 devices secure link
@@ -159,7 +177,7 @@ static void onCentralEvt(ble_evt_t * pBleEvt)
         }
 
         // activate notifications here, and not in the database discovery event handler (not available with hardcoded devices)
-        if (state.centralDevice == CENTRAL_XIAOMI || state.centralDevice == CENTRAL_R51)
+        if (state.centralDevice == CENTRAL_XIAOMI || state.centralDevice == CENTRAL_R51 || state.centralDevice == CENTRAL_AUVISO)
         {
             errCode = ble_hids_c_report_notif_enable(&hidsGattcData, 2, true);
             APP_ERROR_CHECK(errCode);
@@ -171,7 +189,7 @@ static void onCentralEvt(ble_evt_t * pBleEvt)
         if (pBleEvt->evt.gap_evt.params.timeout.src == BLE_GAP_TIMEOUT_SRC_CONN)
         {
             // if connection failed central device has to be reset
-            if (state.centralDevice == CENTRAL_XIAOMI || state.centralDevice == CENTRAL_R51)
+            if (state.centralDevice == CENTRAL_XIAOMI || state.centralDevice == CENTRAL_R51 || state.centralDevice == CENTRAL_AUVISO)
                 hidsGattcData.conn_handle = BLE_CONN_HANDLE_INVALID;
             state.centralDevice = CENTRAL_NONE;
             /// TODO: restart scanning
@@ -254,9 +272,7 @@ static void onPeriphEvt(ble_evt_t * pBleEvt)
  */
 static void bleEvtDispatch(ble_evt_t * pBleEvt)
 {
-    //SEGGER_RTT_printf(0, "evt %d\r\n", pBleEvt->header.evt_id);
-    //if (pBleEvt->header.evt_id == BLE_GAP_EVT_DISCONNECTED)
-    //    SEGGER_RTT_printf(0, "  rsn %d\r\n", pBleEvt->evt.gap_evt.params.disconnected.reason);
+    LOG("[BTLE]: evt 0x%02x\r\n", pBleEvt->header.evt_id);
 
     ble_conn_state_on_ble_evt(pBleEvt);
     uint8_t role = ble_conn_state_role(pBleEvt->evt.gap_evt.conn_handle);
@@ -264,8 +280,21 @@ static void bleEvtDispatch(ble_evt_t * pBleEvt)
     // not possible to reconnect to R51 remotes after bonding, but they won't
     // disconnect if bonding is not performed, so let's just ignore the
     // request until I have a better idea.
-    if (role != BLE_GAP_ROLE_CENTRAL || state.centralDevice != CENTRAL_R51 ||
-        pBleEvt->header.evt_id != BLE_GAP_EVT_SEC_REQUEST)
+    if (role == BLE_GAP_ROLE_CENTRAL && state.centralDevice == CENTRAL_R51 && pBleEvt->header.evt_id == BLE_GAP_EVT_SEC_REQUEST)
+    {
+
+    }
+    // if a bonding request is received in peripheral connection, the security
+    // parameters have to be changed if bonding is not allowed.
+    else if (role == BLE_GAP_ROLE_PERIPH && pBleEvt->header.evt_id == BLE_GAP_EVT_SEC_PARAMS_REQUEST && !state.allowPeripheralBonding)
+    {
+        APP_ERROR_CHECK(pm_sec_params_set(NULL));
+        pm_ble_evt_handler(pBleEvt);
+        ble_gap_sec_params_t secParams;
+        secParams = secParamBond;
+        APP_ERROR_CHECK(pm_sec_params_set(&secParams));
+    }
+    else
         pm_ble_evt_handler(pBleEvt);
 
     // database discovery and light control service (client and server) are used in both directions
@@ -303,6 +332,56 @@ static void sysEvtDispatch(uint32_t sysEvt)
 #endif
 }
 
+static pm_peer_id_t nextCentralPeerIdGet(pm_peer_id_t peerId)
+{
+    uint32_t errCode;
+    pm_peer_data_bonding_t bondData;
+    pm_peer_data_t peerData;
+    peerData.length_words = PM_BONDING_DATA_N_WORDS();
+    peerData.data.p_bonding_data = &bondData;
+    peerData.data_type = PM_PEER_DATA_ID_BONDING;
+
+    while (1)
+    {
+        peerId = pm_next_peer_id_get(peerId);
+        if (peerId == PM_PEER_ID_INVALID)
+            return peerId;
+
+
+        errCode = pm_peer_data_get(peerId, PM_PEER_DATA_ID_BONDING, &peerData);
+        if (errCode != NRF_SUCCESS && errCode != NRF_ERROR_NOT_FOUND)
+            APP_ERROR_HANDLER(errCode);
+
+        if (peerData.data.p_bonding_data->own_role == BLE_GAP_ROLE_CENTRAL)
+            return peerId;
+    }
+}
+
+static void deleteOtherCentrals(pm_peer_id_t centralToKeep)
+{
+    pm_peer_id_t peerId = nextCentralPeerIdGet(PM_PEER_ID_INVALID);
+    while (peerId != PM_PEER_ID_INVALID)
+    {
+        if (peerId != centralToKeep)
+        {
+            uint16_t connHandle;
+            uint32_t errCode;
+            // disconnect before delete
+            errCode = pm_conn_handle_get(peerId, &connHandle);
+            APP_ERROR_CHECK(errCode);
+            if (connHandle != BLE_CONN_HANDLE_INVALID)
+            {
+                errCode = sd_ble_gap_disconnect(connHandle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+                if (errCode != NRF_SUCCESS && errCode != BLE_ERROR_INVALID_CONN_HANDLE)
+                    APP_ERROR_HANDLER(errCode);        //^- already disconnected but not received event yet
+            }
+
+            pm_peer_delete(peerId);
+        }
+        peerId = nextCentralPeerIdGet(peerId);
+    }
+}
+
 /**@brief Function for handling Peer Manager events.
  *
  * @param[in] p_evt  Peer Manager event.
@@ -324,6 +403,9 @@ static void pmEvtHandler(pm_evt_t const * pEvt)
             switch (pEvt->params.link_secure_failed_evt.error.error.pm_sec_error)
             {
                 case PM_SEC_ERROR_CODE_PIN_OR_KEY_MISSING:
+                    // Reject if bonding is not allowed
+                    if (!state.allowPeripheralBonding)
+                        break;
                     // Rebond if one party has lost its keys.
                     errCode = pm_link_secure(pEvt->conn_handle, true);
                     if (errCode != NRF_ERROR_INVALID_STATE)
@@ -370,7 +452,11 @@ static void pmEvtHandler(pm_evt_t const * pEvt)
         break;
 
     case PM_EVT_BONDED_PEER_CONNECTED:
+        LOG("[BTLE]: Peer connected \r\n");
+        break;
     case PM_EVT_LINK_SECURED:
+        LOG("[BTLE]: link secured %d\r\n", pEvt->params.link_secured_evt.procedure);
+        break;
     case PM_EVT_PEER_DATA_UPDATED:
     case PM_EVT_LOCAL_DB_CACHE_APPLIED:
     case PM_EVT_SERVICE_CHANGED_INDICATION_SENT:
@@ -396,21 +482,7 @@ static void peerManagerInit(bool eraseBonds)
         pm_peer_delete_all();
     }
 
-    ble_gap_sec_params_t secParam;
-    memset(&secParam, 0, sizeof(ble_gap_sec_params_t));
-
-    // just works Security parameters to be used for all security procedures.
-    secParam.bond              = true;
-    secParam.mitm              = false;
-    secParam.io_caps           = BLE_GAP_IO_CAPS_NONE;
-    secParam.oob               = false;
-    secParam.min_key_size      = 7;
-    secParam.max_key_size      = 16;
-    secParam.kdist_periph.enc  = 1;
-    secParam.kdist_periph.id   = 0;
-    secParam.kdist_central.enc = 1;
-    secParam.kdist_central.id  = 0;
-
+    ble_gap_sec_params_t secParam = secParamBond;
     errCode = pm_sec_params_set(&secParam);
     APP_ERROR_CHECK(errCode);
 
@@ -522,7 +594,8 @@ static void lcsCpEventHandler(ble_lcs_ctrlpt_t * pLcsCtrlpt,
         break;
     case BLE_LCS_CTRLPT_EVT_CNFG_GROUP:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_CONFIG_GROUP;
-        evt.lcscpEventParams.groupConfig = pEvt->p_params->group_config;
+        evt.lcscpEventParams.groupConfig.numOfModes = pEvt->p_params->group_config.number_of_modes;
+        evt.lcscpEventParams.groupConfig.pNumOfModesPerGroup = pEvt->p_params->group_config.p_list_of_modes_per_group;
         break;
     case BLE_LCS_CTRLPT_EVT_REQ_LED_CNFG:
         evt.subEvt.lcscp = BTLE_EVT_LCSCP_REQ_LED_CONFIG;
@@ -670,8 +743,13 @@ static void servicesInit(char const* pDrvRev, btle_lcsFeature_t* pFeature)
     lcsInit.feature.stp_features.current_limitation_supported = 1;
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lm_attr_md.cccd_write_perm);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lf_attr_md.read_perm);
+#ifdef DEBUG    // disable encryption for control point in debug mode
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lcp_attr_md.cccd_write_perm);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&lcsInit.lcs_lcp_attr_md.write_perm);
+#else
+    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&lcsInit.lcs_lcp_attr_md.cccd_write_perm);
+    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&lcsInit.lcs_lcp_attr_md.write_perm);
+#endif // DEBUG
     errCode = ble_lcs_init(&lcsGattsData, NUM_OF_CONNECTIONS, &lcsInit);
     APP_ERROR_CHECK(errCode);
 
@@ -750,9 +828,9 @@ static void discoveryInit()
  */
 static void hidsCXiaomiEventHandler(ble_hids_c_t * pBleHidsC, ble_hids_c_evt_t * pEvt)
 {
-#define VOLUME_UP   (1<<6)
-#define VOLUME_DOWN (1<<7)
-#define BUTTONPRESS_LONG   APP_TIMER_TICKS(500, APP_TIMER_PRESCALER)
+#define VOLUME_UP           (1<<6)
+#define VOLUME_DOWN         (1<<7)
+#define BUTTONPRESS_LONG    APP_TIMER_TICKS(500, APP_TIMER_PRESCALER)
 
     if (pEvt->evt_type != BLE_HIDS_C_EVT_REPORT_NOTIFICATION || pEvt->params.report.index != 2)
         return;
@@ -782,46 +860,9 @@ static void hidsCXiaomiEventHandler(ble_hids_c_t * pBleHidsC, ble_hids_c_evt_t *
 
     lastState = buttonState;
 
-
-    /*static uint32_t lastPressVolUp, lastPressVolDown;
-
-    // check if any button has changed its state to pressed
-    if (buttonState & VOLUME_UP)
-        (void)app_timer_cnt_get(&lastPressVolUp);
-    if (buttonState & VOLUME_DOWN)
-        (void)app_timer_cnt_get(&lastPressVolDown);
-    // if button are released again, check time they were pressed and send
-    // proper event to application
-    if (lastPressVolUp && !(buttonState & VOLUME_UP))  // volume up button has been released
-    {
-        uint32_t timestamp;
-        btle_event_t evt;
-
-        (void)app_timer_cnt_get(&timestamp);
-        (void)app_timer_cnt_diff_compute(timestamp, lastPressVolUp, &timestamp);
-
-        evt.connHandle = pBleHidsC->conn_handle;
-        evt.evt = BTLE_EVT_HID;
-        evt.subEvt.hid = timestamp > BUTTONPRESS_LONG ? BTLE_EVT_HID_XIA_MAIN_LONG : BTLE_EVT_HID_XIA_MAIN_SHORT;
-        state.handler(&evt);
-
-        lastPressVolUp = 0;
-    }
-    if (lastPressVolDown && !(buttonState & VOLUME_DOWN))  // volume up button has been released
-    {
-        uint32_t timestamp;
-        btle_event_t evt;
-
-        (void)app_timer_cnt_get(&timestamp);
-        (void)app_timer_cnt_diff_compute(timestamp, lastPressVolDown, &timestamp);
-
-        evt.connHandle = pBleHidsC->conn_handle;
-        evt.evt = BTLE_EVT_HID;
-        evt.subEvt.hid = timestamp > BUTTONPRESS_LONG ? BTLE_EVT_HID_XIA_SEC_LONG : BTLE_EVT_HID_XIA_SEC_SHORT;
-        state.handler(&evt);
-
-        lastPressVolDown = 0;
-    }*/
+#undef VOLUME_UP
+#undef VOLUME_DOWN
+#undef BUTTONPRESS_LONG
 }
 
 /** @brief Event handler to process report from the R51 Remote Control
@@ -832,7 +873,7 @@ static void hidsCXiaomiEventHandler(ble_hids_c_t * pBleHidsC, ble_hids_c_evt_t *
  */
 static void hidsCR51EventHandler(ble_hids_c_t * pBleHidsC, ble_hids_c_evt_t * pEvt)
 {
-#define USAGE_CONSUMER_CONTROL  0x01    // sent by clock on the mode button
+#define USAGE_CONSUMER_CONTROL  0x01    // sent by click on the mode button
 #define USAGE_PLAY_PAUSE        0xCD    // sent by click on the play/pause button
 #define USAGE_VOLUME_INCREMENT  0xE9    // sent by single click (and when keep pressed) on the volume up button
 #define USAGE_VOLUME_DECREMENT  0xEA    // sent by single click (and when keep pressed) on the volume down button
@@ -872,6 +913,65 @@ static void hidsCR51EventHandler(ble_hids_c_t * pBleHidsC, ble_hids_c_evt_t * pE
     }
 
     state.handler(&evt);
+
+#undef USAGE_CONSUMER_CONTROL
+#undef USAGE_PLAY_PAUSE
+#undef USAGE_VOLUME_INCREMENT
+#undef USAGE_VOLUME_DECREMENT
+#undef USAGE_SCAN_NEXT_TRACK
+#undef USAGE_SCAN_PREV_TRACK
+}
+
+/** @brief Event handler to process report from the Auviso Remote Control
+ * @note This remote sends an event with the usage type, so no button handling is nescessary
+ *
+ * @param[in] connHandle  the connection handle this event relates to
+ * @param[in] usage the state of the buttons
+ */
+static void hidsCAuvisoEventHandler(ble_hids_c_t * pBleHidsC, ble_hids_c_evt_t * pEvt)
+{
+#define USAGE_PLAY_PAUSE        0xCD    // sent by click on the play/pause button
+#define USAGE_VOLUME_INCREMENT  0xE9    // sent by single click on the volume up button
+#define USAGE_VOLUME_DECREMENT  0xEA    // sent by single click on the volume down button
+#define USAGE_SCAN_NEXT_TRACK   0xB5    // sent by single click on the next track button
+#define USAGE_SCAN_PREV_TRACK   0xB6    // sent by single click on the previous track button
+
+    if (pEvt->evt_type != BLE_HIDS_C_EVT_REPORT_NOTIFICATION || pEvt->params.report.index != 2)
+        return;
+
+    btle_event_t evt;
+
+    evt.connHandle = pBleHidsC->conn_handle;
+    evt.evt = BTLE_EVT_HID;
+
+    switch (pEvt->params.report.p_report[0])
+    {
+    case USAGE_PLAY_PAUSE:
+        evt.subEvt.hid = BTLE_EVT_HID_AUV_PLAYPAUSE;
+        break;
+    case USAGE_VOLUME_INCREMENT:
+        evt.subEvt.hid = BTLE_EVT_HID_AUV_VOL_UP;
+        break;
+    case USAGE_VOLUME_DECREMENT:
+        evt.subEvt.hid = BTLE_EVT_HID_AUV_VOL_DOWN;
+        break;
+    case USAGE_SCAN_NEXT_TRACK:
+        evt.subEvt.hid = BTLE_EVT_HID_AUV_NEXT_TRACK;
+        break;
+    case USAGE_SCAN_PREV_TRACK:
+        evt.subEvt.hid = BTLE_EVT_HID_AUV_PREV_TRACK;
+        break;
+    default:
+        return; // no event for this cases
+    }
+
+    state.handler(&evt);
+
+#undef USAGE_PLAY_PAUSE
+#undef USAGE_VOLUME_INCREMENT
+#undef USAGE_VOLUME_DECREMENT
+#undef USAGE_SCAN_NEXT_TRACK
+#undef USAGE_SCAN_PREV_TRACK
 }
 
 void lcsCEventHandler(ble_lcs_c_t * pBleLcsC, ble_lcs_c_evt_t * pEvt)
@@ -993,7 +1093,8 @@ void lcsCErrorHandler(ble_lcs_c_t * pBleLcsC, ble_lcs_c_error_evt_t * pEvt)
     case BLE_LCS_C_ERROR_EVT_LCM_NOTIFY:
     case BLE_LCS_C_ERROR_EVT_LCCP_IND:
     case BLE_LCS_C_ERROR_EVT_LCCP_WRITE:
-        if (pEvt->data.gatt_status != BLE_GATT_STATUS_ATTERR_CPS_PROC_ALR_IN_PROG)
+        if (pEvt->data.gatt_status != BLE_GATT_STATUS_ATTERR_CPS_PROC_ALR_IN_PROG &&  // if a control point operation is already in progress
+            pEvt->data.gatt_status != BLE_GATT_STATUS_ATTERR_INSUF_AUTHENTICATION)    // if device is not bonded
             APP_ERROR_CHECK(pEvt->data.gatt_status);
         break;
     default:
@@ -1121,6 +1222,10 @@ static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
             deviceType = CENTRAL_R51;
             hidsCInit.evt_handler = hidsCR51EventHandler;
             break;
+        case BLE_HIDS_C_HC_DEVICE_AUVISO:
+            deviceType = CENTRAL_AUVISO;
+            hidsCInit.evt_handler = hidsCAuvisoEventHandler;
+            break;
         default:
             deviceType = isLcsDevice(pScanEvt->p_ble_adv_report);
             break;
@@ -1133,8 +1238,8 @@ static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
                 .active      = 0,
                 .selective   = 0,
                 .p_whitelist = NULL,
-                .interval    = MSEC_TO_UNITS(22.5, UNIT_0_625_MS),
-                .window      = MSEC_TO_UNITS(11.25, UNIT_0_625_MS),
+                .interval    = MSEC_TO_UNITS(60, UNIT_0_625_MS),
+                .window      = MSEC_TO_UNITS(30, UNIT_0_625_MS),
                 .timeout     = 30,
             };
             static const ble_gap_conn_params_t connParams =
@@ -1167,26 +1272,11 @@ static void scanningEventHandler(const ble_scan_evt_t * const pScanEvt)
         pm_peer_id_t peerIds[1];
         uint_fast8_t peerIdsCnt = 0;
         ble_gap_whitelist_t whitelist = {.pp_irks = irks, .pp_addrs = addrs};
-        pm_peer_id_t peerId = pm_next_peer_id_get(PM_PEER_ID_INVALID);
+        pm_peer_id_t peerId = nextCentralPeerIdGet(PM_PEER_ID_INVALID);
         while(peerId != PM_PEER_ID_INVALID && peerIdsCnt < 1)
         {
-            pm_peer_data_bonding_t bondData;
-            pm_peer_data_t peerData;
-            peerData.length_words = PM_BONDING_DATA_N_WORDS();
-            peerData.data.p_bonding_data = &bondData;
-            peerData.data_type = PM_PEER_DATA_ID_BONDING;
-            errCode = pm_peer_data_get(peerId, PM_PEER_DATA_ID_BONDING, &peerData);
-            if (errCode != NRF_SUCCESS)
-            {
-                // in some cases bonding data isn't stored in memory (havn't
-                // found the reason yet), this results in an
-                // NRF_ERROR_NOT_FOUND here. For now just ignore this error.
-                if (errCode != NRF_ERROR_NOT_FOUND)
-                    APP_ERROR_CHECK(errCode);
-            }
-            else if (peerData.data.p_bonding_data->own_role == BLE_GAP_ROLE_CENTRAL)
-                peerIds[peerIdsCnt++] = peerId;
-            peerId = pm_next_peer_id_get(peerId);
+            peerIds[peerIdsCnt++] = peerId;
+            peerId = nextCentralPeerIdGet(peerId);
         }
         errCode = pm_wlist_create(peerIds, peerIdsCnt, &whitelist);
         APP_ERROR_CHECK(errCode);
@@ -1214,8 +1304,8 @@ static void scanningInit()
     options.ble_scan_active_scanning    = true;
     options.ble_scan_whitelist_enabled  = true;
     options.ble_scan_fast_enabled       = true;
-    options.ble_scan_fast_interval      = MSEC_TO_UNITS(22.5, UNIT_0_625_MS);
-    options.ble_scan_fast_window        = MSEC_TO_UNITS(11.25, UNIT_0_625_MS);
+    options.ble_scan_fast_interval      = MSEC_TO_UNITS(60, UNIT_0_625_MS);
+    options.ble_scan_fast_window        = MSEC_TO_UNITS(30, UNIT_0_625_MS);
     options.ble_scan_fast_timeout       = 180;
     options.ble_scan_slow_enabled       = true;
     options.ble_scan_slow_interval      = MSEC_TO_UNITS(1280, UNIT_0_625_MS);
@@ -1494,7 +1584,8 @@ uint32_t btle_SendEventResponse(const btle_LcscpEventResponse_t *pRsp, uint16_t 
         rsp.params.mode_cnt = pRsp->responseParams.modeCnt;
         break;
     case BTLE_EVT_LCSCP_REQ_GROUP_CNT:
-        rsp.params.group_config = pRsp->responseParams.groupCnt;
+        rsp.params.group_config.num_of_groups = pRsp->responseParams.groupCfg.numOfModes;
+        rsp.params.group_config.p_list_of_modes_per_group = pRsp->responseParams.groupCfg.pNumOfModesPerGroup;
         break;
     case BTLE_EVT_LCSCP_REQ_MODE_CONFIG:
         rsp.params.mode_config_list.p_list_hlmt = (ble_lcs_hlmt_mode_t*)pRsp->responseParams.modeList.pList;
@@ -1538,7 +1629,7 @@ uint32_t btle_SendEventResponse(const btle_LcscpEventResponse_t *pRsp, uint16_t 
     return ble_lcs_ctrlpt_mode_resp(&lcsGattsData.ctrl_pt, connHandle, &rsp);
 }
 
-uint32_t btle_DeleteBonds()
+uint32_t btle_DeleteCentralBonds()
 {
     uint32_t errCode;
 
@@ -1559,17 +1650,7 @@ uint32_t btle_DeleteBonds()
         }
     }
 
-    if (state.connHandlePeriph != BLE_CONN_HANDLE_INVALID)
-    {
-        errCode = sd_ble_gap_disconnect(state.connHandlePeriph, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
-        if (errCode != NRF_SUCCESS)
-        {
-            APP_ERROR_CHECK(errCode);
-            return errCode;
-        }
-    }
-
-    pm_peer_delete_all();
+    deleteOtherCentrals(PM_PEER_ID_INVALID);
 
     errCode = ble_scanning_pause(false);
     if (errCode != NRF_SUCCESS)
@@ -1583,7 +1664,21 @@ uint32_t btle_DeleteBonds()
 
 uint32_t btle_SearchRemoteDevice()
 {
+    if (state.connHandleCentral != BLE_CONN_HANDLE_INVALID)
+    {
+        uint32_t errCode;
+        errCode = sd_ble_gap_disconnect(state.connHandleCentral, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+        APP_ERROR_CHECK(errCode);
+    }
     return ble_scanning_start_without_whitelist(BLE_SCAN_MODE_FAST);
+}
+
+uint32_t btle_AllowPeripheralBonding(bool allow)
+{
+    if (state.allowPeripheralBonding == allow)
+        return NRF_ERROR_INVALID_STATE;
+    state.allowPeripheralBonding = allow;
+    return NRF_SUCCESS;
 }
 
 uint32_t btle_SetMode(uint8_t mode, uint16_t connHandle)

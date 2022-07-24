@@ -43,8 +43,8 @@ typedef struct
 #define ADC_COMPENSATION_DEFAULTS   \
 {                                   \
     .TemperatureOffset = 0,         \
-    .CurrentLeftGain = 144,         \
-    .CurrentRightGain = 144         \
+    .CurrentLeftGain = 255,         \
+    .CurrentRightGain = 255         \
 }
 
 /* Exported macros -----------------------------------------------------------*/

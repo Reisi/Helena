@@ -346,7 +346,15 @@ static bool decode_control_point(uint8_t const * p_data, uint16_t size, ble_lcs_
         p_cp->params.mode_cnt = *p_data;
         return true;
     case BLE_LCS_C_CP_CMD_REQ_GRP_CNFG:
-        p_cp->params.group_cnt = *p_data;
+        p_cp->params.group_cfg.num_of_groups = *p_data++;
+        if (size - 2 == p_cp->params.group_cfg.num_of_groups)
+        {
+            p_cp->params.group_cfg.p_list_of_modes_per_group = p_data;
+        }
+        else
+        {
+            p_cp->params.group_cfg.p_list_of_modes_per_group = NULL;
+        }
         return true;
     case BLE_LCS_C_CP_CMD_REQ_MODE_CNFG:
         p_cp->params.mode_cfg.num_of_bytes = size - 3;
@@ -609,8 +617,16 @@ static uint32_t encode_control_point(const ble_lcs_c_cp_write_t* p_command, uint
         *p_len += 1;
         return NRF_SUCCESS;
     case BLE_LCS_C_CP_CMD_CNFG_GROUP:
-        *p_data = p_command->params.group_cnt;
+        *p_data++ = p_command->params.group_cfg.num_of_groups;
         *p_len += 1;
+        if (p_command->params.group_cfg.p_list_of_modes_per_group != NULL)
+        {
+            for (uint_fast8_t i = 0; i < p_command->params.group_cfg.num_of_groups; i++)
+            {
+                *p_data++ = p_command->params.group_cfg.p_list_of_modes_per_group[i];
+                *p_len += 1;
+            }
+        }
         return NRF_SUCCESS;
     case BLE_LCS_C_CP_CMD_REQ_MODE_CNFG:
         *p_data = p_command->params.start_mode;

@@ -60,7 +60,7 @@ typedef struct
 #endif // DEBUG
 
 #if defined BTDEBUG
-typedef void (*debugCommand_t)(char const* pSubcommand);
+typedef void (*debugCommand_t)(char const* pSubcommand, uint16_t lenght);
 
 typedef struct
 {
@@ -80,6 +80,8 @@ typedef struct
 #define COUNT_OF(x)     (sizeof(x)/sizeof(x[0]))
 #endif // BTDEBUG
 
+#define LOG(...)        SEGGER_RTT_printf(0, __VA_ARGS__)
+
 /* Private defines -----------------------------------------------------------*/
 #ifdef DEBUG
 #define MAGICVAILDNUMBER    0x78151503
@@ -87,10 +89,10 @@ typedef struct
 
 /* Private function prototype ------------------------------------------------*/
 #ifdef BTDEBUG
-static void errorlogCommand(char const* pSubcommand);
-static void resetCommand(char const* pSubcommand);
-static void memoryCommand(char const* pSubcommand);
-static void calibrateCommand(char const* pSubcommand);
+static void errorlogCommand(char const* pSubcommand, uint16_t lenght);
+static void resetCommand(char const* pSubcommand, uint16_t lenght);
+static void memoryCommand(char const* pSubcommand, uint16_t lenght);
+static void calibrateCommand(char const* pSubcommand, uint16_t lenght);
 #endif // BTDEBUG
 
 /* Private variables ---------------------------------------------------------*/
@@ -118,9 +120,9 @@ static void watchdogEventHandler()
 }
 
 #ifdef BTDEBUG
-static void errorlogCommand(char const* pSubcommand)
+static void errorlogCommand(char const* pSubcommand, uint16_t length)
 {
-    if (strncmp(pSubcommand, " --read", 7) == 0)
+    if (length >= 7 && strncmp(pSubcommand, " --read", 7) == 0)
     {
         unsigned RdOff = _SEGGER_RTT.aUp[0].RdOff;
 
@@ -138,15 +140,21 @@ static void errorlogCommand(char const* pSubcommand)
             {
                 RdOff += len;
                 RdOff %= _SEGGER_RTT.aUp[0].SizeOfBuffer;
+                _SEGGER_RTT.aUp[0].RdOff = RdOff;
+                rttBuf.RdOff = RdOff;
             }
             else if (errCode != BLE_ERROR_NO_TX_BUFFERS)
             {
                 APP_ERROR_CHECK(errCode);
             }
+            else
+            {
+                break;  // if buffer is full, exit loop, otherwise watchdog will trigger
+            }
         }
 
     }
-    else if (strncmp(pSubcommand, " --clear", 8) == 0)
+    else if (length >= 8 && strncmp(pSubcommand, " --clear", 8) == 0)
     {
         static char const rspMsg[] = "done\r\n";
         uint32_t errCode;
@@ -158,7 +166,7 @@ static void errorlogCommand(char const* pSubcommand)
         errCode = btle_SendNusString((uint8_t*)rspMsg, strlen(rspMsg));
         APP_ERROR_CHECK(errCode);
     }
-    else if (strncmp(pSubcommand, " --fake", 7) == 0)
+    else if (length >= 7 && strncmp(pSubcommand, " --fake", 7) == 0)
     {
         APP_ERROR_CHECK(NRF_ERROR_INTERNAL);
     }
@@ -174,17 +182,19 @@ static void errorlogCommand(char const* pSubcommand)
 
         for (uint8_t i = 0; i < COUNT_OF(usage); i++)
         {
-            uint32_t errCode;
+            (void)btle_SendNusString((uint8_t*)usage[i], strlen(usage[i]));
+            /*uint32_t errCode;
             do
             {
                 errCode = btle_SendNusString((uint8_t*)usage[i], strlen(usage[i]));
-            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);*/
         }
     }
 }
 
-static void resetCommand(char const* pSubcommand)
+static void resetCommand(char const* pSubcommand, uint16_t length)
 {
+    (void)length; /// TODO: maybe check for "wrong" subcommand
     static char const rspMsg[] = "resetting...\r\n";
     uint32_t errCode;
 
@@ -253,17 +263,17 @@ static void memoryClear()
     errCode = debug_FactoryReset(false);
     APP_ERROR_CHECK(errCode);
 
-    do
-    {
+    //do
+    //{
         errCode = btle_SendNusString((uint8_t*)"done, cycle power\r\n", 19);
-    } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+    //} while (errCode == BLE_ERROR_NO_TX_BUFFERS);
 
     APP_ERROR_CHECK(errCode);
 }
 
-static void memoryCommand(char const* pSubcommand)
+static void memoryCommand(char const* pSubcommand, uint16_t length)
 {
-    if (strncmp(pSubcommand, " --stack", 8) == 0)
+    if (length >= 8 && strncmp(pSubcommand, " --stack", 8) == 0)
     {
         char rsp[BTLE_MAXNUSLENGHT+1];
         uint32_t errCode, stackSize, stackUsed;
@@ -276,10 +286,10 @@ static void memoryCommand(char const* pSubcommand)
         strcpy(rsp, "size: ");
         itoa(stackSize, &rsp[strlen(rsp)], 10);
         strcat(rsp, "B\r\n");
-        do
-        {
+        //do
+        //{
             errCode = btle_SendNusString((uint8_t*)rsp, strlen(rsp));
-        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        //} while (errCode == BLE_ERROR_NO_TX_BUFFERS);
         APP_ERROR_CHECK(errCode);
 
         pStack = (uint8_t*)&__StackLimit;
@@ -301,13 +311,13 @@ static void memoryCommand(char const* pSubcommand)
             itoa(stackUsed, &rsp[strlen(rsp)], 10);
             strcat(rsp, "B\r\n");
         }
-        do
-        {
+        //do
+        //{
             errCode = btle_SendNusString((uint8_t*)rsp, strlen(rsp));
-        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        //} while (errCode == BLE_ERROR_NO_TX_BUFFERS);
         APP_ERROR_CHECK(errCode);
     }
-    else if (strncmp(pSubcommand, " --heap", 7) == 0)
+    else if (length >= 7 && strncmp(pSubcommand, " --heap", 7) == 0)
     {
         char rsp[BTLE_MAXNUSLENGHT+1];
         uint32_t errCode, heapSize, heapUsed;
@@ -318,10 +328,10 @@ static void memoryCommand(char const* pSubcommand)
         strcpy(rsp, "size: ");
         itoa(heapSize, &rsp[strlen(rsp)], 10);
         strcat(rsp, "B\r\n");
-        do
-        {
+        //do
+        //{
             errCode = btle_SendNusString((uint8_t*)rsp, strlen(rsp));
-        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        //} while (errCode == BLE_ERROR_NO_TX_BUFFERS);
         APP_ERROR_CHECK(errCode);
 
         pHeap = (uint8_t*)&__HeapBase;
@@ -330,13 +340,13 @@ static void memoryCommand(char const* pSubcommand)
         strcpy(rsp, "used: ");
         itoa(heapUsed, &rsp[strlen(rsp)], 10);
         strcat(rsp, "B\r\n");
-        do
-        {
+        //do
+        //{
             errCode = btle_SendNusString((uint8_t*)rsp, strlen(rsp));
-        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        //} while (errCode == BLE_ERROR_NO_TX_BUFFERS);
         APP_ERROR_CHECK(errCode);
     }
-    else if (strncmp(pSubcommand, " --clear", 8) == 0)
+    else if (length >= 8 && strncmp(pSubcommand, " --clear", 8) == 0)
     {
         memory.isPending = true;
     }
@@ -353,10 +363,12 @@ static void memoryCommand(char const* pSubcommand)
         for (uint8_t i = 0; i < COUNT_OF(usage); i++)
         {
             uint32_t errCode;
-            do
-            {
+            //do
+            //{
                 errCode = btle_SendNusString((uint8_t*)usage[i], strlen(usage[i]));
-            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+            //} while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+            if (errCode == BLE_ERROR_NO_TX_BUFFERS)
+                break;
             APP_ERROR_CHECK(errCode);
         }
     }
@@ -372,16 +384,20 @@ static bool isCalSupported()
         return true;
 }
 
-static bool extractCalib(char const* pS, uint8_t* buf)
+static bool extractCalib(char const* pS, uint8_t* buf, uint16_t length)
 {
     int16_t sign, temp;
     q1_7_t gain;
 
     // start with sign for temperature offset
+    if (length == 0)
+        return false;
     if (*pS == '-')
     {
         sign = -1;
         pS++;
+        if (--length == 0)
+            return false;
     }
     else
         sign = 1;
@@ -395,12 +411,16 @@ static bool extractCalib(char const* pS, uint8_t* buf)
         temp *= 10;
         temp += *pS - '0';
         pS++;
+        if (--length == 0)
+            return false;
     }
     temp = temp * sign;
     buf[0] = (uint16_t)temp >> 8;
     buf[1] = (uint16_t)temp & 0x00FF;
 
     pS++;
+    if (--length == 0)
+        return false;
     if (!(*pS >= '0' && *pS <= '9'))
         return false;
 
@@ -411,10 +431,14 @@ static bool extractCalib(char const* pS, uint8_t* buf)
         gain *= 10;
         gain += *pS - '0';
         pS++;
+        if (--length == 0)
+            return false;
     }
     buf[2] = gain;
 
     pS++;
+    if (--length == 0)
+        return false;
     if (!(*pS >= '0' && *pS <= '9'))
         return false;
 
@@ -425,6 +449,8 @@ static bool extractCalib(char const* pS, uint8_t* buf)
         gain *= 10;
         gain += *pS - '0';
         pS++;
+        if (--length == 0)
+            break;
     }
     buf[3] = gain;
 
@@ -433,18 +459,19 @@ static bool extractCalib(char const* pS, uint8_t* buf)
     return true;
 }
 
-static void calibrateCommand(char const* pSubcommand)
+static void calibrateCommand(char const* pSubcommand, uint16_t length)
 {
     /// TODO: move to main context, otherwise the i2c read and write functions might fail
     if (isCalSupported() == false)
     {
-        uint32_t errCode;
+        (void)btle_SendNusString((uint8_t*)"not supported\r\n", 15);
+        /*uint32_t errCode;
         do
         {
             errCode = btle_SendNusString((uint8_t*)"not supported\r\n", 15);
-        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);*/
     }
-    else if (strncmp(pSubcommand, " --read", 7) == 0)
+    else if (length >= 7 && strncmp(pSubcommand, " --read", 7) == 0)
     {
         char rsp[BTLE_MAXNUSLENGHT+1];
         uint32_t errCode;
@@ -454,10 +481,10 @@ static void calibrateCommand(char const* pSubcommand)
         errCode = i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_TEMPOFFSET_H, 4, buffer);
         if (errCode != NRF_SUCCESS)
         {
-            do
-            {
+            //do
+            //{
                 errCode = btle_SendNusString((uint8_t*)"failed\r\n", 8);
-            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+            //} while (errCode == BLE_ERROR_NO_TX_BUFFERS);
             APP_ERROR_CHECK(errCode);
             return;
         }
@@ -467,30 +494,31 @@ static void calibrateCommand(char const* pSubcommand)
         itoa(buffer[2], &rsp[strlen(rsp)], 10);
         strcat(rsp, ",");
         itoa(buffer[3], &rsp[strlen(rsp)], 10);
-        do
-        {
+        strcat(rsp, "\r\n");
+        //do
+        //{
             errCode = btle_SendNusString((uint8_t*)rsp, strlen(rsp));
-        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        //} while (errCode == BLE_ERROR_NO_TX_BUFFERS);
         APP_ERROR_CHECK(errCode);
     }
-    else if (strncmp(pSubcommand, " --st ", 6) == 0)
+    else if (length >= 6 && strncmp(pSubcommand, " --st ", 6) == 0)
     {
         uint32_t errCode;
         uint8_t buffer[5];
 
-        do
+        /*do
         {
             errCode = btle_SendNusString((uint8_t*)"deactivated\r\n", 13);
         } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
         APP_ERROR_CHECK(errCode);
-        return;
+        return;*/
 
-        if (extractCalib(&pSubcommand[6], buffer) == false)
+        if (extractCalib(&pSubcommand[6], buffer, length - 6) == false)
         {
-            do
-            {
-                errCode = btle_SendNusString((uint8_t*)"wrong parameters\r\n", 18);
-            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+            //do
+            //{
+                errCode = btle_SendNusString((uint8_t*)"\r\nwrong parameters\r\n", 18);
+            //} while (errCode == BLE_ERROR_NO_TX_BUFFERS);
             APP_ERROR_CHECK(errCode);
             return;
         }
@@ -498,17 +526,17 @@ static void calibrateCommand(char const* pSubcommand)
         errCode = i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_TEMPOFFSET_H, 5, buffer);
         if (errCode != NRF_SUCCESS)
         {
-            do
-            {
-                errCode = btle_SendNusString((uint8_t*)"failed\r\n", 8);
-            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+            //do
+            //{
+                errCode = btle_SendNusString((uint8_t*)"\r\nfailed\r\n", 8);
+            //} while (errCode == BLE_ERROR_NO_TX_BUFFERS);
         }
         else
         {
-            do
-            {
-                errCode = btle_SendNusString((uint8_t*)"done\r\n", 6);
-            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+            //do
+            //{
+                errCode = btle_SendNusString((uint8_t*)"\r\ndone\r\n", 6);
+            //} while (errCode == BLE_ERROR_NO_TX_BUFFERS);
         }
         APP_ERROR_CHECK(errCode);
     }
@@ -524,10 +552,12 @@ static void calibrateCommand(char const* pSubcommand)
         for (uint8_t i = 0; i < COUNT_OF(usage); i++)
         {
             uint32_t errCode;
-            do
-            {
+            //do
+            //{
                 errCode = btle_SendNusString((uint8_t*)usage[i], strlen(usage[i]));
-            } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+            //} while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+            if (errCode == BLE_ERROR_NO_TX_BUFFERS)
+                break;
             APP_ERROR_CHECK(errCode);
         }
     }
@@ -593,10 +623,12 @@ void debug_OnNusEvt(uint8_t* pData, uint16_t length)
     for (uint8_t i = 0; i < COUNT_OF(commands); i++)
     {
         int16_t len = strlen(commands[i].pCommand);
+        if (length < len)
+            continue;   // no need to compare if received message is shorter than command
         if (strncmp(pString, commands[i].pCommand, len) == 0)
         {
             if (commands[i].pCommandFunc != NULL)
-                (*commands[i].pCommandFunc)(&pString[len]);
+                (*commands[i].pCommandFunc)(&pString[len], length - len);
             return;
         }
     }
@@ -614,10 +646,12 @@ void debug_OnNusEvt(uint8_t* pData, uint16_t length)
             continue;
         strcpy(command, commands[i].pCommand);
         strcat(command, ",\r\n");
-        do
+        btle_SendNusString((uint8_t*)command, strlen(command));
+        // below code no suitable in Event context
+        /*do
         {
             errCode = btle_SendNusString((uint8_t*)command, strlen(command));
-        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);
+        } while (errCode == BLE_ERROR_NO_TX_BUFFERS);*/
     }
 }
 

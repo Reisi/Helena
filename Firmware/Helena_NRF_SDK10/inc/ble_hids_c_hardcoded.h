@@ -29,6 +29,7 @@ typedef enum
     BLE_HIDS_C_HC_DEVICE_UNKNOWN = 0,
     BLE_HIDS_C_HC_DEVICE_XIAOMI,
     BLE_HIDS_C_HC_DEVICE_R51,
+    BLE_HIDS_C_HC_DEVICE_AUVISO,
     BLE_HIDS_C_HC_DEVICE_CNT
 } ble_hids_c_hc_device_t;
 

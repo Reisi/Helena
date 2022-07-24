@@ -227,7 +227,19 @@ static uint32_t lcs_ctrlpt_decode(uint8_t              * p_rcvd_val,
             break;
 
         case BLE_LCS_CTRLPT_OP_CODE_CNFG_GROUP:
-            p_write_val->params.group_config = p_rcvd_val[pos];
+            p_write_val->params.group_config.number_of_modes = p_rcvd_val[pos++];
+            if (len - 2 == p_write_val->params.group_config.number_of_modes)
+            {
+                p_write_val->params.group_config.p_list_of_modes_per_group = &p_rcvd_val[pos];
+            }
+            else if (len == 2)
+            {
+                p_write_val->params.group_config.p_list_of_modes_per_group = NULL;
+            }
+            else
+            {
+                return NRF_ERROR_INVALID_PARAM;
+            }
             break;
 
         case BLE_LCS_CTRLPT_OP_CODE_SET_LIMITS:
@@ -286,7 +298,14 @@ static int ctrlpt_rsp_encode(const ble_lcs_ctrlpt_rsp_t * p_ctrlpt_rsp,
                 p_data[len++] = p_ctrlpt_rsp->params.mode_cnt;
                 break;
             case BLE_LCS_CTRLPT_OP_CODE_REQ_GRP_CNFG:
-                p_data[len++] = p_ctrlpt_rsp->params.group_config;
+                p_data[len++] = p_ctrlpt_rsp->params.group_config.num_of_groups;
+                if (p_ctrlpt_rsp->params.group_config.p_list_of_modes_per_group != NULL)
+                {
+                    for (uint_fast8_t i = 0; i < p_ctrlpt_rsp->params.group_config.num_of_groups; i++)
+                    {
+                        p_data[len++] = p_ctrlpt_rsp->params.group_config.p_list_of_modes_per_group[i];
+                    }
+                }
                 break;
             case BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNFG:
                 for (uint8_t i = 0; i < p_ctrlpt_rsp->params.mode_config_list.num_of_entries; i++)

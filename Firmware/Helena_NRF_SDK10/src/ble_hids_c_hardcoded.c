@@ -64,6 +64,27 @@ static const ble_hids_c_t device_handels[BLE_HIDS_C_HC_DEVICE_CNT - 1] =
                 .report_reference_handle = 0,
             }
         }
+    },
+    {
+        .hid_info_handle             = 0x0011,
+        .report_map_handle           = 0x0026,
+        {
+            {
+                .report_handle           = 0x0013,
+                .cccd_handle             = 0,
+                .report_reference_handle = 0,
+            },
+            {
+                .report_handle           = 0x001b,
+                .cccd_handle             = 0,
+                .report_reference_handle = 0,
+            },
+            {
+                .report_handle           = 0x0017,
+                .cccd_handle             = 0x0018,
+                .report_reference_handle = 0,
+            }
+        }
     }
 };
 
@@ -117,24 +138,23 @@ ble_hids_c_hc_device_t ble_hids_c_hc_is_device(const ble_gap_evt_adv_report_t * 
         if (type == BLE_GAP_AD_TYPE_16BIT_SERVICE_UUID_COMPLETE ||
             type == BLE_GAP_AD_TYPE_16BIT_SERVICE_UUID_MORE_AVAILABLE)
         {
-            //index += 2;
             for (uint_fast8_t i = 0; i < length/UUID16_SIZE; i++)
             {
                 uint16_t uuid;
                 uuid = uint16_decode(&p_adv_data->data[index + 2 + i * UUID16_SIZE]);
                 if (uuid == BLE_UUID_HUMAN_INTERFACE_DEVICE_SERVICE)
-                    is_hid = true; //return NRF_SUCCESS;
+                    is_hid = true;
             }
-            //return NRF_ERROR_NOT_FOUND; // no HID device, not compatible, name does not matter
         }
         else if (type == BLE_GAP_AD_TYPE_COMPLETE_LOCAL_NAME ||
                  type == BLE_GAP_AD_TYPE_SHORT_LOCAL_NAME)
         {
-            //index += 2;
             if (strncmp("XiaoYi_RC", (char*)&p_adv_data->data[index + 2], strlen("XiaoYi")) == 0)
                 device_type = BLE_HIDS_C_HC_DEVICE_XIAOMI;
             else if (strncmp("R51", (char*)&p_adv_data->data[index + 2], strlen("R51")) == 0)
                 device_type = BLE_HIDS_C_HC_DEVICE_R51;
+            else if (strncmp("SmartRemote", (char*)&p_adv_data->data[index + 2], strlen("SmartRemote")) == 0)
+                device_type = BLE_HIDS_C_HC_DEVICE_AUVISO;
         }
 
         index += length + 1;

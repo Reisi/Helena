@@ -43,10 +43,11 @@ SHAREDFLAGS += \
 	-DSOFTDEVICE_PRESENT \
 	-DBLE_STACK_SUPPORT_REQD \
 	-DMPU6050 \
-	-D__STACK_SIZE=0x758 \
+	-D__STACK_SIZE=0x700 \
 	-D__HEAP_SIZE=0 \
 	-DARM_MATH_CM0 \
-	-O3 \
+	#-O3 \
+# all ble_* and SEGGER_* with -Os, the rest with -O3
 
 CFLAGS += \
 	-mcpu=cortex-m0 \
@@ -81,15 +82,8 @@ LDFLAGS += \
     -lc \
     -lnosys
 
-#source common to all targets
-SRC_FILES += \
-	./src/ble_cgw.c \
-	./src/ble_hids_c.c \
-	./src/ble_hids_c_hardcoded.c \
-	./src/ble_lcs.c \
-	./src/ble_lcs_c.c \
-	./src/ble_lcs_ctrlpt.c \
-	./src/ble_scanning.h \
+#source common to all targets that will be compiled with -O3
+SRC_FILES_SPD += \
 	./src/btle.c \
 	./src/comreloaded.c \
 	./src/com_msg_handling.c \
@@ -103,7 +97,6 @@ SRC_FILES += \
 	./src/motion_sensor.c \
 	./src/power.c \
 	./mod/nrf_drv_twi.c \
-	./mod/ble_db_discovery.c \
 	./mod/fds/fds.c \
 	./mod/peer_manager/gatt_cache_manager.c \
 	./mod/peer_manager/gattc_cache_manager.c \
@@ -120,15 +113,6 @@ SRC_FILES += \
 	./mod/peer_manager/security_manager.c \
 	./ext/Invensense/eMPL/inv_mpu.c \
 	./ext/Invensense/eMPL/inv_mpu_dmp_motion_driver.c \
-	./ext/segger/RTT/SEGGER_RTT.c \
-	./ext/segger/RTT/SEGGER_RTT_printf.c \
-	$(NRF_SDK_INSTALL_ROOT)/components/ble/ble_advertising/ble_advertising.c \
-	$(NRF_SDK_INSTALL_ROOT)/components/ble/ble_services/ble_dis/ble_dis.c \
-	$(NRF_SDK_INSTALL_ROOT)/components/ble/ble_services/ble_nus/ble_nus.c \
-	$(NRF_SDK_INSTALL_ROOT)/components/ble/common/ble_advdata.c \
-	$(NRF_SDK_INSTALL_ROOT)/components/ble/common/ble_conn_params.c \
-	$(NRF_SDK_INSTALL_ROOT)/components/ble/common/ble_conn_state.c \
-	$(NRF_SDK_INSTALL_ROOT)/components/ble/common/ble_srv_common.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/drivers_nrf/common/nrf_drv_common.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/drivers_nrf/delay/nrf_delay.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/drivers_nrf/ppi/nrf_drv_ppi.c \
@@ -145,6 +129,26 @@ SRC_FILES += \
 	$(NRF_SDK_INSTALL_ROOT)/components/libraries/util/sdk_mapped_flags.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/softdevice/common/softdevice_handler/softdevice_handler.c \
 	$(NRF_SDK_INSTALL_ROOT)/components/toolchain/system_nrf51.c \
+
+#source common to all targets that will be compiled with -Os
+SRC_FILES_SZ += \
+	./src/ble_cgw.c \
+	./src/ble_hids_c.c \
+	./src/ble_hids_c_hardcoded.c \
+	./src/ble_lcs.c \
+	./src/ble_lcs_c.c \
+	./src/ble_lcs_ctrlpt.c \
+	./src/ble_scanning.h \
+	./mod/ble_db_discovery.c \
+	./ext/segger/RTT/SEGGER_RTT.c \
+	./ext/segger/RTT/SEGGER_RTT_printf.c \
+	$(NRF_SDK_INSTALL_ROOT)/components/ble/ble_advertising/ble_advertising.c \
+	$(NRF_SDK_INSTALL_ROOT)/components/ble/ble_services/ble_dis/ble_dis.c \
+	$(NRF_SDK_INSTALL_ROOT)/components/ble/ble_services/ble_nus/ble_nus.c \
+	$(NRF_SDK_INSTALL_ROOT)/components/ble/common/ble_advdata.c \
+	$(NRF_SDK_INSTALL_ROOT)/components/ble/common/ble_conn_params.c \
+	$(NRF_SDK_INSTALL_ROOT)/components/ble/common/ble_conn_state.c \
+	$(NRF_SDK_INSTALL_ROOT)/components/ble/common/ble_srv_common.c \
 
 #assembly files common to all targets
 ASM_FILES  += \
@@ -192,12 +196,12 @@ INC_DIRS += \
 
 # include target dependent files
 ifeq ($(findstring helena,$(MAKECMDGOALS)), helena)
-SRC_FILES += ./src/light_helena.c
+SRC_FILES_SPD += ./src/light_helena.c
 SHAREDFLAGS += -DHELENA
 HELENA_PROJECT_NAME := Helena_app
 endif
 ifeq ($(findstring billina,$(MAKECMDGOALS)), billina)
-SRC_FILES += ./src/light_billy.c
+SRC_FILES_SPD += ./src/light_billy.c
 SHAREDFLAGS += -DBILLY
 HELENA_PROJECT_NAME := Billina_app
 endif
@@ -208,10 +212,12 @@ CFLAGS += -g3
 endif
 
 # Convert to absolute paths and sort to remove duplicates.
-SRC_FILES := $(sort $(foreach f,$(SRC_FILES),$(abspath $(f))))
+SRC_FILES_SPD := $(sort $(foreach f,$(SRC_FILES_SPD),$(abspath $(f))))
+SRC_FILES_SZ := $(sort $(foreach f,$(SRC_FILES_SZ),$(abspath $(f))))
 INC_DIRS := $(sort $(foreach d,$(INC_DIRS),$(abspath $(d))))
-SRC_DIRS := $(dir $(SRC_FILES) $(ASM_FILES))
-SRC_FILE_NAMES := $(notdir $(SRC_FILES) $(ASM_FILES))
+SRC_DIRS := $(dir $(SRC_FILES_SPD) $(SRC_FILES_SZ) $(ASM_FILES))
+SRC_FILE_NAMES_SPD := $(notdir $(SRC_FILES_SPD) $(ASM_FILES))
+SRC_FILE_NAMES_SZ := $(notdir $(SRC_FILES_SZ))
 
 # This directory needs to be added after the main list is sorted because it
 # contains its own copy of 'nrf_drv_config.h' that will conflict with the
@@ -221,12 +227,15 @@ INC_DIRS += \
     $(NRF_SDK_INSTALL_ROOT)/components/ble/common \
 
 # Convert each source file name into the form '$(OBJ_DIR)/$(SRC_FILE).o'.
-OBJ := $(patsubst %,%.o,$(basename $(SRC_FILE_NAMES)))
-OBJ_FILES := $(addprefix $(BUILD_DIR)/,$(OBJ))
+OBJ_SPD := $(patsubst %,%.o,$(basename $(SRC_FILE_NAMES_SPD)))
+OBJ_SZ := $(patsubst %,%.o,$(basename $(SRC_FILE_NAMES_SZ)))
+OBJ_FILES := $(addprefix $(BUILD_DIR)/,$(OBJ_SZ))
+OBJ_FILES += $(addprefix $(BUILD_DIR)/,$(OBJ_SPD))
 
-DEP = $(OBJ:%.o=%.d)
+DEP = $(OBJ_SPD:%.o=%.d)
+DEP += $(OBJ_SZ:%.o=%.d)
 
-INCLUDES := $(patsubst %,-I%,$(INC_DIRS))
+INCLUDES := $(addprefix -I,$(INC_DIRS))
 
 vpath %.c $(SRC_DIRS)
 vpath %.S $(SRC_DIRS)
@@ -245,13 +254,30 @@ $(BUILD_DIR)/$(HELENA_PROJECT_NAME).elf: $(OBJ_FILES) | $(BUILD_DIR)
 
 -include $(DEP)
 
+#$(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
+#ifeq ($(findstring $(basename $(notdir $<)),$(basename $(SRC_FILE_NAMES_SZ))),)
+#	@echo Compiling file for speed: $(notdir $<)
+#	@'$(CC)' $(CFLAGS) -O3 $(INCLUDES) -MMD -c -o $@ $<
+#else
+#	@echo Compiling file for size: $(notdir $<)
+#	@'$(CC)' $(CFLAGS) -Os $(INCLUDES) -MMD -c -o $@ $<
+#endif
+
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
-	@echo Compiling file: $(notdir $<)
-	@'$(CC)' $(CFLAGS)  $(INCLUDES) -MMD -c -o $@ $<
+	@echo Compiling file for $(if $(findstring $(basename $(notdir $<)),$(SRC_FILE_NAMES_SZ)),size,speed): $(notdir $<)
+	@'$(CC)' $(CFLAGS) $(if $(findstring $(basename $(notdir $<)),$(SRC_FILE_NAMES_SZ)),-Os,-O3) $(INCLUDES) -MMD -c -o $@ $<
+
+#$(BUILD_DIR)/$(OBJ_SPD): $(SRC_FILE_NAMES_SPD) | $(BUILD_DIR)
+#	@echo Compiling file for speed: $(notdir $<)
+#	@'$(CC)' $(CFLAGS) -O3 $(INCLUDES) -MMD -c -o $@ $<
+
+#$(BUILD_DIR)/$(OBJ_SZ): $(SRC_FILE_NAMES_SZ) | $(BUILD_DIR)
+#	@echo Compiling file for size: $(notdir $<)
+#	@'$(CC)' $(CFLAGS) -Os $(INCLUDES) -MMD -c -o $@ $<
 
 $(BUILD_DIR)/%.o: %.S | $(BUILD_DIR)
-	@echo Compiling file: $(notdir $<)
-	@'$(CC)' $(ASMFLAGS) $(INCLUDES) -c -o $@ $<
+	@echo Compiling assembler file: $(notdir $<)
+	@'$(CC)' $(ASMFLAGS) -O3 $(INCLUDES) -c -o $@ $<
 
 
 

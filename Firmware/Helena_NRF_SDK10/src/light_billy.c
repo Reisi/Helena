@@ -15,6 +15,10 @@
 #include "nrf_delay.h"
 #include <stdlib.h>
 
+#ifdef BTDEBUG
+#include "SEGGER_RTT.h"
+#endif
+
 /* Private defines -----------------------------------------------------------*/
 #define TIMEBASE_ON             (APP_TIMER_TICKS(10,0))     // timebase in on mode
 #define TIMEBASE_IDLE           (APP_TIMER_TICKS(1000,0))   // timebase in idle mode
@@ -37,6 +41,8 @@
 #define FDSINSTANCE             0x7167  // number identifying fds data for light module
 
 #define LIGHT_LEDCONFIG_UNKNOWN UINT8_MAX
+
+#define LOG(...)                //SEGGER_RTT_printf(0, __VA_ARGS__)
 
 /* Private typedef -----------------------------------------------------------*/
 typedef enum
@@ -425,6 +431,7 @@ uint32_t light_Init(uint8_t supplyCellCnt, light_driverConfig_t* pLedConfig)
 
     // save cell count
     cellCnt = supplyCellCnt;
+    LOG("[LIGHT]: cell count %d", cellCnt);
 
     lightState = STATEOFF;
 
@@ -593,8 +600,14 @@ uint32_t light_CheckLedConfig(light_driverConfig_t* pLedConfig)
         if (lightStatus.currentHighBeam < 500)
             storage.drvConfig.highBeamCount = 0;
 
+        // fixed values for billy base driver
+        if (storage.drvConfig.rev == LIGHT_DRIVERREV_BILLY)
+        {
+            storage.drvConfig.mainBeamCount = 2;
+            storage.drvConfig.highBeamCount = 4;
+        }
         // read duty cycle registers
-        if (storage.drvConfig.rev == LIGHT_DRIVERREV11 || storage.drvConfig.rev == LIGHT_DRIVERREV12)
+        else if (storage.drvConfig.rev == LIGHT_DRIVERREV11 || storage.drvConfig.rev == LIGHT_DRIVERREV12)
         {
             target_t dutyCycle;
             errCode = hbd_ReadDutyCycles(&dutyCycle.mainBeam, &dutyCycle.highBeam);

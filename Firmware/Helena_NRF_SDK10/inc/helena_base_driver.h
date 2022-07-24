@@ -103,6 +103,7 @@ typedef enum
     HBD_FWREV_10 = 0,
     HBD_FWREV_11,
     HBD_FWREV_12,
+    HDB_FWREV_BILLY,
     HBD_FWREV_UNKOWN
 } hbd_firmwareRev_t;
 

@@ -69,7 +69,7 @@ typedef struct
 #define BUTTON_RELEASED         0
 #define CNT_UNTIL_BUTTON_STABLE 4
 
-#define LOG(string) //SEGGER_RTT_WriteString(0, string)
+#define LOG(...)                //SEGGER_RTT_printf(0, __VA_ARGS__)
 
 /* Private variables ---------------------------------------------------------*/
 APP_TIMER_DEF(hmi_Timer);                           // timer for debouncing, evaluation and led management
@@ -291,7 +291,7 @@ uint32_t hmi_Init(hmi_init_t const* pInit)
 
 void hmi_Execute()
 {
-    // check if R51 events are pending
+    // check if R51/avisio events are pending
     if (lastHidEvent != BTLE_EVT_HID_CNT)
     {
         hmi_eventType_t evt = HMI_EVT_R51_PLAYPAUSE;
@@ -321,6 +321,8 @@ void hmi_Execute()
 
 uint32_t hmi_ReportHidEvent(btle_hidEventType_t hidEvent)
 {
+    LOG("[HMI]: Event received: %d.\r\n", hidEvent);
+
     if (hidEvent >= BTLE_EVT_HID_CNT)
         return NRF_ERROR_INVALID_PARAM;
 
@@ -339,7 +341,7 @@ uint32_t hmi_ReportHidEvent(btle_hidEventType_t hidEvent)
         buttonState[BUTEV_XIA_SEC].state = BUTTON_RELEASED;
         break;
     default:
-        lastHidEvent = hidEvent;    // R51 events are directly reported in execute
+        lastHidEvent = hidEvent;    // R51 and avisio events are directly reported in execute
         return NRF_SUCCESS;
     }
 
