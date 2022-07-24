@@ -312,6 +312,13 @@ typedef struct
     };
 } ble_lcs_c_lf_t;
 
+/**@brief Control Point group configuration data */
+typedef struct
+{
+    uint8_t         num_of_groups;                  /**< number of groups */
+    uint8_t const * p_list_of_modes_per_group;      /**< the list with modes per group, NULL if no individual grouping */
+} ble_lcs_c_cp_gcfg_t;
+
 /**@brief Control Point mode configuration write data
  *
  * @note  at this point is not possible to resolve the light type, so it is up
@@ -379,7 +386,7 @@ typedef struct
     union
     {
         uint8_t mode_cnt;                   /**< number of available modes. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_MODE_CNT */
-        uint8_t group_cnt;                  /**< number of groups. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_GRP_CNFG */
+        ble_lcs_c_cp_gcfg_t group_cfg;      /**< number of groups and list. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_GRP_CNFG */
         ble_lcs_c_cp_mcfg_rcvd_t mode_cfg;  /**< mode configuration. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_MODE_CNFG */
         ble_lcs_c_cp_ledcfg_t led_cfg;      /**< led configuration. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_LED_CNFG and @ref BLE_LCS_C_CP_CMD_CHK_LED_CNFG */
         ble_lcs_c_cp_off_t sens_off;        /**< sensor offset. This field will be used for the response to @ref BLE_LCS_C_CP_CMD_REQ_SENS_OFF and @ref BLE_LCS_C_CP_CMD_CALIB_SENS_OFF */
@@ -464,7 +471,7 @@ typedef struct
     union
     {
         uint8_t                 mode_to_set; /**< mode to set. This field will be used for the command @ref BLE_LCS_C_CP_CMD_SET_MODE. */
-        uint8_t                 group_cnt;   /**< number of group. This field will be used for the command @ref BLE_LCS_C_CP_CMD_CNFG_GROUP. */
+        ble_lcs_c_cp_gcfg_t     group_cfg;   /**< group configuration. This field will be used for the command @ref BLE_LCS_C_CP_CMD_CNFG_GROUP. */
         uint8_t                 start_mode;  /**< start mode for mode list. This field will be used for the command @ref BLE_LCS_C_CP_CMD_REQ_MODE_CNFG. */
         ble_lcs_c_cp_mcfg_cmd_t mode_cfg;    /**< new list of modes. This field will be used for the command @ref BLE_LCS_C_CP_CMD_CNFG_MODE. */
         ble_lcs_c_cp_currlmt_t  curr_limit;  /**< new current limits. This field will be used for the command @ref BLE_LCS_C_CP_CMD_SET_LIMITS. */

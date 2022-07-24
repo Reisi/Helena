@@ -150,13 +150,8 @@ debug: OBJ_DIR := $(DBG_BUILD_DIR)
 debug: $(DBG_BUILD_DIR)/$(PROJECT_NAME).hex
 	$(call echosize,$(DBG_BUILD_DIR)/$(PROJECT_NAME).elf)
 
-.PHONY: release
-release: OBJ_DIR := $(REL_BUILD_DIR)
-release: $(REL_BUILD_DIR)/$(PROJECT_NAME).bin $(REL_BUILD_DIR)/$(PROJECT_NAME).hex
-	$(call echosize,$(REL_BUILD_DIR)/$(PROJECT_NAME).elf)
-
 .PHONY: all
-all: debug release
+all: debug
 
 #DBG_DEP := $(addprefix $(DEPS_DIR)/,$(OBJ:.o=.d))
 #-include $(DBG_DEP)
@@ -168,12 +163,6 @@ vpath %.s $(SRC_DIRS)
 
 define echosize
 	@'$(SIZE)' $1
-endef
-
-#$(call gendfupackage,$(DBG_BUILD_DIR)/$(PROJECT_NAME).hex)
-
-define gendfupackage
-	@$(NRFUTIL) pkg generate --hw-version 52 --sd-req 0x8C --application-version 1 --application $1 --key-file ../Pussycat.pem $(DBG_BUILD_DIR)/$(PROJECT_NAME).zip
 endef
 
 $(DBG_BUILD_DIR)/%.o: %.c | $(DBG_BUILD_DIR)
@@ -236,7 +225,6 @@ clean:
 help:
 	@echo "The following targets are available:"
 	@echo "    (debug)                - Compile with debug flags"
-	@echo "    release                - Compile with release flags"
 	@echo "    all                    - Compile debug and release targets"
 	@echo "    clean                  - Remove object and dependency directories"
 

@@ -69,6 +69,13 @@ typedef struct
     };
 } ble_lcs_ctrlpt_mode_cnfg_t;
 
+/**@brief Light Control Control Point group configuration structure */
+typedef struct
+{
+    uint8_t         number_of_modes;
+    uint8_t const * p_list_of_modes_per_group;    /** NULL, if no individual group configuration available */
+} ble_lcs_ctrlpt_group_cnfg_t;
+
 /**@brief Light Control Control Point set current limits structure */
 typedef union
 {
@@ -90,7 +97,7 @@ typedef union
     uint8_t                     mode_list_start;
     uint8_t                     set_mode;
     ble_lcs_ctrlpt_mode_cnfg_t  mode_config;
-    uint8_t                     group_config;
+    ble_lcs_ctrlpt_group_cnfg_t group_config;
     ble_lcs_ctrlpt_set_limits_t current_limits;
     uint8_t                     pref_mode;
     uint8_t                     temp_mode;
@@ -160,6 +167,13 @@ typedef enum
     BLE_LCS_CTRLPT_OP_CODE_RESPONSE         = 32
 } ble_lcs_ctrlpt_op_code_t;
 
+/**@brief Light Control Control Point Response parameter for BLE_LCS_CTRLPT_OP_CODE_REQ_GRP_CNFG */
+typedef struct
+{
+    uint8_t         num_of_groups;
+    uint8_t const * p_list_of_modes_per_group;    /** NULL, if no individual group configuration available */
+} ble_lcs_ctrlpt_rsp_param_group_config_t;
+
 /**@brief Light Control Control Point Response parameter for BLE_LCS_CTRLPT_OP_CODE_REQ_MODE_CNFG */
 typedef struct
 {
@@ -212,14 +226,14 @@ typedef union
 /**@brief Light Control Control Point response parameter values */
 typedef union
 {
-    uint8_t                                mode_cnt;
-    uint8_t                                group_config;
-    ble_lcs_ctrlpt_rsp_param_mode_config_t mode_config_list;
-    ble_lcs_ctrlpt_rsp_param_led_config_t  led_config;
-    ble_lcs_ctrlpt_rsp_param_sens_offset_t sens_offset;
-    ble_lcs_ctrlpt_rsp_param_limits_t      current_limits;
-    uint8_t                                pref_mode;
-    uint8_t                                temp_mode;
+    uint8_t                                 mode_cnt;
+    ble_lcs_ctrlpt_rsp_param_group_config_t group_config;
+    ble_lcs_ctrlpt_rsp_param_mode_config_t  mode_config_list;
+    ble_lcs_ctrlpt_rsp_param_led_config_t   led_config;
+    ble_lcs_ctrlpt_rsp_param_sens_offset_t  sens_offset;
+    ble_lcs_ctrlpt_rsp_param_limits_t       current_limits;
+    uint8_t                                 pref_mode;
+    uint8_t                                 temp_mode;
 } ble_lcs_ctrlpt_rsp_params_t;
 
 /**@brief Light Control Control Point Response parameter structure */

@@ -61,6 +61,12 @@ typedef enum
     BTLE_EVT_HID_R51_NEXT_TRACK,                // double click on volume up button
     BTLE_EVT_HID_R51_PREV_TRACK,                // double click on volume down button
     BTLE_EVT_HID_R51_CC,                        // mode button clicked
+    // events related to the auviso remote control
+    BTLE_EVT_HID_AUV_PLAYPAUSE,                 // play/pause button pressed
+    BTLE_EVT_HID_AUV_VOL_UP,                    // volume up button pressed
+    BTLE_EVT_HID_AUV_VOL_DOWN,                  // volume down button pressed
+    BTLE_EVT_HID_AUV_NEXT_TRACK,                // next track button pressed
+    BTLE_EVT_HID_AUV_PREV_TRACK,                // previous track button clicked
     BTLE_EVT_HID_CNT
 } btle_hidEventType_t;
 
@@ -118,6 +124,14 @@ typedef struct
     bool brakelight        : 1;                 // external brake light enabled
 } btle_LcsLightSetup_t;
 
+/**< btle light group configuration type */
+typedef struct
+{
+    uint8_t numOfModes;                         // the number of groups
+    uint8_t const* pNumOfModesPerGroup;         // a list containing the number of modes in each group,
+                                                // NULL if individual grouping is not supported
+} btle_LcsGroupConfig_t;
+
 /**< btle light configuration type */
 typedef struct
 {
@@ -166,7 +180,7 @@ typedef union
         uint8_t listEntries;                    // number of modes to change
         btle_LcsModeConfig_t const* pConfig;    // list of mode configurations
     } modeToConfig;                             // parameter for event type BTLE_EVT_CONFIG_MODE
-    uint8_t groupConfig;                        // parameter for event type BTLE_EVT_LCSCP_CONFIG_GROUP
+    btle_LcsGroupConfig_t groupConfig;          // parameter for event type BTLE_EVT_LCSCP_CONFIG_GROUP
     struct
     {
 #ifdef HELENA
@@ -216,7 +230,7 @@ typedef struct
     union
     {
         uint8_t modeCnt;                        // response parameter for event type BTLE_EVT_REQ_MODE_CNT
-        uint8_t groupCnt;                       // response parameter for event type BTLE_EVT_REQ_GROUP_CNT
+        btle_LcsGroupConfig_t groupCfg;         // response parameter for event type BTLE_EVT_REQ_GROUP_CNT
         struct
         {
             btle_LcsModeConfig_t const* pList;  // list of mode configurations
@@ -330,17 +344,24 @@ uint32_t btle_UpdateLcsMeasurements(const btle_lcsMeasurement_t * pData);
  */
 uint32_t btle_SendEventResponse(const btle_LcscpEventResponse_t *pRsp, uint16_t connHandle);
 
-/** @brief Function for deleting all bonds
+/** @brief Function for deleting all bonds in central role
  *
  * @return      NRF_SUCCESS or an error code;
  */
-uint32_t btle_DeleteBonds(void);
+uint32_t btle_DeleteCentralBonds(void);
 
 /** @brief Function to start searching for possible remotes
  *
  * @return      NRF_SUCCESS or an error code
  */
 uint32_t btle_SearchRemoteDevice(void);
+
+/** @brief function to allow/disallow bonding in peripheral connections
+ *
+ * @param[in]   allow true to allow, false to not allow
+ * @return      NRF_SUCCESS or NRF_ERROR_INVALID_STATE
+ */
+uint32_t btle_AllowPeripheralBonding(bool allow);
 
 /** @brief Function set the mode of a remote Light Control Device
  *

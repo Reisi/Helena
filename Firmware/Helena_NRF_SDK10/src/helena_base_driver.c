@@ -14,8 +14,9 @@
 /* Private typedef -----------------------------------------------------------*/
 
 /* Private defines -----------------------------------------------------------*/
-#define HELENABASE_ADDRESS              0x3A // this device only has one address
-#define HELENABASE_DEFAULT_ADDRESS      0x3A
+#define HELENABASE_ADDRESS              0x3A
+#define BILLYBASE_ADDRESS               0x39
+#define HELENABASE_DEFAULT_ADDRESS      HELENABASE_ADDRESS
 
 #define HELENABASE_REGISTERCNT_REV10    9
 #define HELENABASE_REGISTERCNT_REV11    11
@@ -100,10 +101,12 @@ do                                      \
         return retVal;                  \
 } while(0)
 
-#define REGISTERVALUE_TO_AMPEREQ10(x)   ((uint16_t)(((x) * 771ul) >> 10))
-#define REGISTERVALUE_TO_KELVINQ4(x)     ((uint16_t)((uint32_t)(x) << 2))
+#define REGISTERVALUE_TO_AMPEREQ10(x)       ((uint16_t)(((x) * 771ul) >> 10))
+#define REGISTERVALUE_TO_AMPEREQ10_BILLY(x) ((uint16_t)(((x) * 3ul) >> 3))
+#define REGISTERVALUE_TO_KELVINQ4(x)        ((uint16_t)((uint32_t)(x) << 2))
 
 /* Private variables ---------------------------------------------------------*/
+static uint8_t baseAddress;
 static uint8_t regMirror[HELENABASE_REGISTERCNT_REV12];
 static hbd_firmwareRev_t firmware = HBD_FWREV_UNKOWN;
 
@@ -114,7 +117,16 @@ static hbd_retVal_t initialize()
 {
     hbd_retVal_t retVal;
 
-    retVal = hbd_i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, sizeof(regMirror), regMirror);
+    baseAddress = BILLYBASE_ADDRESS;
+    retVal = hbd_i2c_read(baseAddress, HELENABASE_RA_CONFIG, sizeof(regMirror), regMirror);
+    if (retVal == NRF_SUCCESS)
+    {
+        firmware = HDB_FWREV_BILLY;
+        return HBD_SUCCESS;
+    }
+
+    baseAddress = HELENABASE_ADDRESS;
+    retVal = hbd_i2c_read(baseAddress, HELENABASE_RA_CONFIG, sizeof(regMirror), regMirror);
     RETVAL_CHECK(retVal);
 
     // compare the non existing register in REV 1.0 with the first ones, if
@@ -151,12 +163,18 @@ static void decodeSamplingData(uint8_t const* pReg, hbd_samplingData_t* pData)
     i = ((uint_fast16_t)pReg[0] << 8) | pReg[1];
     pData->currentLeft.maxDC = i & (1<<13);
     pData->currentLeft.minDC = i & (1<<12);
-    pData->currentLeft.current = REGISTERVALUE_TO_AMPEREQ10(i & 0x0FFF);
+    if (firmware == HDB_FWREV_BILLY)
+        pData->currentLeft.current = REGISTERVALUE_TO_AMPEREQ10_BILLY(i & 0x0FFF);
+    else
+        pData->currentLeft.current = REGISTERVALUE_TO_AMPEREQ10(i & 0x0FFF);
     // right driver current information
     i = ((uint_fast16_t)pReg[2] << 8) | pReg[3];
     pData->currentRight.maxDC = i & (1<<13);
     pData->currentRight.minDC = i & (1<<12);
-    pData->currentRight.current = REGISTERVALUE_TO_AMPEREQ10(i & 0x0FFF);
+    if (firmware == HDB_FWREV_BILLY)
+        pData->currentRight.current = REGISTERVALUE_TO_AMPEREQ10_BILLY(i & 0x0FFF);
+    else
+        pData->currentRight.current = REGISTERVALUE_TO_AMPEREQ10(i & 0x0FFF);
     // temperature information
     i = ((uint_fast16_t)pReg[4] << 8) | pReg[5];
     pData->temperature = REGISTERVALUE_TO_KELVINQ4(i & 0x0FFF);
@@ -194,7 +212,7 @@ hbd_retVal_t hbd_SetConfig(hbd_config_t const* pConfig)
         return HBD_SUCCESS;
 
     hbd_retVal_t retVal;
-    retVal = hbd_i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_CONFIG, 1, &cfg);
+    retVal = hbd_i2c_write(baseAddress, HELENABASE_RA_CONFIG, 1, &cfg);
     RETVAL_CHECK(retVal);
 
     regMirror[HELENABASE_RA_CONFIG] = cfg;
@@ -220,7 +238,7 @@ hbd_retVal_t hbd_SetTargetCurrent(q8_t left, q8_t right)
 
     uint8_t buffer[2] = {left, right};
     hbd_retVal_t retVal;
-    retVal = hbd_i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_TARGETSDL, sizeof(buffer), buffer);
+    retVal = hbd_i2c_write(baseAddress, HELENABASE_RA_TARGETSDL, sizeof(buffer), buffer);
     RETVAL_CHECK(retVal);
 
     memcpy(&regMirror[HELENABASE_RA_TARGETSDL], buffer, sizeof(buffer));
@@ -246,7 +264,7 @@ hbd_retVal_t hbd_ReadSamplingData(hbd_samplingData_t* pSamplingData)
     VERIFY_NOT_NULL(pSamplingData);
 
     hbd_retVal_t retVal;
-    retVal = hbd_i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_STATUSSDL_H, 6, &regMirror[HELENABASE_RA_STATUSSDL_H]);
+    retVal = hbd_i2c_read(baseAddress, HELENABASE_RA_STATUSSDL_H, 6, &regMirror[HELENABASE_RA_STATUSSDL_H]);
     RETVAL_CHECK(retVal);
 
     decodeSamplingData(&regMirror[HELENABASE_RA_STATUSSDL_H], pSamplingData);
@@ -272,7 +290,7 @@ hbd_retVal_t hbd_ReadDutyCycles(q8_t* pLeft, q8_t* pRight)
     VERIFY_REV11();
 
     hbd_retVal_t retVal;
-    retVal = hbd_i2c_read(HELENABASE_ADDRESS, HELENABASE_RA_DUTYCYCLELEFT, 2, &regMirror[HELENABASE_RA_DUTYCYCLELEFT]);
+    retVal = hbd_i2c_read(baseAddress, HELENABASE_RA_DUTYCYCLELEFT, 2, &regMirror[HELENABASE_RA_DUTYCYCLELEFT]);
     RETVAL_CHECK(retVal);
 
     *pLeft = regMirror[HELENABASE_RA_DUTYCYCLELEFT];
@@ -306,7 +324,7 @@ hbd_retVal_t hbd_SetCalibrationData_t(hbd_calibData_t const* pCalibData)
         return HBD_SUCCESS;
 
     hbd_retVal_t retVal;
-    retVal = hbd_i2c_write(HELENABASE_ADDRESS, HELENABASE_RA_TEMPOFFSET_H, sizeof(buffer), buffer);
+    retVal = hbd_i2c_write(baseAddress, HELENABASE_RA_TEMPOFFSET_H, sizeof(buffer), buffer);
     RETVAL_CHECK(retVal);
 
     memcpy(&regMirror[HELENABASE_RA_TEMPOFFSET_H], buffer, sizeof(buffer));

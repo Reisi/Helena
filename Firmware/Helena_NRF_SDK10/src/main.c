@@ -27,7 +27,7 @@
 #include "nrf_delay.h"
 #include "nrf_gpio.h"
 #include "fastmath.h"
-//#include "SEGGER_RTT.h"
+#include "SEGGER_RTT.h"
 
 /* Private defines -----------------------------------------------------------*/
 #define LOG(...)                    //SEGGER_RTT_printf(0, __VA_ARGS__)
@@ -60,6 +60,8 @@
 #define MINIMUM_INPUT_VOLTAGE       (3 << 10)   // 3V per cell in q6_10_t
 #define SHUTDOWN_DELAY              (APP_TIMER_TICKS(1000, APP_TIMER_PRESCALER))
 
+#define BONDING_WINDOW              APP_TIMER_TICKS(30000, APP_TIMER_PRESCALER)
+
 #ifdef HELENA
 #define MODES_DEFAULT                                               \
 {                                                                   \
@@ -76,7 +78,8 @@
     },                                                              \
     .groups = 2,                                                    \
     .prefMode = MODE_INVALID,                                       \
-    .tempMode = MODE_INVALID                                        \
+    .tempMode = MODE_INVALID,                                       \
+    .modesPerGroup = {4,4,0,0,0,0,0,0}                              \
 }
 #elif defined BILLY
 #define MODES_DEFAULT                                               \
@@ -94,7 +97,8 @@
     },                                                              \
     .groups = 4,                                                    \
     .prefMode = 0,                                                  \
-    .tempMode = MODE_INVALID                                        \
+    .tempMode = MODE_INVALID,                                       \
+    .modesPerGroup = {2,2,2,2,0,0,0,0}                              \
 }
 #endif // BILLY
 
@@ -112,6 +116,7 @@ typedef enum
 typedef struct
 {
     btleScannerStatus_t scanner;            // the current status of the ble device scanning
+    uint16_t bondingWindowCounter;          // the countdown (in timer ticks) until the bonding window expires
     uint16_t isPeriphConnected;             // hold a valid connection handle if in a connection as peripheral
     uint16_t isCentralConnected;            // hold a valid connection handle if in a connection as central
     uint16_t isModeConfigWritePending;      // hold a valid connection handle if a mode configure write response is pending
@@ -214,6 +219,9 @@ typedef struct
     uint8_t groups;
     uint8_t prefMode;
     uint8_t tempMode;
+    uint8_t reserved;   // padding byte
+    // added with Ref 2.3
+    uint8_t modesPerGroup[MAX_NUM_OF_MODES];
 } lightConfig_t;
 
 /** @brief helena mode types for versions 0.13 and lower
@@ -359,11 +367,26 @@ static uint32_t updateModeConfig()
 
 /** @brief function to check if configuration is a valid power of 2
  */
-static bool isGroupConfigValid(uint8_t groupConfig)
+static bool isGroupConfigValid(uint8_t groups, uint8_t const* pList)
 {
-    for(uint_fast8_t i = 1; i <= MAX_NUM_OF_MODES; i <<= 1)
+    // no individual group configuration, just check if group is a power of 2
+    if (pList == NULL || pList[0] == 0)
     {
-        if (groupConfig == i)
+        for(uint_fast8_t i = 1; i <= MAX_NUM_OF_MODES; i <<= 1)
+        {
+            if (groups == i)
+                return true;
+        }
+    }
+    // individual group configuration
+    else if (groups != 0)
+    {
+        uint8_t numOfModes = 0;
+        for (uint_fast8_t i = 0; i < MAX_NUM_OF_MODES; i++)
+        {
+            numOfModes += pList[i];
+        }
+        if (numOfModes != 0 && numOfModes == MAX_NUM_OF_MODES)
             return true;
     }
     return false;
@@ -533,7 +556,11 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
         break;
     case BTLE_EVT_LCSCP_REQ_GROUP_CNT:      // group count request
         rsp.retCode = BTLE_RET_SUCCESS;
-        rsp.responseParams.groupCnt = modeConfig.groups;
+        rsp.responseParams.groupCfg.numOfModes = modeConfig.groups;
+        if (modeConfig.modesPerGroup[0] == 0)
+            rsp.responseParams.groupCfg.pNumOfModesPerGroup = NULL;
+        else
+            rsp.responseParams.groupCfg.pNumOfModesPerGroup = modeConfig.modesPerGroup;
         break;
     case BTLE_EVT_LCSCP_REQ_MODE_CONFIG:    // mode configuration request
     {
@@ -600,13 +627,25 @@ static void btleLcscpEventHandler(btle_event_t * pEvt)
             rsp.retCode = BTLE_RET_FAILED;
             break;
         }
-        if (!isGroupConfigValid(pEvt->lcscpEventParams.groupConfig))
+        if (!isGroupConfigValid(pEvt->lcscpEventParams.groupConfig.numOfModes,
+                                pEvt->lcscpEventParams.groupConfig.pNumOfModesPerGroup))
         {
             rsp.retCode = BTLE_RET_INVALID;
             break;
         }
 
-        modeConfig.groups = pEvt->lcscpEventParams.groupConfig;
+        modeConfig.groups = pEvt->lcscpEventParams.groupConfig.numOfModes;
+        for (uint_fast8_t i = 0; i < sizeof(modeConfig.modesPerGroup); i++)
+        {
+            modeConfig.modesPerGroup[i] = 0;
+        }
+        if (pEvt->lcscpEventParams.groupConfig.pNumOfModesPerGroup != NULL)
+        {
+            for (uint_fast8_t i = 0; i < pEvt->lcscpEventParams.groupConfig.numOfModes; i++)
+            {
+                modeConfig.modesPerGroup[i] = pEvt->lcscpEventParams.groupConfig.pNumOfModesPerGroup[i];
+            }
+        }
         errCode = updateModeConfig();
         if (errCode == NRF_SUCCESS)
         {
@@ -787,12 +826,12 @@ static void lightMasterHandler(cmh_lightMasterData_t const* pMasterData)
         pMasterData->helmetBeam == cmh_LIGHTOFF)
         state.pMode->currentMode = 0;
     // com mode city/fog high
-    if (pMasterData->mainBeam == cmh_LIGHTFULL &&
+    else if (pMasterData->mainBeam == cmh_LIGHTFULL &&
         pMasterData->highBeam == cmh_LIGHTFULL &&
         pMasterData->helmetBeam == cmh_LIGHTOFF)
         state.pMode->currentMode = 1;
     // com mode trail uphill
-    if (pMasterData->mainBeam == cmh_LIGHTLOW &&
+    else if (pMasterData->mainBeam == cmh_LIGHTLOW &&
         pMasterData->highBeam == cmh_LIGHTOFF &&
         pMasterData->helmetBeam == cmh_LIGHTLOW)
         state.pMode->currentMode = 2;
@@ -817,6 +856,12 @@ static void timerHandler(void* pContext)
     {
         state.idleTimeout--;
         state.timeoutFlag = true;
+    }
+
+    if (state.btle.bondingWindowCounter && --state.btle.bondingWindowCounter == 0)
+    {
+        (void)btle_AllowPeripheralBonding(false);
+        LOG("[MAIN]: bonding window expired\r\n");
     }
 }
 
@@ -972,6 +1017,7 @@ static void loadModeConfig()
 
         if (fds_open(&descriptor, &record) == NRF_SUCCESS)
         {
+            // no special treatment due to grouping changement in 2.3, because the group list will be zero
             if (key.type == FDSMODECONFIG)
                 memcpy(&modeCfg, (lightConfig_t*)record.p_data, record.header.tl.length_words * 4);
 #ifdef HELENA
@@ -991,7 +1037,7 @@ static void loadModeConfig()
     }
     // check if data is valid (this will fail if no data was found, because group config will be 0)
     bool isValid = true;
-    if (!isGroupConfigValid(modeCfg.groups))
+    if (!isGroupConfigValid(modeCfg.groups, modeCfg.modesPerGroup))
         isValid = false;
     for (int_fast8_t i = 0; i < MAX_NUM_OF_MODES; i++)
     {
@@ -1053,6 +1099,13 @@ static uint32_t setPowerState(powerState_t newState)
         hmi_SetLed(HMI_LEDRED, HMI_LEDOFF);
         btle_SetScanConfig(BTLE_SCAN_MODE_LOW_POWER);
         (void)app_timer_stop(mainTimerId);
+        if (state.btle.bondingWindowCounter && state.power >= POWER_IDLE)
+            {
+                uint32_t counter = state.btle.bondingWindowCounter;
+                counter *= LIGHT_UPDATE_PERIOD_SHORT;
+                counter /= LIGHT_UPDATE_PERIOD_LONG;
+                state.btle.bondingWindowCounter = counter;
+            }
         APP_ERROR_CHECK(app_timer_start(mainTimerId, LIGHT_UPDATE_PERIOD_LONG, NULL));  // used to keep timer running, otherwise RTC will be stopped.
         break;
     case POWER_IDLE:
@@ -1064,6 +1117,13 @@ static uint32_t setPowerState(powerState_t newState)
             APP_ERROR_CHECK(ms_Enable(true));
             btle_SetScanConfig(BTLE_SCAN_MODE_LOW_LATENCY);
             (void)app_timer_stop(mainTimerId);
+            if (state.btle.bondingWindowCounter)
+            {
+                uint32_t counter = state.btle.bondingWindowCounter;
+                counter *= LIGHT_UPDATE_PERIOD_LONG;
+                counter /= LIGHT_UPDATE_PERIOD_SHORT;
+                state.btle.bondingWindowCounter = counter;
+            }
             APP_ERROR_CHECK(app_timer_start(mainTimerId, LIGHT_UPDATE_PERIOD_SHORT, NULL));
         }
         state.timeoutFlag = true;   // set timeout flag to trigger changes
@@ -1077,6 +1137,13 @@ static uint32_t setPowerState(powerState_t newState)
             APP_ERROR_CHECK(ms_Enable(true));
             btle_SetScanConfig(BTLE_SCAN_MODE_LOW_LATENCY);
             (void)app_timer_stop(mainTimerId);
+            if (state.btle.bondingWindowCounter)
+            {
+                uint32_t counter = state.btle.bondingWindowCounter;
+                counter *= LIGHT_UPDATE_PERIOD_LONG;
+                counter /= LIGHT_UPDATE_PERIOD_SHORT;
+                state.btle.bondingWindowCounter = counter;
+            }
             APP_ERROR_CHECK(app_timer_start(mainTimerId, LIGHT_UPDATE_PERIOD_SHORT, NULL));
         }
         state.timeoutFlag = true; // set timeout flag to trigger changes
@@ -1094,6 +1161,11 @@ static void mainInit(void)
 {
     uint32_t errCode;
 
+    // initialize timer
+    errCode = app_timer_create(&mainTimerId, APP_TIMER_MODE_REPEATED, timerHandler);
+    APP_ERROR_CHECK(errCode);
+
+    // set this before fds module is initialized, otherwise it will falsely trigger some done messages
     state.btle.isPeriphConnected = BTLE_CONN_HANDLE_INVALID;
     state.btle.isCentralConnected = BTLE_CONN_HANDLE_INVALID;
     state.btle.isGroupCountPending = BTLE_CONN_HANDLE_INVALID;
@@ -1102,10 +1174,6 @@ static void mainInit(void)
     state.btle.isSensorCalibrationPending = BTLE_CONN_HANDLE_INVALID;
     state.btle.isPrefModeWritePending = BTLE_CONN_HANDLE_INVALID;
     state.btle.isTempModeWritePending = BTLE_CONN_HANDLE_INVALID;
-
-    // initialize timer
-    errCode = app_timer_create(&mainTimerId, APP_TIMER_MODE_REPEATED, timerHandler);
-    APP_ERROR_CHECK(errCode);
 
     // register to fds module
     errCode = fds_register(fdsEventHandler);
@@ -1118,6 +1186,9 @@ static void mainInit(void)
 
     // set minimum input voltage
     state.minInputVoltage = state.supplyCellCnt * MINIMUM_INPUT_VOLTAGE;
+
+    // assure to start in idle mode
+    state.idleTimeout = IDLE_TIMEOUT;
 
     // initialize mode state if content is not valid
     if (state.pMode->magicnumber != MAGICNUMBER &&
@@ -1137,6 +1208,9 @@ static void mainInit(void)
         APP_ERROR_CHECK(setPowerState(POWER_IDLE));
     }
 
+    state.btle.bondingWindowCounter = BONDING_WINDOW / LIGHT_UPDATE_PERIOD_SHORT;
+    (void)btle_AllowPeripheralBonding(true);
+
     //fds_gc();
 }
 
@@ -1150,7 +1224,7 @@ static void mainInit(void)
  *              group(s). If no valid mode is found at all, MODE_OFF-will be
  *              returned.
  */
-static uint8_t getNextValidMode(uint8_t mode)
+/*static uint8_t getNextValidMode(uint8_t desiredMode)
 {
     int_fast8_t groups = modeConfig.groups;
     int_fast8_t modesInGroup = MAX_NUM_OF_MODES / groups;
@@ -1172,13 +1246,105 @@ static uint8_t getNextValidMode(uint8_t mode)
     return MODE_OFF;                                        // no valid mode was found
 }
 
+
+
+static uint8_t getGroupOfMode(uint8_t mode)
+{
+    return (mode * modeConfig.groups) / MAX_NUM_OF_MODES;
+}
+
+static uint8_t getStartModeOfGroup(uint8_t group)
+{
+    return group * MAX_NUM_OF_MODES / modeConfig.groups;
+}
+
+static uint8_t getEndModeOfGroup(uint8_t group)
+{
+    return (group + 1) * MAX_NUM_OF_MODES / modeConfig.groups - 1;
+}
+
+static uint8_t jumpToNextMode(uint8_t currentMode, int8_t modesToJump)
+{
+    if (modesToJump == 0)
+        return currentMode;
+
+    // if light is currently off (or in an inactive/SOS mode), search just for first valid mode
+    if (currentMode >= MODE_OFF || isLightMode(&modeConfig.mode[currentMode]) == false)
+    {
+        for (uint_fast8_t i = 0; i < MAX_NUM_OF_MODES; i++)
+        {
+            uint8_t mode = modesToJump > 0 ? i : MAX_NUM_OF_MODES - 1 - i;
+            if (isLightMode(&modeConfig.mode[mode]))
+                return mode;
+        }
+        return MODE_OFF;    // if no valid mode is available
+    }
+
+    // if the light is already on, change mode
+    uint8_t currentGroup = getGroupOfMode(currentMode);
+    uint8_t firstMode = getStartModeOfGroup(currentGroup);
+    uint8_t lastMode = getEndModeOfGroup(currentGroup);
+    int8_t jumpDirection = modesToJump > 0 ? 1 : -1;
+    int8_t newMode = currentMode;
+
+    while (modesToJump != 0  || !isLightMode(&modeConfig.mode[newMode]))
+    {
+        newMode += jumpDirection;
+        if (newMode > lastMode)
+            newMode = firstMode;
+        if (newMode < firstMode)
+            newMode = lastMode;
+        modesToJump -= jumpDirection;
+    }
+
+    return newMode;
+}
+
+static uint8_t jumpToNextGroup(uint8_t currentMode, int8_t groupsToJump)
+{
+    if (groupsToJump == 0)
+        return currentMode;
+
+    // if light is currently off (or in an inactive/SOS mode), search just for first valid mode
+    // starting with first mode in second group or last mode in second to last group
+    if (currentMode >= MODE_OFF || isLightMode(&modeConfig.mode[currentMode]) == false)
+    {
+        int_fast8_t newMode = modesPerGroup[0];
+        for (int_fast8_t i = 0; i < MAX_NUM_OF_MODES; i++)
+        {
+            newMode += i;
+            newMode %= MAX_NUM_OF_MODES;
+            if (isLightMode(&modeConfig.mode[newMode]))
+                return (uint8_t)newMode;
+        }
+        return MODE_OFF;    // if no valid mode is available
+    }
+
+    // if light is currently on, search for first and last mode of this group
+    uint_fast8_t group, firstInGroup, firstInNextGroup = 0;
+    for (group = 0; group < MAX_NUM_OF_MODES; group++)
+    {
+        firstInGroup = firstInNextGroup;
+        firstInNextGroup += modesPerGroup[group];
+
+        if (firstInGroup == firstInNextGroup)
+            continue;   // skip empty groups
+
+        if (currentMode >= firstInGroup && currentMode < firstInNextGroup)
+            break;      // group found
+    }
+
+    uint_fast8_t modeInGroup = currentMode - firstInGroup;
+
+}*/
+
 /** @brief function to change modes
  *
  * @param[in]   mode    number of modes to in-/decrease, will not leave group
  * @param[in]   group   number of groups to in-/decrease
  * @return      new mode
  */
-static uint8_t changeMode(int8_t mode, int8_t group)
+/*static uint8_t changeMode(int8_t mode, int8_t group)
 {
     uint8_t groups = modeConfig.groups;
     uint8_t modesPerGroup = MAX_NUM_OF_MODES / groups;
@@ -1192,7 +1358,7 @@ static uint8_t changeMode(int8_t mode, int8_t group)
     currentGroup %= groups;
 
     return currentGroup * modesPerGroup + modeInGroup;
-}
+}*/
 
 /** @brief function to handle the status led
  */
@@ -1504,84 +1670,379 @@ static void sensorCalibrationCheck()
     }
 }
 
+
+
+/**< helper function to get the group of a mode */
+static uint8_t getGroupOfMode(uint8_t mode)
+{
+    if (mode >= MAX_NUM_OF_MODES)
+        return MAX_NUM_OF_MODES;
+    else if (modeConfig.modesPerGroup[0] == 0)
+        return (mode * modeConfig.groups) / MAX_NUM_OF_MODES;
+    else
+    {
+        uint8_t modesInPrevGroups = 0;
+        for (uint_fast8_t i = 0; i < sizeof(modeConfig.modesPerGroup); i++)
+        {
+            modesInPrevGroups += modeConfig.modesPerGroup[i];
+            if (mode < modesInPrevGroups)
+                return i;
+        }
+    }
+    return MAX_NUM_OF_MODES;
+}
+
+/**< helper function to get the first mode of a group */
+static uint8_t getFirstModeOfGroup(uint8_t group)
+{
+    if (group > modeConfig.groups)
+        return MAX_NUM_OF_MODES;
+
+    if (modeConfig.modesPerGroup[0] == 0)
+        return group * MAX_NUM_OF_MODES / modeConfig.groups;
+    else
+    {
+        uint8_t firstMode = 0;
+        for (uint_fast8_t i = 0; i < group; i++)
+        {
+            firstMode += modeConfig.modesPerGroup[i];
+        }
+        return firstMode;
+    }
+}
+
+/**< helper function to get the last mode of a group */
+static uint8_t getLastModeOfGroup(uint8_t group)
+{
+    if (group > modeConfig.groups)
+        return MAX_NUM_OF_MODES;
+
+    if (modeConfig.modesPerGroup[0] == 0)
+        return (group + 1) * MAX_NUM_OF_MODES / modeConfig.groups - 1;
+    else
+    {
+        uint8_t firstMode = 0;  // search the first mode of the following group
+        for (uint_fast8_t i = 0; i < group + 1; i++)
+        {
+            firstMode += modeConfig.modesPerGroup[i];
+        }
+        return firstMode - 1;   // last mode is the mode previous to first in next group
+    }
+}
+
+/**< helper function to check if a group has a valid entry */
+static bool isGroupValid(uint8_t group)
+{
+    uint8_t firstMode = getFirstModeOfGroup(group);
+    uint8_t lastMode = getLastModeOfGroup(group);
+
+    for (; firstMode <= lastMode; firstMode++)
+    {
+        if (isLightMode(&modeConfig.mode[firstMode]))
+            return true;
+    }
+
+    return false;
+}
+
+/** @brief function to jump to the preferred mode
+ *
+ * @param[in]   currentMode
+ * @return      MODE_OFF if preferred mode is not selected, not valid, or if current mode is preferred mode
+ *              otherwise the preferred mode
+ */
+static uint8_t jumpToPreferredMode(uint8_t currentMode)
+{
+    if (modeConfig.prefMode != MODE_INVALID &&                  // if preferred mode is set and
+        isLightMode(&modeConfig.mode[modeConfig.prefMode]) &&   // preferred mode has a valid light setup and
+        currentMode != modeConfig.prefMode)                     // current mode is not the preferred mode
+        return modeConfig.prefMode;
+    else
+        return MODE_OFF;
+}
+
+/** @brief function to jump (or jump back) to temporary mode
+ *
+ * @param[in]   currentMode
+ * @return      currentMode if no temporary mode is set
+ *              the last mode prior to the jump into temporary mode
+ *              or the temporary mode
+ */
+static uint8_t jumpToTemporaryMode(uint8_t currentMode)
+{
+    static bool isReturnJumpPending = false;
+    static uint8_t lastMode = MODE_OFF;
+
+    if (modeConfig.tempMode == MODE_INVALID ||                  // temporary mode not activated
+        !isLightMode(&modeConfig.mode[modeConfig.tempMode]))    // or invalid
+        return currentMode;
+
+    if (currentMode == modeConfig.tempMode)
+    {
+        if (isReturnJumpPending)
+            currentMode = lastMode;
+        isReturnJumpPending = false;
+        return currentMode;
+    }
+    else
+    {
+        lastMode = currentMode;
+        isReturnJumpPending = true;
+        currentMode = modeConfig.tempMode;
+    }
+
+    return currentMode;
+}
+
+/** @brief function to jump to next valid mode within group
+ *
+ * @param[in]   currentMode uint8_t
+ * @return      MODE_OFF if no valid mode is available,
+ *              otherwise the next valid mode
+ */
+static uint8_t jumpToNextMode(uint8_t currentMode)
+{
+    // if light is off (or in SOS mode) just search the first available mode
+    if (currentMode >= MODE_OFF || !isLightMode(&modeConfig.mode[currentMode]))
+    {
+        for (uint_fast8_t i = 0; i < MAX_NUM_OF_MODES; i++)
+        {
+            if (isLightMode(&modeConfig.mode[i]))
+                return i;
+        }
+    }
+    // otherwise search next valid mode
+    else
+    {
+        uint8_t currentGroup = getGroupOfMode(currentMode);
+        uint8_t firstMode = getFirstModeOfGroup(currentGroup);
+        uint8_t lastMode = getLastModeOfGroup(currentGroup);
+
+        do
+        {
+            currentMode = currentMode == lastMode ? firstMode : currentMode + 1;
+        } while (!isLightMode(&modeConfig.mode[currentMode]));
+        /// TODO: in theory there is a risk of an infinity loop when this
+        ///       function gets interrupted by a mode update through bluetooth
+
+        return currentMode;
+    }
+
+    return MODE_OFF;
+}
+
+/** @brief function to jump to the previous valid mode within group
+ *
+ * @param[in]   currentMode uint8_t
+ * @return      MODE_OFF if no valid mode is available,
+ *              otherwise the next valid mode
+ */
+static uint8_t jumpToPreviousMode(uint8_t currentMode)
+{
+    // if light is off (or in SOS mode) just search the first available mode
+    if (currentMode >= MODE_OFF || !isLightMode(&modeConfig.mode[currentMode]))
+    {
+        for (int_fast8_t i = MAX_NUM_OF_MODES; i >= 0; i--)
+        {
+            if (isLightMode(&modeConfig.mode[i]))
+                return (uint8_t)i;
+        }
+    }
+    // otherwise search next valid mode
+    else
+    {
+        uint8_t currentGroup = getGroupOfMode(currentMode);
+        uint8_t firstMode = getFirstModeOfGroup(currentGroup);
+        uint8_t lastMode = getLastModeOfGroup(currentGroup);
+
+        do
+        {
+            currentMode = currentMode == firstMode ? lastMode : currentMode - 1;
+        } while (!isLightMode(&modeConfig.mode[currentMode]));
+        /// TODO: in theory there is a risk of an infinity loop when this
+        ///       function gets interrupted by a mode update through bluetooth
+
+        return currentMode;
+    }
+
+    return MODE_OFF;
+}
+
+/** @brief function to jump to next valid mode in the next group
+ *
+ * @param[in]   currentMode uint8_t
+ * @return      MODE_OFF if no valid mode is available,
+ *              otherwise the next valid mode
+ */
+static uint8_t jumpToNextGroup(uint8_t currentMode)
+{
+    uint8_t group;
+    uint8_t modeInGroup;
+
+    // if light is off (or in SOS mode) start with first group
+    if (currentMode >= MODE_OFF || !isLightMode(&modeConfig.mode[currentMode]))
+    {
+        group = 0;
+        modeInGroup = 0;
+    }
+    // otherwise get current group
+    else
+    {
+        group = getGroupOfMode(currentMode);
+        modeInGroup = currentMode - getFirstModeOfGroup(group);
+    }
+
+    // search the next valid group
+    for (uint_fast8_t i = 0; i < modeConfig.groups; i++)
+    {
+        group = group == modeConfig.groups - 1 ? 0 : group + 1;
+        if (isGroupValid(group))
+            break;
+    }
+
+    // now search the first valid mode
+    uint8_t firstMode = getFirstModeOfGroup(group);
+    uint8_t lastMode = getLastModeOfGroup(group);
+    if (modeInGroup > lastMode - firstMode) // saturate if new group is not as big as the old one
+        modeInGroup = lastMode - firstMode;
+    for (uint_fast8_t i = 0; i <= lastMode - firstMode; i++)
+    {
+        uint8_t mode = modeInGroup + firstMode;
+        if (isLightMode(&modeConfig.mode[mode]))
+            return mode;
+        modeInGroup = modeInGroup >= lastMode - firstMode ? 0 : modeInGroup + 1;
+    }
+
+    // the only way getting to this point is, if no valid modes are available
+    return MODE_OFF;
+}
+
+/** @brief function to jump to next valid mode in the previous group
+ *
+ * @param[in]   currentMode uint8_t
+ * @return      MODE_OFF if no valid mode is available,
+ *              otherwise the next valid mode
+ */
+static uint8_t jumpToPreviousGroup(uint8_t currentMode)
+{
+    uint8_t group;
+    uint8_t modeInGroup;
+
+    // if light is off (or in SOS mode) start with first group
+    if (currentMode >= MODE_OFF || !isLightMode(&modeConfig.mode[currentMode]))
+    {
+        group = 0;
+        modeInGroup = 0;
+    }
+    // otherwise get current group
+    else
+    {
+        group = getGroupOfMode(currentMode);
+        modeInGroup = currentMode - getFirstModeOfGroup(group);
+    }
+
+    // search the next valid group
+    for (uint_fast8_t i = 0; i < modeConfig.groups; i++)
+    {
+        group = group == 0 ? modeConfig.groups - 1 : group - 1;
+        if (isGroupValid(group))
+            break;
+    }
+
+    // now search the first valid mode
+    uint8_t firstMode = getFirstModeOfGroup(group);
+    uint8_t lastMode = getLastModeOfGroup(group);
+    if (modeInGroup > lastMode - firstMode) // saturate if new group is not as big as the old one
+        modeInGroup = lastMode - firstMode;
+    for (uint_fast8_t i = 0; i <= lastMode - firstMode; i++)
+    {
+        uint8_t mode = modeInGroup + firstMode;
+        if (isLightMode(&modeConfig.mode[mode]))
+            return mode;
+        modeInGroup = modeInGroup >= lastMode - firstMode ? 0 : modeInGroup + 1;
+    }
+
+    // the only way getting to this point is, if no valid modes are available
+    return MODE_OFF;
+}
+
 static void hmiEventHandler(hmi_eventType_t event)
 {
-    static bool switchbackPending;                  // indicating, if a jump back from temporary mode is pending
+    //static bool switchbackPending;                  // indicating, if a jump back from temporary mode is pending
     uint_fast8_t newMode = state.pMode->currentMode;
     static bool wasOff;                             // indicating if the light was in Off mode when starting to hold the internal button
+    //int_fast8_t modeJump = 0, groupJump = 0;
 
     switch (event)
     {
-    case HMI_EVT_INTERNAL_SHORT:
-    case HMI_EVT_XIAOMI_PRI_SHORT:
-    case HMI_EVT_R51_VOLUP:
-    case HMI_EVT_R51_NEXTTRACK: // double click event
-        // start with first mode, or jump to next
-        if (state.pMode->currentMode >= MODE_OFF)   // also true for SOS mode
-            newMode = 0;
-        else
-            newMode = changeMode(event == HMI_EVT_R51_NEXTTRACK ? 2 : 1, 0);
-        break;
-
-    case HMI_EVT_INTERNAL_LONG:
-    case HMI_EVT_XIAOMI_PRI_LONG:
-    case HMI_EVT_R51_VOLDOWN:
-    case HMI_EVT_R51_PREVTRACK: // double click event
-        // start with first mode in second group, or jump to next group
-        if (state.pMode->currentMode >= MODE_OFF)   // also true for SOS mode
-            newMode = 0;
-        newMode = changeMode(0, event == HMI_EVT_R51_PREVTRACK ? 2 : 1);
-        break;
-
     case HMI_EVT_INTERNAL_HOLD2SEC:
         // search remote
         if (state.pMode->currentMode == MODE_OFF)
         {
-            APP_ERROR_CHECK(btle_DeleteBonds());
+            APP_ERROR_CHECK(btle_DeleteCentralBonds());
             APP_ERROR_CHECK(btle_SearchRemoteDevice());
             wasOff = true;
-            return;
+            return;     // no mode changes
         }
         else
             wasOff = false;
         // fall through if light is on!
     case HMI_EVT_XIAOMI_SEC_SHORT:
     case HMI_EVT_R51_PLAYPAUSE:
-        // preferred mode
-        if (modeConfig.prefMode != MODE_INVALID &&                  // if preferred mode is set and
-            isLightMode(&modeConfig.mode[modeConfig.prefMode]) &&   // preferred mode has a valid light setup and
-            state.pMode->currentMode != modeConfig.prefMode)        // current mode is not the preferred mode
-            newMode = modeConfig.prefMode;
-        else
-            newMode = MODE_OFF;
+    case HMI_EVT_AUV_PLAYPAUSE:
+        newMode = jumpToPreferredMode(newMode);
         break;
 
+    // mode jump events
+    case HMI_EVT_R51_NEXTTRACK: // double click event
+        newMode = jumpToNextMode(newMode);
+        // fall through to jump two modes with double click
+    case HMI_EVT_INTERNAL_SHORT:
+    case HMI_EVT_XIAOMI_PRI_SHORT:
+    case HMI_EVT_R51_VOLUP:
+    case HMI_EVT_AUV_NEXTTRACK:
+        newMode = jumpToNextMode(newMode);
+        break;
+    case HMI_EVT_AUV_PREVTRACK:
+        newMode = jumpToPreviousMode(newMode);
+        break;
+
+    // group jump events
+    case HMI_EVT_R51_PREVTRACK: // double click event
+        newMode = jumpToNextGroup(newMode);
+        // fall through to jump two groups with double click
+    case HMI_EVT_INTERNAL_LONG:
+    case HMI_EVT_XIAOMI_PRI_LONG:
+    case HMI_EVT_R51_VOLDOWN:
+    case HMI_EVT_AUV_VOLUP:
+        newMode = jumpToNextGroup(newMode);
+        break;
+    case HMI_EVT_AUV_VOLDOWN:
+        newMode = jumpToPreviousGroup(newMode);
+        break;
+
+    // temporary mode
     case HMI_EVT_XIAOMI_SEC_HOLD2SEC:
     case HMI_EVT_XIAOMI_SEC_HOLDRELEASED:
     case HMI_EVT_R51_MODE:
-        // temporary mode
-        if (modeConfig.tempMode != MODE_INVALID &&                  // temporary mode is activated
-            isLightMode(&modeConfig.mode[modeConfig.tempMode]))     // and is valid
-        {
-            if (state.pMode->currentMode != modeConfig.tempMode)
-            {
-                newMode = modeConfig.tempMode;
-                switchbackPending = true;
-            }
-            else if (switchbackPending)
-                newMode = state.pMode->lastMode;
-        }
-       break;
+        newMode = jumpToTemporaryMode(newMode);
+        break;
 
+    // factory reset / SOS
     case HMI_EVT_INTERNAL_HOLD10SEC:
         if (wasOff)
             (void)debug_FactoryReset(true);
 #ifdef HELENA
         else
+        {
             newMode = MODE_SOS;
+            enterMode(newMode, BTLE_CONN_HANDLE_INVALID);   // change directly here (no relaying to connected lights!)
+            return;
+        }
 #endif //HELENA
         break;
 
+    // unused events
     case HMI_EVT_INTERNAL_HOLDRELEASED:
     case HMI_EVT_XIAOMI_PRI_HOLD2SEC:
     case HMI_EVT_XIAOMI_PRI_HOLD10SEC:
@@ -1595,19 +2056,6 @@ static void hmiEventHandler(hmi_eventType_t event)
     if (newMode == state.pMode->currentMode)
         return; // nothing changed
 
-    if (state.pMode->currentMode == modeConfig.tempMode)
-        switchbackPending = false; // leaving temporary mode, clear switchback
-
-#ifdef HELENA
-    if (newMode == MODE_SOS)
-    {
-        enterMode(newMode, BTLE_CONN_HANDLE_INVALID);
-        return;
-    }
-#endif // HELENA
-
-    if (newMode != MODE_OFF)
-        newMode = getNextValidMode(newMode);
     enterMode(newMode, BTLE_CONN_HANDLE_ALL);
 }
 

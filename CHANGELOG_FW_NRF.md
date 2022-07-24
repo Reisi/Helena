@@ -3,12 +3,27 @@ All notable changes to the NRF51 firmware will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
-## [Unreleased]
+## [2.3.0] - 2022-07-24
 ### Added
+- support for billy base led driver
+- bonding required to change settings (only for release)
+- support for avisio/pearl remote control
+
 ### Changed
+- group size can be configured individually
+
 ### Removed
+
 ### Fixed
+- missing length checking for debug commands
+- false decoding for com master messages
+- going backwards to modes and groups malfunction
+- missing line breaks in debug calibration section
+- watchdog reset if transferring long error log over BLE
+
 ### Known Issues
+- daisy chain: if quickly changing mode twice, the second change may not be 
+  executed by the remote lamp.
 
 ## [2.2.1] - 2021-05-30
 ### Added
@@ -26,7 +41,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ### Known Issues
 - daisy chain: if quickly changing mode twice, the second change may not be 
-  refused by the remote lamp.
+  executed by the remote lamp.
 
 ## [2.2.0] - 2021-05-02
 ### Added
@@ -48,7 +63,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ### Known Issues
 - daisy chain: if quickly changing mode twice, the second change may not be 
-  refused by the remote lamp.
+  executed by the remote lamp.
 
 
 ## [2.1.0] - 2021-04-18
@@ -57,7 +72,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ### Changed
 - behavior of preferred mode
-- removed service discovery für HID service and replaced it with hardcoded 
+- removed service discovery for HID service and replaced it with hardcoded 
   presets.
 
 ### Removed

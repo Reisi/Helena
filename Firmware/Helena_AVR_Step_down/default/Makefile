@@ -15,8 +15,8 @@ COMMON = -mmcu=$(MCU)
 
 ## Compile options common for all C compilation units.
 CFLAGS = $(COMMON)
-CFLAGS += -Wall -gdwarf-2 -std=gnu99   -DF_CPU=8000000UL -O3 -funsigned-char -funsigned-bitfields -fpack-struct -fshort-enums
-CFLAGS += -MD -MP -MT $(*F).o -MF dep/$(@F).d 
+CFLAGS += -Wall -gdwarf-2 -std=gnu99     -DF_CPU=8000000UL -O3 -funsigned-char -funsigned-bitfields -fpack-struct -fshort-enums
+CFLAGS += -MD -MP -MT $(*F).o -MF dep/$(@F).d
 
 ## Assembly specific flags
 ASMFLAGS = $(COMMON)
@@ -37,10 +37,10 @@ HEX_EEPROM_FLAGS += --change-section-lma .eeprom=0 --no-change-warnings
 
 
 ## Objects that must be built in order to link
-OBJECTS = main.o smps.o adc.o usiTwiSlave.o 
+OBJECTS = main.o smps.o adc.o usiTwiSlave.o
 
 ## Objects explicitly added by the user
-LINKONLYOBJECTS = 
+LINKONLYOBJECTS =
 
 ## Build
 all: $(TARGET) Helena_Base.hex Helena_Base.eep Helena_Base.lss size
@@ -83,4 +83,3 @@ clean:
 
 ## Other dependencies
 -include $(shell mkdir dep 2>NUL) $(wildcard dep/*)
-
