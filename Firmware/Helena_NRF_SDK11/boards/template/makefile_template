@@ -1,0 +1,45 @@
+template: LINKER_SCRIPT  := boards/template/Helena_nrf51.ld
+
+# board specific source files
+SRC_FILES_SIZE += \
+	./boards/template/template.c \
+	./boards/template/template_hmi.c \
+	./hmi/button.c \
+	./remotes/Auviso.c \
+	./remotes/Xiaomi.c \
+
+ifeq ($(TYPE),DEBUG)
+SRC_FILES += \
+#   add debug specific files here
+endif
+
+# board specific include folders
+INC_DIRS += \
+    ./boards/template \
+    $(NRF_SDK_INSTALL_ROOT)/components/softdevice/s130/headers \
+
+# board specific libraries
+LIB_FILES += \
+
+# board specific C flags
+CFLAGS += \
+    -DS130 \
+	-D__STACK_SIZE=0x600 \
+	-D__HEAP_SIZE=0 \
+
+# board specific assembler flags
+ASMFLAGS += \
+	-DS130 \
+	-D__STACK_SIZE=0x600 \
+	-D__HEAP_SIZE=0 \
+
+# Linker flags
+LDFLAGS += \
+
+define gendfupackage
+	@$(NRFUTIL) dfu genpkg --application $1.hex \
+	                       --dev-type 0x8724 \
+	                       --dev-revision 0x0200 \
+	                       --sd-req 0x0080,0x0087 \
+	                       $1.zip
+endef

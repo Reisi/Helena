@@ -1,0 +1,10 @@
+gatts_cache_manager.c
+bug in line 113
+
+peer_database.c
+reduced N_WRITE_BUFFERS from 8 to 3
+
+id_manager.c
+reduces IM_MAX_CONN_HANDLES from 8 to 3
+redefined BLE_GAP_WHITELIST_ADDR_MAX_COUNT from 8 to 4
+redefined BLE_GAP_WHITELIST_IRK_MAX_COUNT from 8 to 4

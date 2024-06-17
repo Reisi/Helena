@@ -1,0 +1,72 @@
+ifeq ($(TYPE),DEBUG)
+helena: LINKER_SCRIPT  := boards/helena/Helena_nrf51_dbg.ld
+else
+helena: LINKER_SCRIPT  := boards/helena/Helena_nrf51.ld
+endif
+
+# board specific source files
+SRC_FILES_SIZE += \
+	./boards/helena/helena.c \
+	./boards/helena/helena_board.c \
+	./boards/helena/helena_adc.c \
+	./boards/helena/helena_btle.c \
+	./boards/helena/mpu6050drv.c \
+	./boards/helena/i2c/i2c.c \
+	./boards/helena_base_driver.c \
+	./boards/helena/ble_KD2.c \
+	./boards/helena/helena_hmi.c \
+    ./boards/helena/ext/Invensense/eMPL/inv_mpu.c \
+    ./boards/helena/ext/Invensense/eMPL/inv_mpu_dmp_motion_driver.c \
+	./hmi/button.c \
+	./remotes/Auviso.c \
+	./remotes/Xiaomi.c \
+	./util/pitch_reg.c \
+	./util/limiter.c \
+	./util/filter.c \
+
+SRC_FILES_SPEED += \
+    $(NRF_SDK_INSTALL_ROOT)/components/drivers_nrf/hal/nrf_nvmc.c \
+    $(NRF_SDK_INSTALL_ROOT)/components/drivers_nrf/twi_master/nrf_drv_twi.c \
+	$(NRF_SDK_INSTALL_ROOT)/components/drivers_nrf/adc/nrf_drv_adc.c \
+
+ifeq ($(TYPE),DEBUG)
+SRC_FILES_SPEED += \
+#   add debug specific files here
+endif
+
+# board specific include folders
+INC_DIRS += \
+    ./boards/ \
+    ./boards/helena \
+    ./boards/helena/i2c \
+    ./boards/helena/ext/Invensense/eMPL \
+    $(NRF_SDK_INSTALL_ROOT)/components/softdevice/s130/headers \
+    $(NRF_SDK_INSTALL_ROOT)/components/drivers_nrf/twi_master \
+    $(NRF_SDK_INSTALL_ROOT)/components/drivers_nrf/adc \
+
+# board specific libraries
+LIB_FILES += \
+
+# board specific C flags
+CFLAGS += \
+    -DS130 \
+    -DMPU6050 \
+	-D__STACK_SIZE=0x600 \
+	-D__HEAP_SIZE=0 \
+
+# board specific assembler flags
+ASMFLAGS += \
+	-DS130 \
+	-D__STACK_SIZE=0x600 \
+	-D__HEAP_SIZE=0 \
+
+# Linker flags
+LDFLAGS += \
+
+define gendfupackage
+	@$(NRFUTIL) dfu genpkg --application $1.hex \
+	                       --dev-type 0x8724 \
+	                       --dev-revision 0x0200 \
+	                       --sd-req 0x0080,0x0087 \
+	                       $1.zip
+endef

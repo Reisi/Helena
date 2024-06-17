@@ -3,6 +3,30 @@ All notable changes to the NRF51 firmware will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
+## [3.0.0-alpha] - unreleased
+### Changed
+v3 is not a continued development, it is the nrf52 based helen project ported to the nrf51.
+- added support for a second central connection
+- channels can be configured completely individual, making the need for different firmware variants obsolete
+- the com pin can alternatively be used for an external button
+- limiter is now prioritized, with spot having a higher priority as the flood
+
+## [2.3.1] - unreleased
+### Added
+
+### Changed
+- mode changes from com will now be relayed
+
+### Removed
+
+### Fixed
+- fixed wrong version build format
+- database discovery will be restarted if first attempt is busy
+
+### Known Issues
+- daisy chain: if quickly changing mode twice, the second change may not be 
+  executed by the remote lamp.
+
 ## [2.3.0] - 2022-07-24
 ### Added
 - support for billy base led driver
