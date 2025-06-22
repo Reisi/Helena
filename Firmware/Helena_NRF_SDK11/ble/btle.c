@@ -107,7 +107,7 @@ static void bleEventDispatch(ble_evt_t* pBleEvt)
 
 static ret_code_t bleStackInit()
 {
-    ret_code_t err_code;
+    ret_code_t errCode;
     ble_enable_params_t enableParams;
 
     memset(&enableParams, 0, sizeof(enableParams));
@@ -118,13 +118,17 @@ static ret_code_t bleStackInit()
     enableParams.gatts_enable_params.attr_tab_size    = ATTR_TAB_SIZE;
     enableParams.gatts_enable_params.service_changed  = 1;
 
-    err_code = softdevice_enable(&enableParams);
-    if (err_code != NRF_SUCCESS)
-        return err_code;
+    errCode = softdevice_enable(&enableParams);
+    if (errCode != NRF_SUCCESS)
+        return errCode;
 
-    err_code = softdevice_ble_evt_handler_set(bleEventDispatch);
-    if (err_code != NRF_SUCCESS)
-        return err_code;
+    errCode = softdevice_ble_evt_handler_set(bleEventDispatch);
+    if (errCode != NRF_SUCCESS)
+        return errCode;
+
+    errCode = sd_ble_gap_tx_power_set(4);
+    if (errCode != NRF_SUCCESS)
+        return errCode;
 
     return NRF_SUCCESS;
 }

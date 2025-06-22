@@ -3,7 +3,17 @@ All notable changes to the NRF51 firmware will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
-## [3.0.0-alpha] - unreleased
+## [3.0.1] - 2025-06-22
+### Fixed
+- mode relay result in hard fault if made change initiated through com interface.
+  (temporarily fixed by decreasing com interrupt level, but better solution is to 
+  keep interrupt level high and relay in main context)
+- increased transmit power
+
+### Known Issues
+- bootloader disconnects at about 20% when started in main application
+
+## [3.0.0-alpha] - 2024-06-17
 ### Changed
 v3 is not a continued development, it is the nrf52 based helen project ported to the nrf51.
 - added support for a second central connection

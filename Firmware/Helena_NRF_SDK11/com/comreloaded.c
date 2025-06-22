@@ -69,7 +69,7 @@ static nrf_drv_timer_config_t const timerConfig =
     .frequency =          NRF_TIMER_FREQ_2MHz,  // 2mhz with 8 bits width leads to com frequency of 7812.5Hz
     .mode =               NRF_TIMER_MODE_TIMER,
     .bit_width =          NRF_TIMER_BIT_WIDTH_8,
-    .interrupt_priority = APP_IRQ_PRIORITY_HIGH, // higher than sd low,
+    .interrupt_priority = APP_IRQ_PRIORITY_LOW,//HIGH, // higher than sd low,
     .p_context =          NULL
 };
 
